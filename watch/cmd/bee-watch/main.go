@@ -1,24 +1,33 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	"go.uber.org/zap"
 )
 
-const (
-	socketPath    string = "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog"
-	expectedMajor uint16 = 1
-	expectedMinor uint16 = 0
-	headerBytes   uint32 = 8 // Includes the major/minor versions and size fields (8 bytes)
+var (
+	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
 )
 
 func main() {
+
+	flag.Parse()
+
+	config := zap.NewProductionConfig()
+	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
+	log, err := config.Build()
+
+	if err != nil {
+		fmt.Println("Unable to initialize logger: ", err)
+		os.Exit(1)
+	}
 
 	// TODO: Set a backend disk buffer.
 	// Probably we just want to get rid of events and use a channel to send new events to the backend.
@@ -28,18 +37,18 @@ func main() {
 	// It also handles removing events from the disk buffer once all subscribers have read them.
 
 	// Cleanup old socket if needed:
-	stat, err := os.Stat(socketPath)
+	stat, err := os.Stat(*socketPath)
 	if err == nil {
 		if stat.IsDir() {
 			os.Exit(1)
 		}
-		os.Remove(socketPath)
+		os.Remove(*socketPath)
 	}
 
 	// Create a unix domain socket and listen for incoming connections:
-	socket, err := net.Listen("unixpacket", socketPath)
+	socket, err := net.Listen("unixpacket", *socketPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
 	}
 	defer socket.Close()
 
@@ -48,7 +57,7 @@ func main() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		os.Remove(socketPath)
+		os.Remove(*socketPath)
 		os.Exit(1)
 	}()
 
@@ -57,13 +66,13 @@ func main() {
 	// Handle connections:
 	for {
 
-		log.Print("waiting for connection")
+		log.Info("waiting for connection")
 		conn, err := socket.Accept()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("failed to accept connection", zap.Error(err))
 		}
 		defer conn.Close()
-		log.Print("established connection")
+		log.Info("established connection")
 
 		// Right now the meta service establishes and sends events over a single connection.
 		// It expects that connection will remain active indefinitely and will indicate "broken pipe" otherwise.
@@ -79,18 +88,18 @@ func main() {
 			buf := make([]byte, 65536)
 			bytesRead, err := conn.Read(buf)
 			if err != nil {
-				log.Fatalf("error reading from connection: %v", err)
+				log.Error("error reading from connection", zap.Error(err))
 				break
 			}
 
 			var packet types.Packet
 			packet.Deserialize(buf)
 			if bytesRead < int(packet.Size) {
-				fmt.Printf("expected %d bytes but received %d bytes\n", packet.Size, bytesRead)
+				log.Error("expected packet size is smaller than the actual packet size", zap.Uint32("expected size", packet.Size), zap.Int("actual size", bytesRead))
 				return
 			}
 
-			log.Printf("Event: %+v", packet)
+			log.Info("Event: %s", zap.Any("event", packet))
 			events = append(events, packet)
 		}
 		conn.Close()
