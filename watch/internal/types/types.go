@@ -2,7 +2,6 @@ package types
 
 import (
 	"encoding/binary"
-	"fmt"
 )
 
 type FileEventType uint32
@@ -81,19 +80,30 @@ func (p *Packet) Deserialize(buf []byte) {
 	p.Type = FileEventType(binary.LittleEndian.Uint32(buf[24:28]))
 
 	// The rest of the packet is a null-terminated character array:
-	// TODO: Get the rest of the packet.
-	start := 28
-	end := 28
+	start := 32 // We known the first string is here:
 
-	for i := 28; i < int(p.Size); i++ {
-		if buf[i] == 0 {
-			tmp := string(buf[start:end])
-			fmt.Printf("'%+q' (%d)\n", tmp, len(tmp))
-
-			start = i + 1
-			end = i + 1
-		} else {
-			end = i + 1
+	for end := start + 1; end < int(p.Size); end++ {
+		if buf[end] == '\x00' {
+			if p.EntryId == "" {
+				p.EntryId = string(buf[start:end])
+			} else if p.ParentEntryId == "" {
+				p.ParentEntryId = string(buf[start:end])
+			} else if p.Path == "" {
+				p.Path = string(buf[start:end])
+			} else if p.TargetPath == "" {
+				p.TargetPath = string(buf[start:end])
+			} else if p.TargetParentId == "" {
+				p.TargetParentId = string(buf[start:end])
+			}
+			// We know each string has four bytes of padding after it.
+			// Skip to the expected start of the next string:
+			start = end + 5
+			end = start + 1
+			// Check if we have additional strings to parse.
+			// Notably TargetPath and TargetParentId are only included with some event types.
+			if buf[start] == '\x00' {
+				break // Terminate early so we don't loop over empty bytes.
+			}
 		}
 	}
 
@@ -123,4 +133,7 @@ func (p *Packet) Deserialize(buf []byte) {
 	// for _, s := range stringSlice {
 	// 	fmt.Printf("%b = %s\n", s, s)
 	// }
+	// packet := buf[0 : p.Size+10]
+	// fmt.Printf("%q\n", packet)
+	// fmt.Printf("%#v\n\n", packet)
 }
