@@ -10,11 +10,14 @@ import (
 	"syscall"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/metasocket"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscribers"
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
 var (
-	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
+	socketPath             = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
+	eventSubscriberAddress = flag.String("eventSubscriberInterface", "localhost:50052", "The host:port where a BeeWatch subscriber is listening.")
 )
 
 func main() {
@@ -37,17 +40,25 @@ func main() {
 	// We'll use a wait group to coordinate shutdown of all components:
 	var wg sync.WaitGroup
 
+	// Use a channel as a buffer to move events between threads:
+	eventBuffer := make(chan *types.Packet)
+
 	// Create a unix domain socket and listen for incoming connections:
 	socket, err := metasocket.New(ctx, log, *socketPath)
 	if err != nil {
 		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
 	}
 	wg.Add(1)
-	go socket.ListenAndServe(&wg) // Don't move this away from the creation to ensure the socket is cleaned up.
+	go socket.ListenAndServe(&wg, eventBuffer) // Don't move this away from the creation to ensure the socket is cleaned up.
 
-	// TODO: Setup a subscriber manager.
-	// This watches for updates to the backend and sends them to subscribers.
-	// It also handles removing events from the disk buffer once all subscribers have read them.
+	// TODO: Rework this into a subscriber manager that can handle multiple subscribers.
+	// This watches for new additions to the eventBuffer then sends them to subscribers.
+	// It also handles removing events from the buffer once all subscribers have read them.
+	wg.Add(1)
+	err = subscribers.Connect(ctx, &wg, log, *eventSubscriberAddress, eventBuffer)
+	if err != nil {
+		log.Fatal("failed to connect to subscriber", zap.Error(err))
+	}
 
 	wg.Wait()
 	log.Info("all components stopped, exiting")
