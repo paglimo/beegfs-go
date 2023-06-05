@@ -31,15 +31,11 @@ func main() {
 	}
 
 	// We'll use a context to cleanly shutdown goroutines:
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
 
 	// We'll use a wait group to coordinate shutdown of all components:
 	var wg sync.WaitGroup
-
-	// TODO: Setup a backend disk buffer.
-	// It will have a listener for recording new events that bsocket will need access to.
-	// It will also need a cleanup function for purging old events that the subscriber manager will use.
 
 	// Create a unix domain socket and listen for incoming connections:
 	socket, err := metasocket.New(ctx, log, *socketPath)

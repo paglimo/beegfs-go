@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/binary"
+	"fmt"
 )
 
 type FileEventType uint32
@@ -69,7 +70,17 @@ type Packet struct {
 }
 
 // Deserialize takes a byte slice containing a Packet and converts it into a struct.
-func (p *Packet) Deserialize(buf []byte) {
+// At this time it does not have any way of verifying the format of the packet is what is expected.
+// It only performs basis checks to ensure the provided buffer is large enough to deserialize to avoid a panic.
+// If there is an issue with the packet size the packet will be returned with some or all fields empty.
+// It is up to the caller to decide what to do with the packet in this scenario (i.e., drop or keep anyway).
+func (p *Packet) Deserialize(buf []byte) error {
+
+	actualSize := len(buf)
+	if actualSize < 28 {
+		// If for some reason we received a packet that doesn't contain enough bytes for a header we should bail out.
+		return fmt.Errorf("unable to deserialize any packet fields because the provided buffer was smaller than the expected header size (packet size: %d)", actualSize)
+	}
 
 	// Integer values are easy to deserialize based on their sizes:
 	p.FormatVersionMajor = binary.LittleEndian.Uint16(buf[0:2])
@@ -79,7 +90,18 @@ func (p *Packet) Deserialize(buf []byte) {
 	p.MissedSeq = binary.LittleEndian.Uint64(buf[16:24])
 	p.Type = FileEventType(binary.LittleEndian.Uint32(buf[24:28]))
 
-	// The rest of the packet is a null-terminated character array:
+	if actualSize < int(p.Size) {
+		// If the packet size we parsed is smaller than the buffer we were provided we should bail out to avoid a panic.
+		return fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", p.Size, actualSize)
+	}
+
+	// The rest of the packet is an array of strings.
+	// Each entry starts with a uint32 value indicating the length of the string to follow.
+	// Each string also ends with a null character (\x00).
+	// While we could deserialize the length of each string then parse the actual string,
+	// we can also just ignore the length values and parse this as a null-terminated character array.
+	// Probably there is little actual difference in performance between these two approaches.
+	// However deserializing the length of each string then parsing may require more memory allocations depending on implementation.
 	start := 32 // We known the first string is here:
 
 	for end := start + 1; end < int(p.Size); end++ {
@@ -95,8 +117,7 @@ func (p *Packet) Deserialize(buf []byte) {
 			} else if p.TargetParentId == "" {
 				p.TargetParentId = string(buf[start:end])
 			}
-			// We know each string has four bytes of padding after it.
-			// Skip to the expected start of the next string:
+			// We know each entry is padded with a uint32 so we'll just skip to the expected start of the string portion:
 			start = end + 5
 			end = start + 1
 			// Check if we have additional strings to parse.
@@ -106,34 +127,5 @@ func (p *Packet) Deserialize(buf []byte) {
 			}
 		}
 	}
-
-	// TODO: Better understand the structure of each message.
-	// In addition to the strings we care about there are some extra
-	// bytes send that are either empty or seem to include unicode control chars.
-	// We get data in this order:
-	// * Control character: Form Feed (ff)
-	// * Empty Byte (x2)
-	// * Entry ID
-	// * Control character: End Of Transmission
-	// * Empty Byte (x2)
-	// * Parent Entry ID
-	// * Control character: Line Tabulation
-	// * Empty Byte (x2)
-	// * Path
-	// We'll then get (x11) empty bytes unless it was an op like RENAME then we get:
-	// * Control character: Device Control Three
-	// * Empty Byte (x2)
-	// * Target Path
-	// * Control character: Form Feed (ff)
-	// * Target Parent ID
-	// * Empty byte (x1)
-
-	// Uncomment for debugging:
-	// stringSlice := bytes.Split(buf[0:p.Size], []byte{0})
-	// for _, s := range stringSlice {
-	// 	fmt.Printf("%b = %s\n", s, s)
-	// }
-	// packet := buf[0 : p.Size+10]
-	// fmt.Printf("%q\n", packet)
-	// fmt.Printf("%#v\n\n", packet)
+	return nil
 }

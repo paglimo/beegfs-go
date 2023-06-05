@@ -2,6 +2,7 @@ package metasocket
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path"
@@ -27,9 +28,12 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 	stat, err := os.Stat(socketPath)
 	if err == nil {
 		if stat.IsDir() {
-			os.Exit(1)
+			return nil, errors.New("the provided Unix socket path was an existing directory, but must be a new or existing file path")
 		}
-		os.Remove(socketPath)
+		if err = os.Remove(socketPath); err != nil {
+			return nil, err
+		}
+
 	}
 
 	socket, err := net.Listen("unixpacket", socketPath)
@@ -53,7 +57,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 //
 // When it starts it will wait until it receives a connection.
 // Once a connection is accepted it will read any bytes send over the connection and
-// attempt to deserialize BeeGFS packets before handing them off to persistent storage.
+// attempt to deserialize BeeGFS packets before sending them to any subscribers.
 //
 // If there is a problem accepting a connection it will continue trying to accept new connections.
 // If there is an error reading from a connection it will be closed and a new connection will be required.
@@ -112,8 +116,8 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup) {
 						}
 						break
 					}
-					// TODO: Save the packet to persistent storage.
-					b.log.Info("Event: %s", zap.Any("event", packet))
+					// TODO: Forward the packet to subscribers.
+					b.log.Info("Event: %s", zap.Any("event", packet), zap.Any("type", packet.Type.String()))
 				}
 			}
 		}
@@ -144,7 +148,7 @@ func (b MetaSocket) acceptConnection(connections chan<- net.Conn) {
 
 // readConnection will block until it receives a packet on the provided connection.
 // When it reads a packet it will be deserialized and returned on the provided channel.
-// If there is an error reading from the connection it will return a nill packet for upstream handling.
+// If there is an error reading from the connection it will return a nil packet for upstream handling.
 func (b MetaSocket) readConnection(conn net.Conn, packets chan<- *types.Packet) {
 	// Right now the meta service establishes and sends events over a single connection.
 	// It expects that connection will remain active indefinitely and will indicate "broken pipe" otherwise.
@@ -169,13 +173,18 @@ func (b MetaSocket) readConnection(conn net.Conn, packets chan<- *types.Packet) 
 	}
 
 	var p types.Packet
-	p.Deserialize(buf)
-	if bytesRead < int(p.Size) {
+	err = p.Deserialize(buf)
+	if err != nil {
+		// Probably we received a malformed packet. There really isn't much we can do here other than warn.
+		// Hopefully this would only come up in development when network protocols and packet versions may be in flux.
+		// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
+		b.log.Warn("unable to correctly deserialize packet due to an error (ignoring)", zap.Error(err))
+	} else if bytesRead < int(p.Size) {
 		// In "theory" this shouldn't happen.
 		// If the connection broke while we were reading from it, we should get an error earlier.
 		// Likely If this happens the BeeGFS meta service is sending us malformed packets.
-		// TODO - Consider if we should do something besides warn here (panic?)
-		b.log.Warn("packet that is smaller than the expected packet size", zap.Uint32("expected size", p.Size), zap.Int("actual size", bytesRead))
+		// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
+		b.log.Warn("received a packet that is smaller than the expected packet size (ignoring)", zap.Uint32("expected size", p.Size), zap.Int("actual size", bytesRead))
 	}
 
 	packets <- &p
