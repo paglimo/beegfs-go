@@ -44,7 +44,7 @@ func (c *subscriberClient) ReceiveEvents(ctx context.Context, opts ...grpc.CallO
 
 type Subscriber_ReceiveEventsClient interface {
 	Send(*Event) error
-	Recv() (*Control, error)
+	Recv() (*Response, error)
 	grpc.ClientStream
 }
 
@@ -56,8 +56,8 @@ func (x *subscriberReceiveEventsClient) Send(m *Event) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *subscriberReceiveEventsClient) Recv() (*Control, error) {
-	m := new(Control)
+func (x *subscriberReceiveEventsClient) Recv() (*Response, error) {
+	m := new(Response)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func _Subscriber_ReceiveEvents_Handler(srv interface{}, stream grpc.ServerStream
 }
 
 type Subscriber_ReceiveEventsServer interface {
-	Send(*Control) error
+	Send(*Response) error
 	Recv() (*Event, error)
 	grpc.ServerStream
 }
@@ -106,7 +106,7 @@ type subscriberReceiveEventsServer struct {
 	grpc.ServerStream
 }
 
-func (x *subscriberReceiveEventsServer) Send(m *Control) error {
+func (x *subscriberReceiveEventsServer) Send(m *Response) error {
 	return x.ServerStream.SendMsg(m)
 }
 

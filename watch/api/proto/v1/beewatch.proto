@@ -35,12 +35,12 @@ message Event {
 
 }
 
-// Control messages allow the subscribers to acknowledge events they have processed and request a graceful shutdown.
-message Control {
+// Response messages allow the subscribers to acknowledge events they have processed and request a graceful shutdown.
+message Response {
     uint64 completed_seq = 1;
     bool shutting_down = 2;
 }
 
 service Subscriber { 
-    rpc ReceiveEvents(stream Event) returns (stream Control);
+    rpc ReceiveEvents(stream Event) returns (stream Response);
 }
