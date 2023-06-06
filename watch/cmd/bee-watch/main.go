@@ -9,9 +9,9 @@ import (
 	"sync"
 	"syscall"
 
+	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/eventlog"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
-	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +41,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	// Use a channel as a buffer to move events between threads:
-	eventBuffer := make(chan *types.Packet)
+	eventBuffer := make(chan *pb.Event)
 
 	// Create a unix domain socket and listen for incoming connections:
 	socket, err := eventlog.New(ctx, log, *socketPath)

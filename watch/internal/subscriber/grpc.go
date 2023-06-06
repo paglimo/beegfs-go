@@ -3,26 +3,20 @@ package subscriber
 import (
 	"context"
 	"io"
-	"path"
-	"reflect"
 	"sync"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
-	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type subscriber struct{}
-
-func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAddress string, eventBuffer <-chan *types.Packet) error {
+func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAddress string, eventBuffer <-chan *pb.Event) error {
 
 	defer wg.Done()
 
 	// TODO: Consider breaking out client setup into a separate function.
 
-	log = log.With(zap.String("component", path.Base(reflect.TypeOf(subscriber{}).PkgPath())))
 	log.Info("connecting to subscriber")
 
 	var opts []grpc.DialOption
@@ -81,24 +75,9 @@ func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAdd
 		case <-waitc:
 			log.Info("subscriber closed connection")
 			return nil
-		case p := <-eventBuffer:
-			// TODO: Is there any way to do this more efficiently?
-			event := pb.Event{
-				FormatVersionMajor: uint32(p.FormatVersionMajor),
-				FormatVersionMinor: uint32(p.FormatVersionMinor),
-				SeqId:              0, // TODO: Generate
-				Size:               p.Size,
-				DroppedSeq:         p.DroppedSeq,
-				MissedSeq:          p.MissedSeq,
-				Type:               pb.Event_Type(p.Type),
-				Path:               p.Path,
-				EntryId:            p.EntryId,
-				ParentEntryId:      p.ParentEntryId,
-				TargetPath:         p.TargetPath,
-				TargetParentId:     p.TargetParentId,
-			}
+		case event := <-eventBuffer:
 
-			if err := stream.Send(&event); err != nil {
+			if err := stream.Send(event); err != nil {
 				log.Error("unable to send event to subscriber", zap.Error(err))
 			}
 			log.Info("sent event to subscriber")
