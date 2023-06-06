@@ -1,4 +1,4 @@
-package metasocket
+package eventlog
 
 import (
 	"context"

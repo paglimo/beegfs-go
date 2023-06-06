@@ -1,4 +1,4 @@
-package subscribers
+package subscriber
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type subscribers struct{}
+type subscriber struct{}
 
 func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAddress string, eventBuffer <-chan *types.Packet) error {
 
@@ -22,7 +22,7 @@ func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAdd
 
 	// TODO: Consider breaking out client setup into a separate function.
 
-	log = log.With(zap.String("component", path.Base(reflect.TypeOf(subscribers{}).PkgPath())))
+	log = log.With(zap.String("component", path.Base(reflect.TypeOf(subscriber{}).PkgPath())))
 	log.Info("connecting to subscriber")
 
 	var opts []grpc.DialOption
@@ -40,12 +40,8 @@ func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAdd
 
 	log.Info("setup client")
 
-	// TODO (CURRENT LOCATION): For some reason we're blocking here, figure out why.
-	// Do we need to do something else on the server before we can use the stream?
-	// Is there some other way we should set this up so it is non-blocking?
-
 	stream, err := client.ReceiveEvents(ctx)
-	if err == nil {
+	if err != nil {
 		return err
 	}
 

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"syscall"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/metasocket"
-	"git.beegfs.io/beeflex/bee-watch/internal/subscribers"
+	"git.beegfs.io/beeflex/bee-watch/internal/eventlog"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
@@ -25,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	config := zap.NewProductionConfig()
-	config.InitialFields = map[string]interface{}{"serviceName": "BeeWatch"}
+	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
 	log, err := config.Build()
 
 	if err != nil {
@@ -44,7 +44,7 @@ func main() {
 	eventBuffer := make(chan *types.Packet)
 
 	// Create a unix domain socket and listen for incoming connections:
-	socket, err := metasocket.New(ctx, log, *socketPath)
+	socket, err := eventlog.New(ctx, log, *socketPath)
 	if err != nil {
 		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
 	}
@@ -55,7 +55,7 @@ func main() {
 	// This watches for new additions to the eventBuffer then sends them to subscribers.
 	// It also handles removing events from the buffer once all subscribers have read them.
 	wg.Add(1)
-	err = subscribers.Connect(ctx, &wg, log, *eventSubscriberAddress, eventBuffer)
+	err = subscriber.Connect(ctx, &wg, log, *eventSubscriberAddress, eventBuffer)
 	if err != nil {
 		log.Fatal("failed to connect to subscriber", zap.Error(err))
 	}
