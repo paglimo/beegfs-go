@@ -11,6 +11,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type GRPCSubscriber struct {
+	BaseSubscriber
+	Hostname      string
+	Port          string
+	AllowInsecure bool
+}
+
 func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAddress string, eventBuffer <-chan *pb.Event) error {
 
 	defer wg.Done()
