@@ -11,7 +11,7 @@ import (
 // Based on the selected "Type" only some fields will actually apply to a particular subscriber.
 type SubscriberConfig struct {
 	Type      string `json:"type"`
-	ID        int    `json:"id"`
+	ID        string `json:"id"`
 	Name      string `json:"name"`
 	QueueSize int    `json:"queue_size"`
 	// Options for gRPC subscribers
@@ -34,7 +34,7 @@ func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]Subscriber, e
 
 	var newSubscribers []Subscriber
 	for _, config := range configs {
-		log := log.With(zap.Int("subscriber_id", config.ID))
+		log := log.With(zap.String("subscriber_id", config.ID))
 		s, err := newSubscriberFromConfig(config, log)
 
 		if err != nil {

@@ -18,6 +18,28 @@ type GRPCSubscriber struct {
 	AllowInsecure bool
 }
 
+// This is a "comparable" view of the GRPCSubscriber struct used for testing.
+// When GRPCSubscriber is updated it should also be updated with any fields that are a comparable type.
+type ComparableGRPCSubscriber struct {
+	ComparableBaseSubscriber
+	Hostname      string
+	Port          string
+	AllowInsecure bool
+}
+
+// Used for testing (notably TestNewSubscribersFromJson).
+func newComparableGRPCSubscriber(s GRPCSubscriber) ComparableGRPCSubscriber {
+
+	base := newComparableBaseSubscriber(s.BaseSubscriber)
+	return ComparableGRPCSubscriber{
+		ComparableBaseSubscriber: base,
+		Hostname:                 s.Hostname,
+		Port:                     s.Port,
+		AllowInsecure:            s.AllowInsecure,
+	}
+
+}
+
 func Connect(ctx context.Context, wg *sync.WaitGroup, log *zap.Logger, remoteAddress string, eventBuffer <-chan *pb.Event) error {
 
 	defer wg.Done()

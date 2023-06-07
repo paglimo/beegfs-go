@@ -10,7 +10,7 @@ import (
 // Subscriber defines the interface all subscribers are expected to implement.
 type Subscriber interface {
 	// These methods are implemented by the base subscriber type:
-	GetID() int
+	GetID() string
 	GetName() string
 	Handle()
 	Enqueue(*pb.Event)
@@ -31,7 +31,7 @@ const (
 )
 
 type BaseSubscriber struct {
-	id    int
+	id    string
 	name  string
 	state SubscriberState
 	queue chan *pb.Event
@@ -40,8 +40,24 @@ type BaseSubscriber struct {
 	Subscriber
 }
 
+// This is a "comparable" view of the BaseSubscriber struct used for testing.
+// When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
+// Notably the queue, ctx, and log fields are not comparable and thus omitted.
+type ComparableBaseSubscriber struct {
+	id   string
+	name string
+}
+
+// Used for testing (notably TestNewSubscribersFromJson).
+func newComparableBaseSubscriber(s BaseSubscriber) ComparableBaseSubscriber {
+	return ComparableBaseSubscriber{
+		id:   s.id,
+		name: s.name,
+	}
+}
+
 // newBaseSubscriber is intended to be used with newSubscriberFromConfig.
-func newBaseSubscriber(id int, name string, queueSize int, log *zap.Logger) *BaseSubscriber {
+func newBaseSubscriber(id string, name string, queueSize int, log *zap.Logger) *BaseSubscriber {
 	return &BaseSubscriber{
 		id:    id,
 		name:  name,
@@ -51,7 +67,7 @@ func newBaseSubscriber(id int, name string, queueSize int, log *zap.Logger) *Bas
 	}
 }
 
-func (s *BaseSubscriber) GetID() int {
+func (s *BaseSubscriber) GetID() string {
 	return s.id
 }
 
