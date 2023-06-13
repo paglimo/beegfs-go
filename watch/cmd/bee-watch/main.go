@@ -16,9 +16,21 @@ import (
 )
 
 var (
-	socketPath             = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
-	eventSubscriberAddress = flag.String("eventSubscriberInterface", "localhost:50052", "The host:port where a BeeWatch subscriber is listening.")
+	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
 )
+
+var subscriberConfigJson string = `
+[
+    {
+        "type": "grpc",
+        "id": "1",
+        "name": "bee-remote",
+        "hostname":"localhost",
+		"port":"50052",
+		"allow_insecure":true
+    }
+]
+`
 
 func main() {
 
@@ -51,14 +63,13 @@ func main() {
 	wg.Add(1)
 	go socket.ListenAndServe(&wg, eventBuffer) // Don't move this away from the creation to ensure the socket is cleaned up.
 
-	// TODO: Rework this into a subscriber manager that can handle multiple subscribers.
-	// This watches for new additions to the eventBuffer then sends them to subscribers.
-	// It also handles removing events from the buffer once all subscribers have read them.
-	wg.Add(1)
-	err = subscriber.Connect(ctx, &wg, log, *eventSubscriberAddress, eventBuffer)
+	// Setup our subscriber manager:
+	sm := subscriber.NewSubscriberManager(log)
+	err = sm.UpdateConfiguration(subscriberConfigJson)
 	if err != nil {
-		log.Fatal("failed to connect to subscriber", zap.Error(err))
+		log.Fatal("unable to configure subscribers", zap.Error(err))
 	}
+	go sm.Manage(ctx, &wg, eventBuffer)
 
 	wg.Wait()
 	log.Info("all components stopped, exiting")

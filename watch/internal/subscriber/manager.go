@@ -15,7 +15,7 @@ type SubscriberManager struct {
 	subscribers []Subscriber
 }
 
-func New(log *zap.Logger) SubscriberManager {
+func NewSubscriberManager(log *zap.Logger) SubscriberManager {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(SubscriberManager{}).PkgPath())))
 	return SubscriberManager{
@@ -56,15 +56,15 @@ func (sm *SubscriberManager) UpdateConfiguration(jsonConfig string) error {
 
 	sm.subscribers = newSubscribers
 	for _, s := range sm.subscribers {
-		s.Handle()
+		go s.Manage()
 	}
 
 	return nil
 }
 
-// Monitor watches for new events and adds them to the queue for each subscriber.
+// Manage watches for new events and adds them to the queue for each subscriber.
 // It also handles shutting down all subscribers when the app is shutting down.
-func (sm *SubscriberManager) Monitor(ctx context.Context, wg *sync.WaitGroup, eventBuffer <-chan *pb.Event) error {
+func (sm *SubscriberManager) Manage(ctx context.Context, wg *sync.WaitGroup, eventBuffer <-chan *pb.Event) {
 
 	defer wg.Done()
 
@@ -75,9 +75,14 @@ func (sm *SubscriberManager) Monitor(ctx context.Context, wg *sync.WaitGroup, ev
 			for _, s := range sm.subscribers {
 				s.Stop()
 			}
-			return nil
+			return
 		case event := <-eventBuffer:
 			for _, s := range sm.subscribers {
+				// TODO: Currently Enqueue will block if a subscriber is down once the channel is full.
+				// It should be modified to instead add events to the interruptedEvents queue
+				// in a thread safe manner if a subscriber is not connected.
+				// Alternatively we could just add things directly to the slice and do away with the interruptedEvents queue.
+				// However I worry that would be very inefficient.
 				s.Enqueue(event)
 			}
 		}

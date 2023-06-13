@@ -50,8 +50,9 @@ func TestNewSubscribersFromJson(t *testing.T) {
 	expectedSubscribers := []Subscriber{
 		&GRPCSubscriber{
 			BaseSubscriber: BaseSubscriber{
-				id:   "1",
-				name: "bee-remote",
+				id:    "1",
+				name:  "bee-remote",
+				state: DISCONNECTED,
 			},
 			Hostname:      "br-1",
 			Port:          "1234",
@@ -59,8 +60,9 @@ func TestNewSubscribersFromJson(t *testing.T) {
 		},
 		&GRPCSubscriber{
 			BaseSubscriber: BaseSubscriber{
-				id:   "2",
-				name: "beegfs-mon",
+				id:    "2",
+				name:  "beegfs-mon",
+				state: DISCONNECTED,
 			},
 			Hostname:      "bm-1",
 			Port:          "512312",

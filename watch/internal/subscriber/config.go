@@ -62,12 +62,17 @@ func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (Subscrib
 
 	switch config.Type {
 	case "grpc":
-		return &GRPCSubscriber{
+		subscriber := &GRPCSubscriber{
 			BaseSubscriber: *base,
 			Hostname:       config.Hostname,
 			Port:           config.Port,
 			AllowInsecure:  config.AllowInsecure,
-		}, nil
+		}
+		// In order to use the connect and disconnect methods from the specific GRPCSubscriber struct,
+		// we need to ensure that the Subscriber interface in the BaseSubscriber is actually holding a GRPCSubscriber value.
+		// If we don't do this we'll get a panic because BaseSubscriber doesn't actually implement these methods.
+		subscriber.Subscriber = subscriber
+		return subscriber, nil
 	default:
 		return nil, fmt.Errorf("unknown subscriber type: %s", config.Type)
 	}
