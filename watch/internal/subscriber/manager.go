@@ -12,7 +12,7 @@ import (
 
 type Manager struct {
 	log         *zap.Logger
-	subscribers []Subscriber
+	subscribers []*BaseSubscriber
 }
 
 func NewManager(log *zap.Logger) Manager {
@@ -20,7 +20,7 @@ func NewManager(log *zap.Logger) Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	return Manager{
 		log:         log,
-		subscribers: make([]Subscriber, 0),
+		subscribers: make([]*BaseSubscriber, 0),
 	}
 }
 

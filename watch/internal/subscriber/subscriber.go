@@ -9,15 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Subscriber defines the interface all subscribers are expected to implement.
+// Subscriber defines the methods all subscribers (such as gRPC) are expected to implement.
 type Subscriber interface {
-	// These methods are implemented by the base subscriber type:
-	GetID() string
-	GetName() string
-	Manage()
-	Enqueue(*pb.Event)
-	Stop()
-	// These methods must be implemented by a concrete subscriber type (such as gRPC):
 	connect() (retry bool, err error)
 	send(*pb.Event) (err error)
 	receive() chan *pb.Response

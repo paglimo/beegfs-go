@@ -24,7 +24,7 @@ type SubscriberConfig struct {
 // It attempts to unmarshal and initialize each subscriber and returns a slice of all the subscribers.
 // It does not return an error if there are any invalid subscribers (or configuration/fields).
 // It does return an error if it was unable to unmarshal the provided JSON due to a syntax/other error.
-func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]Subscriber, error) {
+func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]*BaseSubscriber, error) {
 
 	var configs []SubscriberConfig
 
@@ -32,7 +32,7 @@ func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]Subscriber, e
 		return nil, fmt.Errorf("unable to unmarshal subscriber configuration: %w", err)
 	}
 
-	var newSubscribers []Subscriber
+	var newSubscribers []*BaseSubscriber
 	for _, config := range configs {
 		log := log.With(zap.String("subscriber_id", config.ID))
 		s, err := newSubscriberFromConfig(config, log)
@@ -50,7 +50,7 @@ func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]Subscriber, e
 
 // newSubscriberFromConfig takes a SubscriberConfig and returns an initialized struct for the indicated subscriber type.
 // It will return an error if the requested subscriber type is unknown.
-func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (Subscriber, error) {
+func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (*BaseSubscriber, error) {
 
 	// TODO: We should probably handle the default as part of global configuration.
 	queueSize := config.QueueSize
@@ -66,8 +66,9 @@ func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (Subscrib
 		// In order to use the connect and disconnect methods from the specific GRPCSubscriber struct,
 		// we need to ensure that the Subscriber interface in the BaseSubscriber is actually holding a GRPCSubscriber value.
 		// If we don't do this we'll get a panic because BaseSubscriber doesn't actually implement these methods.
-		subscriber.Subscriber = subscriber
-		return subscriber, nil
+		//subscriber.Subscriber = subscriber
+		base.Subscriber = subscriber
+		return base, nil
 	default:
 		return nil, fmt.Errorf("unknown subscriber type: %s", config.Type)
 	}

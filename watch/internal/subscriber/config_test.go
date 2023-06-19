@@ -74,9 +74,9 @@ func TestNewSubscribersFromJson(t *testing.T) {
 
 	for i, subscriber := range configuredSubscribers {
 		// If support is added for new subscriber types they will need to be added to the type switch.
-		switch subscriber.(type) {
+		switch subscriber.Subscriber.(type) {
 		case *GRPCSubscriber:
-			s := subscriber.(*GRPCSubscriber)
+			s := subscriber.Subscriber.(*GRPCSubscriber)
 			expectedSubscriber, ok := expectedSubscribers[i].(*GRPCSubscriber)
 			assert.True(t, ok) // If s is the wrong subscriber type, then the expected subscriber type won't match.
 			// We use the newComparableXSubscriber() functions provided alongside each subscriber implementation
