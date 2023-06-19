@@ -28,7 +28,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 	stat, err := os.Stat(socketPath)
 	if err == nil {
 		if stat.IsDir() {
-			return nil, errors.New("the provided Unix socket path was an existing directory, but must be a new or existing file path")
+			return nil, errors.New("the provided Unix socket path for sysFileEventLogTarget was an existing directory, but must be a new or existing file path")
 		}
 		if err = os.Remove(socketPath); err != nil {
 			return nil, err
@@ -80,7 +80,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 	defer func() {
 		err := os.Remove(b.socketPath)
 		if err != nil {
-			b.log.Warn("unable to clean up socket", zap.String("path", b.socketPath))
+			b.log.Warn("unable to clean up metadata socket", zap.String("path", b.socketPath))
 		}
 	}()
 
@@ -91,7 +91,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 		go b.acceptConnection(connections)
 		select {
 		case <-b.ctx.Done():
-			b.log.Info("attempting to shutdown")
+			b.log.Info("attempting to shutdown metadata connection")
 			return
 		case conn := <-connections:
 
@@ -105,10 +105,10 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 				go b.readConnection(conn, eventStream)
 				select {
 				case <-b.ctx.Done():
-					b.log.Info("attempting to close active connection and shutdown")
+					b.log.Info("attempting to close active metadata connection and shutdown")
 					err := conn.Close()
 					if err != nil {
-						b.log.Error("unable to close connection", zap.Error(err))
+						b.log.Error("unable to close metadata connection", zap.Error(err))
 					}
 					return
 				case event := <-eventStream:
@@ -117,7 +117,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 						// Lets try to close it and reconnect.
 						err := conn.Close()
 						if err != nil {
-							b.log.Error("unable to close connection", zap.Error(err))
+							b.log.Error("unable to close metadata connection", zap.Error(err))
 						}
 						break
 					}
@@ -139,7 +139,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 // If there is an error accepting a connection it will return a nil connection for upstream handling.
 func (b MetaSocket) acceptConnection(connections chan<- net.Conn) {
 
-	b.log.Info("waiting for connection")
+	b.log.Info("waiting for metadata connection")
 	c, err := b.socket.Accept()
 
 	if err != nil {
@@ -147,11 +147,11 @@ func (b MetaSocket) acceptConnection(connections chan<- net.Conn) {
 		if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
 			return
 		}
-		b.log.Error("failed to accept connection", zap.Error(err))
+		b.log.Error("failed to accept metadata connection", zap.Error(err))
 		connections <- nil
 		return
 	}
-	b.log.Info("established connection")
+	b.log.Info("established metadata connection")
 	connections <- c
 }
 
@@ -177,7 +177,7 @@ func (b MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) 
 		if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
 			return
 		}
-		b.log.Error("error reading from connection", zap.Error(err))
+		b.log.Error("error reading from metadata connection", zap.Error(err))
 		eventStream <- nil
 	}
 

@@ -17,6 +17,7 @@ import (
 
 var (
 	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
+	logDebug   = flag.Bool("logDebug", false, "enable logging at the debug level")
 )
 
 var subscriberConfigJson string = `
@@ -36,10 +37,7 @@ func main() {
 
 	flag.Parse()
 
-	config := zap.NewProductionConfig()
-	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
-	log, err := config.Build()
-
+	log, err := getLogger()
 	if err != nil {
 		fmt.Println("Unable to initialize logger: ", err)
 		os.Exit(1)
@@ -74,4 +72,19 @@ func main() {
 
 	wg.Wait()
 	log.Info("all components stopped, exiting")
+}
+
+// getLogger parses command line logging options and returns an appropriately configured zap.Logger.
+func getLogger() (*zap.Logger, error) {
+
+	var config zap.Config
+	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
+
+	if *logDebug {
+		config = zap.NewDevelopmentConfig()
+	} else {
+		config = zap.NewProductionConfig()
+	}
+
+	return config.Build()
 }

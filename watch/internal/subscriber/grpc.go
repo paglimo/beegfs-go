@@ -63,8 +63,6 @@ func newComparableGRPCSubscriber(s GRPCSubscriber) ComparableGRPCSubscriber {
 
 func (s *GRPCSubscriber) connect() (retry bool, err error) {
 
-	s.log.Info("connecting to subscriber")
-
 	var opts []grpc.DialOption
 	if s.AllowInsecure {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -77,7 +75,7 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 	}
 
 	s.client = pb.NewSubscriberClient(s.conn)
-	s.log.Info("gRPC client initialized")
+	s.log.Debug("gRPC client initialized")
 
 	// TODO: Evaluate if this causes problems to reuse the context here.
 	// Because we connect and disconnect in two separate functions,
@@ -88,7 +86,7 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 		return true, fmt.Errorf("unable to setup gRPC client stream: %w", err)
 	}
 
-	s.log.Info("setup event stream")
+	s.log.Debug("setup gRPC event stream to server")
 	return false, nil
 }
 
@@ -121,7 +119,7 @@ func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 	// However it guarantees there will only ever be one Go routine listening to subscriber responses.
 	// It also guarantees we don't try and reinitialize an in-use channel until it is closed.
 	if !s.recvMutex.TryLock() {
-		s.log.Warn("already listening for responses from this subscriber")
+		s.log.Warn("already listening for responses from this subscriber (returning existing receive stream channel)")
 		return s.recvStream
 	}
 

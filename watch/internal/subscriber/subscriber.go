@@ -140,6 +140,7 @@ connectLoop:
 			s.log.Info("not attempting to connect because the subscriber is shutting down")
 			return
 		case <-time.After(time.Second * time.Duration(reconnectBackOff)):
+			s.log.Info("connecting to subscriber")
 			if s.state == DISCONNECTED {
 				retry, err := s.connect()
 				if err != nil {
@@ -156,6 +157,7 @@ connectLoop:
 					continue connectLoop
 				}
 				s.state = CONNECTED
+				s.log.Info("connected to subscriber")
 			} else {
 				// This probably indicates a bug with our state transitions.
 				// To avoid worse effects we won't try to connect unless we're already in a disconnected state.
@@ -172,6 +174,7 @@ connectLoop:
 			// If the subscriber disconnected for some reason, we may have been interrupted trying to send events.
 			// Lets try to resend them before we enter the main connectedLoop:
 			if len(s.interruptedEvents) > 0 {
+				s.log.Info("sending interrupted events to subscriber", zap.Any("num_interrupted_events", len(s.interruptedEvents)))
 				err := s.send(s.interruptedEvents[0])
 				if err != nil {
 					s.state = SEND_ERR
@@ -190,6 +193,8 @@ connectLoop:
 					s.interruptedEvents = s.interruptedEvents[1:]
 				}
 			}
+
+			s.log.Info("beginning to stream events to subscriber")
 
 		connectedLoop:
 			for {
@@ -212,7 +217,7 @@ connectLoop:
 						s.log.Info("remote disconnect received")
 						break connectedLoop
 					}
-					s.log.Info("received response from subscriber", zap.Any("response", response))
+					s.log.Debug("received response from subscriber", zap.Any("response", response))
 					// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
 				}
 			}
