@@ -27,6 +27,18 @@ type GRPCSubscriber struct {
 
 var _ Subscriber = &GRPCSubscriber{} // Verify type satisfies interface.
 
+func newGRPCSubscriber(base *BaseSubscriber, hostname string, port string, allowInsecure bool) *GRPCSubscriber {
+	var mutex sync.Mutex
+
+	return &GRPCSubscriber{
+		BaseSubscriber: *base,
+		Hostname:       hostname,
+		Port:           port,
+		AllowInsecure:  allowInsecure,
+		recvMutex:      &mutex,
+	}
+}
+
 // This is a "comparable" view of the GRPCSubscriber struct used for testing.
 // When GRPCSubscriber is updated it should also be updated with any fields that are a comparable type.
 type ComparableGRPCSubscriber struct {
@@ -104,18 +116,14 @@ func (s *GRPCSubscriber) send(event *pb.Event) (err error) {
 // then return the same channel so the base subscriber's manage() function can use it.
 func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 
-	// TODO (CURRENT LOCATION): This returns a "runtime error: invalid memory address or nil pointer dereference"
-	// Probably I didn't initialize it properly
-	//
 	// Typically this mutex should not be necessary.
 	// Receive() should only ever be called once for each connection to a subscriber.
 	// However it guarantees there will only ever be one Go routine listening to subscriber responses.
 	// It also guarantees we don't try and reinitialize an in-use channel until it is closed.
-	if s.recvMutex.TryLock() {
+	if !s.recvMutex.TryLock() {
+		s.log.Warn("already listening for responses from this subscriber")
 		return s.recvStream
 	}
-
-	s.recvMutex.Lock()
 
 	// If the channel was not yet initialized or closed we'll reinitialize it:
 	s.recvStream = make(chan *pb.Response)

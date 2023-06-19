@@ -10,15 +10,15 @@ import (
 	"go.uber.org/zap"
 )
 
-type SubscriberManager struct {
+type Manager struct {
 	log         *zap.Logger
 	subscribers []Subscriber
 }
 
-func NewSubscriberManager(log *zap.Logger) SubscriberManager {
+func NewManager(log *zap.Logger) Manager {
 
-	log = log.With(zap.String("component", path.Base(reflect.TypeOf(SubscriberManager{}).PkgPath())))
-	return SubscriberManager{
+	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
+	return Manager{
 		log:         log,
 		subscribers: make([]Subscriber, 0),
 	}
@@ -28,7 +28,7 @@ func NewSubscriberManager(log *zap.Logger) SubscriberManager {
 // This is the external mechanism external functions should call to dynamically add/update/remove subscribers.
 // This configuration should contain all subscribers including any changes to existing ones.
 // Any subscribers found in the old configuration but not in the new will be removed.
-func (sm *SubscriberManager) UpdateConfiguration(jsonConfig string) error {
+func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 
 	// TODO: Consider if we want to do this better.
 	// Fow now this is a fairly rudimentary way of updating subscribers while I flush out the rest of the implementation.
@@ -64,7 +64,7 @@ func (sm *SubscriberManager) UpdateConfiguration(jsonConfig string) error {
 
 // Manage watches for new events and adds them to the queue for each subscriber.
 // It also handles shutting down all subscribers when the app is shutting down.
-func (sm *SubscriberManager) Manage(ctx context.Context, wg *sync.WaitGroup, eventBuffer <-chan *pb.Event) {
+func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup, eventBuffer <-chan *pb.Event) {
 
 	defer wg.Done()
 

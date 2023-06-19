@@ -79,7 +79,7 @@ func newBaseSubscriber(id string, name string, queueSize int, log *zap.Logger) *
 		id:                id,
 		name:              name,
 		state:             DISCONNECTED,
-		interruptedEvents: make([]*pb.Event, 1),
+		interruptedEvents: make([]*pb.Event, 0),
 		queue:             make(chan *pb.Event, queueSize),
 		ctx:               context.Background(),
 		log:               log,

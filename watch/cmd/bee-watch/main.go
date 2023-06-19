@@ -60,16 +60,17 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
 	}
-	wg.Add(1)
 	go socket.ListenAndServe(&wg, eventBuffer) // Don't move this away from the creation to ensure the socket is cleaned up.
+	wg.Add(1)
 
 	// Setup our subscriber manager:
-	sm := subscriber.NewSubscriberManager(log)
+	sm := subscriber.NewManager(log)
 	err = sm.UpdateConfiguration(subscriberConfigJson)
 	if err != nil {
 		log.Fatal("unable to configure subscribers", zap.Error(err))
 	}
 	go sm.Manage(ctx, &wg, eventBuffer)
+	wg.Add(1)
 
 	wg.Wait()
 	log.Info("all components stopped, exiting")

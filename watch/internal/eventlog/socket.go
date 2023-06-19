@@ -52,7 +52,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 	}, nil
 }
 
-// ListenAndServe should be called against an valid BeeGFSSocket created using New().
+// ListenAndServe should be called against an valid MetaSocket created using New().
 // It requires a pointer to a WaitGroup that will be marked done when it exits.
 //
 // When it starts it will wait until it receives a connection.
@@ -70,6 +70,11 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 
 	defer wg.Done()
 	defer b.socket.Close()
+
+	// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
+	// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
+	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
+	var seqId uint64 = 0
 
 	// Clean up socket path when exiting.
 	defer func() {
@@ -116,7 +121,11 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 						}
 						break
 					}
-					b.log.Info("adding event to event buffer", zap.Any("event", event))
+					// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
+					// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
+					// Remove once the BeeGFS metadata service starts sending us sequence IDs.
+					seqId++
+					event.SeqId = seqId
 					eventBuffer <- event
 				}
 			}
