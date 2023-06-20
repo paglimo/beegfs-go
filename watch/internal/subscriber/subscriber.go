@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -37,7 +38,7 @@ type BaseSubscriber struct {
 	id                string
 	name              string
 	state             SubscriberState
-	interruptedEvents []*pb.Event // Used as a temp buffer if the connection with a subscriber is lost.
+	interruptedEvents *types.EventRingBuffer // Used as a temp buffer if the connection with a subscriber is lost.
 	queue             chan *pb.Event
 	ctx               context.Context
 	log               *zap.Logger
@@ -72,7 +73,7 @@ func newBaseSubscriber(id string, name string, queueSize int, log *zap.Logger) *
 		id:                id,
 		name:              name,
 		state:             DISCONNECTED,
-		interruptedEvents: make([]*pb.Event, 0),
+		interruptedEvents: types.NewEventRingBuffer(2048), // TODO: This should be configurable.
 		queue:             make(chan *pb.Event, queueSize),
 		ctx:               context.Background(),
 		log:               log,
@@ -173,24 +174,22 @@ connectLoop:
 
 			// If the subscriber disconnected for some reason, we may have been interrupted trying to send events.
 			// Lets try to resend them before we enter the main connectedLoop:
-			if len(s.interruptedEvents) > 0 {
-				s.log.Info("sending interrupted events to subscriber", zap.Any("num_interrupted_events", len(s.interruptedEvents)))
-				err := s.send(s.interruptedEvents[0])
-				if err != nil {
-					s.state = SEND_ERR
-					// A failed send() would have added the event to the back of the interrupted events queue.
-					// To avoid sending duplicate events we'll drop it.
-					s.interruptedEvents = s.interruptedEvents[:len(s.interruptedEvents)-1]
-					s.log.Error("unable to send interrupted event", zap.Error(err), zap.Any("event_seq", s.interruptedEvents[0].SeqId), zap.Any("interrupted_event_count", len(s.interruptedEvents)))
-					// We hit an error so all we can do is try to reconnect again.
-					continue connectLoop
+			if !s.interruptedEvents.IsEmpty() {
+				s.log.Info("sending interrupted events to subscriber")
 
-				} else {
-					// Otherwise if the event was sent lets pop it from the queue.
-					// Note a slice is not the most efficient data structure to use as a queue,
-					// but since we don't expect this queue to be large since it should mostly be used as a
-					// recovery mechanism, the simplicity probably outweighs the benefits of a better approach.
-					s.interruptedEvents = s.interruptedEvents[1:]
+				for !s.interruptedEvents.IsEmpty() {
+					// We don't want to remove the event from the buffer until we're sure it was sent successfully:
+					err := s.send(s.interruptedEvents.Peek())
+					if err != nil {
+						s.state = SEND_ERR
+						s.log.Error("unable to send interrupted event", zap.Error(err), zap.Any("event_seq", s.interruptedEvents.Peek().SeqId))
+						// We hit an error so all we can do is try to reconnect again.
+						continue connectLoop
+
+					} else {
+						// Otherwise if the event was sent lets pop it from the event buffer.
+						_ = s.interruptedEvents.Pop()
+					}
 				}
 			}
 
@@ -208,6 +207,9 @@ connectLoop:
 					if err := s.send(event); err != nil {
 						s.state = SEND_ERR
 						s.log.Error("unable to send event", zap.Error(err))
+						// We don't know if the event was sent successfully or not so lets mark it interrupted.
+						// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
+						s.interruptedEvents.Push(event)
 						break connectedLoop
 					}
 				case response, ok := <-recvStream:
@@ -219,14 +221,52 @@ connectLoop:
 					}
 					s.log.Debug("received response from subscriber", zap.Any("response", response))
 					// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
+					// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
+					// Probably nothing because there is no expectation subscribers ack every event back to BeeWatch, or BW ack every event to meta.
+					// If we're able to reconnect then we'll start reading the recvStream again.
+					// If we're shutting down it doesn't matter since BeeWatch doesn't store any state on-disk.
+					// Whatever ack's events back to meta will need to handle if a subscriber is removed, knowing to disregard events it hasn't ack'd.
 				}
 			}
+
+		drainLoop:
+			for {
+				select {
+				case event := <-s.queue:
+					s.interruptedEvents.Push(event)
+				default:
+					break drainLoop
+				}
+			}
+
 		}
 	}
 }
 
 // Enqueue is called to add an event to the send queue for a particular subscriber.
 func (s *BaseSubscriber) Enqueue(event *pb.Event) {
+
+	// TODO (current location): Enqueue should only add events to s.queue when state == CONNECTED.
+	// Otherwise it should just add them directly to the interruptedEvents buffer.
+	// However that is not currently thread safe.
+	// Options include:
+	// (a) add a Mutex to EventRingBuffer
+	// There is also some overhead due to locking, but it should be fairly minimal since we only
+	// need to coordinate between the drainLoop and Enqueue (which shouldn't happen often).
+	// But if we're wanting to keep events in sequential order, this doesn't provide that guarantee.
+	// Especially if we implement the mutex properly inside the methods of EventRingBuffer.
+	// We made it public we could use it to coordinate between drainLoop and Enqueue.
+	// The connectedLoop could lock the mutex before changing the state of the subscriber.
+	// Then Enqueue notices the state change but has to wait for us to flush all events from s.queue.
+	// The mutex and state change also prevent Enqueue from endlessly adding new events to s.queue.
+	//
+	// (b) we the state of the subscriber to determine where the event should go.
+	// This seems like a more clear cut approach, but I'm not sure how it would work yet.
+	// Ideally we have a special drain state that Enqueue knows about, but the way we currently set
+	// states the connectedLoop changes the state to affect the disconnectLoop.
+	//
+	// Whatever we do we also need to increase the size of s.queue.
+
 	s.queue <- event
 }
 

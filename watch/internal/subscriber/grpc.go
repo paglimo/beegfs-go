@@ -97,7 +97,6 @@ func (s *GRPCSubscriber) send(event *pb.Event) (err error) {
 
 	if err := s.stream.Send(event); err != nil {
 		// TODO: Is there ever a scenario where we'd want to retry to send the event?
-		s.interruptedEvents = append(s.interruptedEvents, event)
 		return fmt.Errorf("unable to send event to subscriber: %w", err)
 	}
 
