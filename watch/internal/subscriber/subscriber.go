@@ -11,6 +11,13 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	// TODO: Make this configurable.
+	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
+	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
+	maxReconnectBackoff = 60
+)
+
 // Subscriber defines the methods all subscribers (such as gRPC) are expected to implement.
 type Subscriber interface {
 	connect() (retry bool, err error)
@@ -147,6 +154,9 @@ func (s *BaseSubscriber) GetName() string {
 //     disconnected connection should not result in an error.
 func (s *BaseSubscriber) Manage() {
 
+	// If we can't connect to a subscriber we'll wait this long to try again.
+	// This number increases exponentially with every retry for the same connection attempt.
+	// It resets after a successful connection.
 	var reconnectBackOff float64 = 1
 
 connectLoop:
@@ -191,7 +201,7 @@ connectLoop:
 		case <-s.ctx.Done():
 			s.log.Info("not attempting to connect because the subscriber is shutting down")
 			return
-		case <-time.After(time.Second * time.Duration(reconnectBackOff)):
+		case <-time.After(time.Second * time.Duration(reconnectBackOff)): // We use this instead of time.Ticker so we can change the duration.
 			s.log.Info("connecting to subscriber")
 			if state, _ := s.GetStateStatus(); state == STATE_DISCONNECTED || state == STATE_CONNECTING {
 				s.SetStateStatus(STATE_CONNECTING, STATUS_OKAY)
@@ -203,10 +213,13 @@ connectLoop:
 						return
 					}
 
-					// TODO: Probably we don't want to keep increasing the timer forever.
 					// We'll retry to connect with an exponential back off. We'll add some jitter to avoid load spikes.
-					reconnectBackOff = float64(reconnectBackOff) * (2 + rand.Float64())
-					s.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_backoff_seconds", reconnectBackOff))
+					reconnectBackOff *= 2 + rand.Float64()
+					if reconnectBackOff > maxReconnectBackoff {
+						reconnectBackOff = maxReconnectBackoff - rand.Float64()
+					}
+
+					s.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
 					continue connectLoop
 				}
 
@@ -235,7 +248,7 @@ connectLoop:
 				}
 
 				s.SetStateStatus(STATE_CONNECTED, STATUS_OKAY)
-				reconnectBackOff = 0
+				reconnectBackOff = 1
 				s.log.Info("connected to subscriber")
 			} else {
 				// This probably indicates a bug with our state transitions.
