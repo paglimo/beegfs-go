@@ -10,7 +10,7 @@ import (
 func TestNewEventBuffer(t *testing.T) {
 
 	b := NewEventRingBuffer(5)
-	assert.Len(t, b.buffer, 5)
+	assert.Len(t, b.buffer, 5+1)
 }
 
 func TestEventBufferPushPop(t *testing.T) {

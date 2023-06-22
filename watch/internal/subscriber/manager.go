@@ -11,16 +11,16 @@ import (
 )
 
 type Manager struct {
-	log         *zap.Logger
-	subscribers []*BaseSubscriber
+	log      *zap.Logger
+	handlers []*Handler
 }
 
 func NewManager(log *zap.Logger) Manager {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	return Manager{
-		log:         log,
-		subscribers: make([]*BaseSubscriber, 0),
+		log:      log,
+		handlers: make([]*Handler, 0),
 	}
 }
 
@@ -45,18 +45,23 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 	//
 	// PS: Be careful not to over engineer the final approach.
 
-	for _, s := range sm.subscribers {
-		s.Stop()
+	for _, h := range sm.handlers {
+		h.Stop()
 	}
 
-	newSubscribers, err := newSubscribersFromJson(jsonConfig, sm.log)
+	newSubscribers, err := newSubscribersFromJson(jsonConfig)
 	if err != nil {
 		return err
 	}
 
-	sm.subscribers = newSubscribers
-	for _, s := range sm.subscribers {
-		go s.Manage()
+	var newHandlers []*Handler
+	for _, s := range newSubscribers {
+		newHandlers = append(newHandlers, newHandler(sm.log, s))
+	}
+
+	sm.handlers = newHandlers
+	for _, h := range sm.handlers {
+		go h.Handle()
 	}
 
 	return nil
@@ -71,19 +76,14 @@ func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup, eventBuffer <
 	for {
 		select {
 		case <-ctx.Done():
-			sm.log.Info("shutting down subscribers")
-			for _, s := range sm.subscribers {
-				s.Stop()
+			sm.log.Info("shutting down subscriber handlers")
+			for _, h := range sm.handlers {
+				h.Stop()
 			}
 			return
 		case event := <-eventBuffer:
-			for _, s := range sm.subscribers {
-				// TODO: Currently Enqueue will block if a subscriber is down once the channel is full.
-				// It should be modified to instead add events to the interruptedEvents queue
-				// in a thread safe manner if a subscriber is not connected.
-				// Alternatively we could just add things directly to the slice and do away with the interruptedEvents queue.
-				// However I worry that would be very inefficient.
-				s.Enqueue(event)
+			for _, h := range sm.handlers {
+				h.Enqueue(event)
 			}
 		}
 

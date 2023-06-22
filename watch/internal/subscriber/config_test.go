@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 var jsonConfig string = `
@@ -23,13 +22,8 @@ var jsonConfig string = `
         "name": "beegfs-mon",
         "hostname":"bm-1",
 		"port":"512312",
-		"allow_insecure":false
-    },
-    {
-        "type": "invalid",
-        "id": "3",
-        "name": "smtp",
-		"bad":"field"
+		"allow_insecure":false,
+		"queue_size":2
     }
 ]
 `
@@ -39,19 +33,18 @@ var jsonConfig string = `
 // See the inline notes before adding tests for new/existing subscriber types.
 func TestNewSubscribersFromJson(t *testing.T) {
 
-	log, _ := zap.NewProductionConfig().Build()
-	configuredSubscribers, err := newSubscribersFromJson(jsonConfig, log)
+	configuredSubscribers, err := newSubscribersFromJson(jsonConfig)
 	assert.NoError(t, err)
 
-	// Expected subscribers should only include subscribers we expect to successfully parse from the JSON.
-	// The order matters because we will use that to determine which expected subscriber is compared to the
-	// parsed output from the above jsonConfig.
-	// In other words the Nth valid entry in jsonConfig should line up with the Nth entry below.
+	// The order of expectedSubscribers matters because we will use that to determine which expected subscriber
+	// is compared to the parsed output from the above jsonConfig.
+	// In other words the Nth entry in jsonConfig should line up with the Nth entry below.
 
 	expectedSubscribers := []*BaseSubscriber{
 		{
-			id:   "1",
-			name: "bee-remote",
+			id:        "1",
+			name:      "bee-remote",
+			queueSize: 2048,
 			SubscriberStateStatus: SubscriberStateStatus{
 				state:  STATE_DISCONNECTED,
 				status: STATUS_OKAY,
@@ -62,8 +55,9 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				AllowInsecure: true,
 			},
 		}, {
-			id:   "2",
-			name: "beegfs-mon",
+			id:        "2",
+			name:      "beegfs-mon",
+			queueSize: 2,
 			SubscriberStateStatus: SubscriberStateStatus{
 				state:  STATE_DISCONNECTED,
 				status: STATUS_OKAY,

@@ -3,8 +3,11 @@ package subscriber
 import (
 	"encoding/json"
 	"fmt"
+)
 
-	"go.uber.org/zap"
+// TODO: We should probably handle the default as part of global configuration.
+const (
+	defaultQueueSize = 2048
 )
 
 // SubscriberConfig defines all the possible configuration options that could be set on any type of subscriber.
@@ -22,9 +25,9 @@ type SubscriberConfig struct {
 
 // newSubscribersFromJson takes a string containing JSON defining the configuration for one or more subscribers.
 // It attempts to unmarshal and initialize each subscriber and returns a slice of all the subscribers.
-// It does not return an error if there are any invalid subscribers (or configuration/fields).
-// It does return an error if it was unable to unmarshal the provided JSON due to a syntax/other error.
-func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]*BaseSubscriber, error) {
+// It returns an error if there are any invalid subscribers (or configuration/fields).
+// It also returns an error if it was unable to unmarshal the provided JSON due to a syntax/other error.
+func newSubscribersFromJson(jsonConfig string) ([]*BaseSubscriber, error) {
 
 	var configs []SubscriberConfig
 
@@ -34,12 +37,10 @@ func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]*BaseSubscrib
 
 	var newSubscribers []*BaseSubscriber
 	for _, config := range configs {
-		log := log.With(zap.String("subscriber_id", config.ID))
-		s, err := newSubscriberFromConfig(config, log)
+		s, err := newSubscriberFromConfig(config)
 
 		if err != nil {
-			log.Info("unable to add subscriber (ignoring)", zap.Error(err), zap.Any("config", config))
-			continue
+			return nil, err
 		}
 		newSubscribers = append(newSubscribers, s)
 	}
@@ -50,19 +51,18 @@ func newSubscribersFromJson(jsonConfig string, log *zap.Logger) ([]*BaseSubscrib
 
 // newSubscriberFromConfig takes a SubscriberConfig and returns an initialized struct for the indicated subscriber type.
 // It will return an error if the requested subscriber type is unknown.
-func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (*BaseSubscriber, error) {
+func newSubscriberFromConfig(config SubscriberConfig) (*BaseSubscriber, error) {
 
-	// TODO: We should probably handle the default as part of global configuration.
 	queueSize := config.QueueSize
 	if queueSize == 0 {
-		queueSize = 2048
+		queueSize = defaultQueueSize
 	}
 
-	base := newBaseSubscriber(config.ID, config.Name, queueSize, log)
+	base := newBaseSubscriber(config.ID, config.Name, queueSize)
 
 	switch config.Type {
 	case "grpc":
-		subscriber := newGRPCSubscriber(log, config.Hostname, config.Port, config.AllowInsecure)
+		subscriber := newGRPCSubscriber(config.Hostname, config.Port, config.AllowInsecure)
 		// In order to use the connect and disconnect methods from the specific GRPCSubscriber struct,
 		// we need to ensure that the Subscriber interface in the BaseSubscriber is actually holding a GRPCSubscriber value.
 		// If we don't do this we'll get a panic because BaseSubscriber doesn't actually implement these methods.

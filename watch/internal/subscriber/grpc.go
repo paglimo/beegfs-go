@@ -9,7 +9,6 @@ import (
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -23,7 +22,6 @@ type GRPCSubscriber struct {
 	Hostname      string
 	Port          string
 	AllowInsecure bool
-	log           *zap.Logger
 	conn          *grpc.ClientConn
 	client        pb.SubscriberClient
 	stream        pb.Subscriber_ReceiveEventsClient
@@ -33,11 +31,10 @@ type GRPCSubscriber struct {
 
 var _ Subscriber = &GRPCSubscriber{} // Verify type satisfies interface.
 
-func newGRPCSubscriber(log *zap.Logger, hostname string, port string, allowInsecure bool) *GRPCSubscriber {
+func newGRPCSubscriber(hostname string, port string, allowInsecure bool) *GRPCSubscriber {
 	var mutex sync.Mutex
 
 	return &GRPCSubscriber{
-		log:           log,
 		Hostname:      hostname,
 		Port:          port,
 		AllowInsecure: allowInsecure,
@@ -78,7 +75,6 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 	}
 
 	s.client = pb.NewSubscriberClient(s.conn)
-	s.log.Debug("gRPC client initialized")
 
 	// We don't use a real context here because disconnect() handles cleaning up the stream.
 	// https://github.com/grpc/grpc-go/blob/v1.56.0/stream.go#L141
@@ -88,7 +84,6 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 		return true, fmt.Errorf("unable to setup gRPC client stream: %w", err)
 	}
 
-	s.log.Debug("setup gRPC event stream to server")
 	return false, nil
 }
 
@@ -120,7 +115,9 @@ func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 	// However it guarantees there will only ever be one Go routine listening to subscriber responses.
 	// It also guarantees we don't try and reinitialize an in-use channel until it is closed.
 	if !s.recvMutex.TryLock() {
-		s.log.Warn("already listening for responses from this subscriber (returning existing receive stream channel)")
+		// TODO: We don't have a logger on the subscribers anymore.
+		// Do we care enough about this to return it as a response somehow? Ideally as a specific error type?
+		// s.log.Warn("already listening for responses from this subscriber (returning existing receive stream channel)")
 		return s.recvStream
 	}
 
@@ -135,7 +132,11 @@ func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 			if err == io.EOF {
 				return
 			} else if err != nil {
-				s.log.Error("failed to receive response", zap.Error(err))
+				// TODO: Now that we don't have a logger on the subscribers anymore, figure out how to handle.
+				// One option is to have the recvStream channel actually send back a struct with a pb.Response and an error.
+				// Then if the response is nil whatever is reading from recvStream can handle the error.
+				// s.log.Error("failed to receive response", zap.Error(err))
+
 				// TODO: Figure out if/how we want to handle this scenario better.
 				// For example retry a few times or parse the error.
 				// For now we'll treat it as a remote disconnect which will try to reconnect.
@@ -174,12 +175,13 @@ func (s *GRPCSubscriber) disconnect() error {
 	responseLoop:
 		for {
 			select {
-			case response, ok := <-s.recvStream:
+			case _, ok := <-s.recvStream:
 				if !ok {
 					break responseLoop // Subscriber has already disconnected.
 				}
-				s.log.Info("received response from subscriber", zap.Any("response", response))
 				// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
+				// Since subscribers don't have a logger anymore, if we need to log this for debugging figure another way.
+				// s.log.Info("received response from subscriber", zap.Any("response", response))
 				continue responseLoop
 			case <-time.After(time.Duration(disconnectTimeout) * time.Second):
 				// This indicates the subscriber didn't close the stream we're receiving responses from them in time.
