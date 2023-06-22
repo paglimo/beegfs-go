@@ -1,6 +1,7 @@
 package subscriber
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"sync"
@@ -13,11 +14,16 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	// Time we'll wait after closing our end of the connection for the subscriber to disconnect.
+	disconnectTimeout = 30 // TODO: Make the disconnect timeout configurable.
+)
+
 type GRPCSubscriber struct {
-	BaseSubscriber
 	Hostname      string
 	Port          string
 	AllowInsecure bool
+	log           *zap.Logger
 	conn          *grpc.ClientConn
 	client        pb.SubscriberClient
 	stream        pb.Subscriber_ReceiveEventsClient
@@ -27,36 +33,33 @@ type GRPCSubscriber struct {
 
 var _ Subscriber = &GRPCSubscriber{} // Verify type satisfies interface.
 
-func newGRPCSubscriber(base *BaseSubscriber, hostname string, port string, allowInsecure bool) *GRPCSubscriber {
+func newGRPCSubscriber(log *zap.Logger, hostname string, port string, allowInsecure bool) *GRPCSubscriber {
 	var mutex sync.Mutex
 
 	return &GRPCSubscriber{
-		BaseSubscriber: *base,
-		Hostname:       hostname,
-		Port:           port,
-		AllowInsecure:  allowInsecure,
-		recvMutex:      &mutex,
+		log:           log,
+		Hostname:      hostname,
+		Port:          port,
+		AllowInsecure: allowInsecure,
+		recvMutex:     &mutex,
 	}
 }
 
 // This is a "comparable" view of the GRPCSubscriber struct used for testing.
 // When GRPCSubscriber is updated it should also be updated with any fields that are a comparable type.
 type ComparableGRPCSubscriber struct {
-	ComparableBaseSubscriber
 	Hostname      string
 	Port          string
 	AllowInsecure bool
 }
 
 // Used for testing (notably TestNewSubscribersFromJson).
-func newComparableGRPCSubscriber(s GRPCSubscriber) ComparableGRPCSubscriber {
+func newComparableGRPCSubscriber(s *GRPCSubscriber) ComparableGRPCSubscriber {
 
-	base := newComparableBaseSubscriber(s.BaseSubscriber)
 	return ComparableGRPCSubscriber{
-		ComparableBaseSubscriber: base,
-		Hostname:                 s.Hostname,
-		Port:                     s.Port,
-		AllowInsecure:            s.AllowInsecure,
+		Hostname:      s.Hostname,
+		Port:          s.Port,
+		AllowInsecure: s.AllowInsecure,
 	}
 
 }
@@ -77,10 +80,9 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 	s.client = pb.NewSubscriberClient(s.conn)
 	s.log.Debug("gRPC client initialized")
 
-	// TODO: Evaluate if this causes problems to reuse the context here.
-	// Because we connect and disconnect in two separate functions,
-	// we need to ensure we're actually able to run out disconnect function before things shutdown.
-	s.stream, err = s.client.ReceiveEvents(s.ctx)
+	// We don't use a real context here because disconnect() handles cleaning up the stream.
+	// https://github.com/grpc/grpc-go/blob/v1.56.0/stream.go#L141
+	s.stream, err = s.client.ReceiveEvents(context.TODO())
 
 	if err != nil {
 		return true, fmt.Errorf("unable to setup gRPC client stream: %w", err)
@@ -152,9 +154,14 @@ func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 // For example even if a connection was only partially established, it can be used to cleanup.
 // It will also attempt to receive any additional responses from the subscriber.
 // For example final acknowledgement of events that were already sent.
+//
+// It works as follows:
+// * First we attempt to close our end of the stream.
+// * If the subscriber is not already disconnected this should prompt them to wrap up and disconnect.
+// * If they don't disconnect within a configurable timeout we'll try to close the connection anyway.
+//   - We'll return an error and let the caller decide if they want to try and disconnect again.
 func (s *GRPCSubscriber) disconnect() error {
 
-	disconnectTimeout := 30
 	var multiErr types.MultiError
 
 	if err := s.stream.CloseSend(); err != nil {
@@ -169,13 +176,14 @@ func (s *GRPCSubscriber) disconnect() error {
 			select {
 			case response, ok := <-s.recvStream:
 				if !ok {
-					break // Subscriber has already disconnected.
+					break responseLoop // Subscriber has already disconnected.
 				}
 				s.log.Info("received response from subscriber", zap.Any("response", response))
 				// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
 				continue responseLoop
-			case <-time.After(time.Duration(disconnectTimeout)):
-				// TODO: Make the disconnect timeout configurable.
+			case <-time.After(time.Duration(disconnectTimeout) * time.Second):
+				// This indicates the subscriber didn't close the stream we're receiving responses from them in time.
+				// Maybe they're hung or the connection is broken.
 				err := fmt.Errorf("subscriber failed to disconnect within the %ds timeout", disconnectTimeout)
 				multiErr.Errors = append(multiErr.Errors, err)
 				break responseLoop

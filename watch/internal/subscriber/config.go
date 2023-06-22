@@ -55,14 +55,14 @@ func newSubscriberFromConfig(config SubscriberConfig, log *zap.Logger) (*BaseSub
 	// TODO: We should probably handle the default as part of global configuration.
 	queueSize := config.QueueSize
 	if queueSize == 0 {
-		queueSize = 100
+		queueSize = 2048
 	}
 
 	base := newBaseSubscriber(config.ID, config.Name, queueSize, log)
 
 	switch config.Type {
 	case "grpc":
-		subscriber := newGRPCSubscriber(base, config.Hostname, config.Port, config.AllowInsecure)
+		subscriber := newGRPCSubscriber(log, config.Hostname, config.Port, config.AllowInsecure)
 		// In order to use the connect and disconnect methods from the specific GRPCSubscriber struct,
 		// we need to ensure that the Subscriber interface in the BaseSubscriber is actually holding a GRPCSubscriber value.
 		// If we don't do this we'll get a panic because BaseSubscriber doesn't actually implement these methods.

@@ -3,6 +3,7 @@ package subscriber
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"time"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
@@ -15,29 +16,67 @@ type Subscriber interface {
 	connect() (retry bool, err error)
 	send(*pb.Event) (err error)
 	receive() chan *pb.Response
+	// disconnect should be idempotent and not return an error even if called against an already disconnected subscriber.
 	disconnect() (err error)
 }
 
-// IMPORTANT:
-// The BaseSubscriber.Manage() method is the ONLY place where SubscriberStates should change.
+// SubscriberState state is used to communicate the state of a subscriber to the outside world.
+// IMPORTANT: BaseSubscriber.Manage() method is the ONLY place where SubscriberStates should change.
 // All actual implementations such as connect(), send(), disconnect(), etc. should not affect the state.
-// The manager sets the set in response to the return values from these functions.
 type SubscriberState string
 
 const (
-	DISCONNECTED      SubscriberState = "disconnected"
-	CONNECTING        SubscriberState = "connecting"
-	CONNECTED         SubscriberState = "connected"
-	LOCAL_DISCONNECT  SubscriberState = "local_disconnect"
-	REMOTE_DISCONNECT SubscriberState = "remote_disconnect"
-	SEND_ERR          SubscriberState = "send_error"
-	CONNECT_ERR       SubscriberState = "connect_err"
+	STATE_DISCONNECTED SubscriberState = "disconnected"
+	STATE_CONNECTING   SubscriberState = "connecting"
+	STATE_CONNECTED    SubscriberState = "connected"
+	// Draining indicates an issue occurred with a connection and all events need to be drained from the queue to the interrupted events buffer.
+	// While in this state Enqueue() should not add new events to the queue or interrupted events buffer.
+	// This is to allow time for the current queue to be drained to the interrupted event buffer, ensuring events are buffered in order.
+	STATE_DRAINING SubscriberState = "draining"
+	// Disconnecting signals a subscriber needs to disconnect for some reason.
+	STATE_DISCONNECTING SubscriberState = "disconnecting"
 )
 
+// SubscriberStatus state is used internally to determine what state a subscriber should be placed in next.
+// In other words it is the result of the last state change.
+// IMPORTANT: BaseSubscriber.Manage() method is the ONLY place where SubscriberStates should change.
+// All actual implementations such as connect(), send(), disconnect(), etc. should not affect the state.
+type SubscriberStatus string
+
+const (
+	STATUS_OKAY              SubscriberStatus = "ok"
+	STATUS_LOCAL_DISCONNECT  SubscriberStatus = "local_disconnect"
+	STATUS_REMOTE_DISCONNECT SubscriberStatus = "remote_disconnect"
+	STATUS_SEND_ERROR        SubscriberStatus = "send_error"
+	STATUS_CONNECT_ERROR     SubscriberStatus = "connect_error"
+	STATUS_DISCONNECT_ERROR  SubscriberStatus = "disconnect_error"
+)
+
+type SubscriberStateStatus struct {
+	// State should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
+	state SubscriberState
+	// Status should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
+	status SubscriberStatus
+	mutex  sync.RWMutex
+}
+
+func (s *SubscriberStateStatus) GetStateStatus() (state SubscriberState, status SubscriberStatus) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.state, s.status
+}
+
+func (s *SubscriberStateStatus) SetStateStatus(state SubscriberState, status SubscriberStatus) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.state = state
+	s.status = status
+}
+
 type BaseSubscriber struct {
-	id                string
-	name              string
-	state             SubscriberState
+	id   string
+	name string
+	SubscriberStateStatus
 	interruptedEvents *types.EventRingBuffer // Used as a temp buffer if the connection with a subscriber is lost.
 	queue             chan *pb.Event
 	ctx               context.Context
@@ -49,18 +88,21 @@ type BaseSubscriber struct {
 // When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
 // Notably the queue, ctx, and log fields are not comparable and thus omitted.
 type ComparableBaseSubscriber struct {
-	id    string
-	name  string
-	state SubscriberState
+	id   string
+	name string
+	SubscriberStateStatus
 }
 
 // Used for testing (notably TestNewSubscribersFromJson).
 // This should be updated when ComparableBaseSubscriber is modified.
-func newComparableBaseSubscriber(s BaseSubscriber) ComparableBaseSubscriber {
+func newComparableBaseSubscriber(s *BaseSubscriber) ComparableBaseSubscriber {
 	return ComparableBaseSubscriber{
-		id:    s.id,
-		name:  s.name,
-		state: s.state,
+		id:   s.id,
+		name: s.name,
+		SubscriberStateStatus: SubscriberStateStatus{
+			state:  STATE_DISCONNECTED,
+			status: STATUS_OKAY,
+		},
 	}
 }
 
@@ -70,10 +112,13 @@ func newBaseSubscriber(id string, name string, queueSize int, log *zap.Logger) *
 	log = log.With(zap.String("subscriber", name))
 
 	return &BaseSubscriber{
-		id:                id,
-		name:              name,
-		state:             DISCONNECTED,
-		interruptedEvents: types.NewEventRingBuffer(2048), // TODO: This should be configurable.
+		id:   id,
+		name: name,
+		SubscriberStateStatus: SubscriberStateStatus{
+			state:  STATE_DISCONNECTED,
+			status: STATUS_OKAY,
+		},
+		interruptedEvents: types.NewEventRingBuffer(queueSize),
 		queue:             make(chan *pb.Event, queueSize),
 		ctx:               context.Background(),
 		log:               log,
@@ -107,27 +152,33 @@ func (s *BaseSubscriber) Manage() {
 connectLoop:
 	for {
 
-		// First we'll handle if the result of the last connectLoop was we need to disconnect:
-		if s.state == SEND_ERR || s.state == LOCAL_DISCONNECT || s.state == REMOTE_DISCONNECT {
+		// If we're in state disconnecting, something asked us to disconnect:
+		if lastState, lastStatus := s.GetStateStatus(); lastState == STATE_DISCONNECTING {
 		disconnectLoop:
 			for {
 				err := s.disconnect()
 				if err != nil {
+					s.SetStateStatus(STATE_DISCONNECTING, STATUS_DISCONNECT_ERROR)
 					s.log.Error("encountered one or more errors disconnecting subscriber (ignoring)", zap.Error(err))
 
 					select {
 					case <-s.ctx.Done():
 						return // We failed to disconnect but we were asked to shutdown so lets quit to avoid blocking.
 					default:
+						// Otherwise lets keep trying to disconnect.
+						// The subscriber should handle if we're calling disconnect on an already disconnected subscriber.
+						// So any error here means we shouldn't try to reconnect.
 						continue disconnectLoop
 					}
 				}
 
-				if s.state == LOCAL_DISCONNECT {
-					s.state = DISCONNECTED
+				s.SetStateStatus(STATE_DISCONNECTED, STATUS_OKAY)
+				if lastStatus == STATUS_LOCAL_DISCONNECT {
+					// If the last status was a local disconnect, don't try to reconnect and stop managing the subscriber:
 					return
+
 				} else {
-					s.state = DISCONNECTED
+					// Otherwise we are now disconnected and ready to connect again:
 					break disconnectLoop
 				}
 
@@ -135,17 +186,18 @@ connectLoop:
 
 		}
 
-		// Next check if we should connect/reconnect:
+		// If we're disconnected we should try and connect. If we're already connecting continue trying.
 		select {
 		case <-s.ctx.Done():
 			s.log.Info("not attempting to connect because the subscriber is shutting down")
 			return
 		case <-time.After(time.Second * time.Duration(reconnectBackOff)):
 			s.log.Info("connecting to subscriber")
-			if s.state == DISCONNECTED {
+			if state, _ := s.GetStateStatus(); state == STATE_DISCONNECTED || state == STATE_CONNECTING {
+				s.SetStateStatus(STATE_CONNECTING, STATUS_OKAY)
 				retry, err := s.connect()
 				if err != nil {
-
+					s.SetStateStatus(STATE_CONNECTING, STATUS_CONNECT_ERROR)
 					if !retry {
 						s.log.Error("unable to connect to subscriber (unable to retry)", zap.Error(err))
 						return
@@ -157,7 +209,33 @@ connectLoop:
 					s.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_backoff_seconds", reconnectBackOff))
 					continue connectLoop
 				}
-				s.state = CONNECTED
+
+				// If the subscriber disconnected for some reason, we may have been interrupted trying to send events.
+				// Lets try to resend them before we enter the main connectedLoop:
+				// First we need to set the status to draining to ensure Enqueue doesn't keep adding events:
+				s.SetStateStatus(STATE_DRAINING, STATUS_OKAY)
+
+				if !s.interruptedEvents.IsEmpty() {
+					s.log.Info("sending interrupted events to subscriber")
+
+					for !s.interruptedEvents.IsEmpty() {
+						// We don't want to remove the event from the buffer until we're sure it was sent successfully:
+						err := s.send(s.interruptedEvents.Peek())
+						if err != nil {
+							s.SetStateStatus(STATE_DISCONNECTING, STATUS_SEND_ERROR)
+							s.log.Error("unable to send interrupted event", zap.Error(err), zap.Any("event_seq", s.interruptedEvents.Peek().SeqId))
+							// We hit an error so all we can do is try to reconnect again.
+							continue connectLoop
+
+						} else {
+							// Otherwise if the event was sent lets pop it from the event buffer.
+							_ = s.interruptedEvents.Pop()
+						}
+					}
+				}
+
+				s.SetStateStatus(STATE_CONNECTED, STATUS_OKAY)
+				reconnectBackOff = 0
 				s.log.Info("connected to subscriber")
 			} else {
 				// This probably indicates a bug with our state transitions.
@@ -167,31 +245,10 @@ connectLoop:
 		}
 
 		// Once connected start sending events and listening for responses:
-		if s.state == CONNECTED {
+		if state, _ := s.GetStateStatus(); state == STATE_CONNECTED {
 
 			// Start listening for responses from the subscriber:
 			recvStream := s.receive()
-
-			// If the subscriber disconnected for some reason, we may have been interrupted trying to send events.
-			// Lets try to resend them before we enter the main connectedLoop:
-			if !s.interruptedEvents.IsEmpty() {
-				s.log.Info("sending interrupted events to subscriber")
-
-				for !s.interruptedEvents.IsEmpty() {
-					// We don't want to remove the event from the buffer until we're sure it was sent successfully:
-					err := s.send(s.interruptedEvents.Peek())
-					if err != nil {
-						s.state = SEND_ERR
-						s.log.Error("unable to send interrupted event", zap.Error(err), zap.Any("event_seq", s.interruptedEvents.Peek().SeqId))
-						// We hit an error so all we can do is try to reconnect again.
-						continue connectLoop
-
-					} else {
-						// Otherwise if the event was sent lets pop it from the event buffer.
-						_ = s.interruptedEvents.Pop()
-					}
-				}
-			}
 
 			s.log.Info("beginning to stream events to subscriber")
 
@@ -200,12 +257,12 @@ connectLoop:
 				select {
 				case <-s.ctx.Done():
 					// The context should only be cancelled if something local requested a disconnect.
-					s.state = LOCAL_DISCONNECT
+					s.SetStateStatus(STATE_DRAINING, STATUS_LOCAL_DISCONNECT)
 					s.log.Info("local disconnect requested")
 					break connectedLoop
 				case event := <-s.queue:
 					if err := s.send(event); err != nil {
-						s.state = SEND_ERR
+						s.SetStateStatus(STATE_DRAINING, STATUS_SEND_ERROR)
 						s.log.Error("unable to send event", zap.Error(err))
 						// We don't know if the event was sent successfully or not so lets mark it interrupted.
 						// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
@@ -215,7 +272,7 @@ connectLoop:
 				case response, ok := <-recvStream:
 					if !ok {
 						// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
-						s.state = REMOTE_DISCONNECT
+						s.SetStateStatus(STATE_DRAINING, STATUS_REMOTE_DISCONNECT)
 						s.log.Info("remote disconnect received")
 						break connectedLoop
 					}
@@ -229,16 +286,18 @@ connectLoop:
 				}
 			}
 
-		drainLoop:
-			for {
-				select {
-				case event := <-s.queue:
-					s.interruptedEvents.Push(event)
-				default:
-					break drainLoop
+			if currentState, currentStatus := s.GetStateStatus(); currentState == STATE_DRAINING {
+			drainLoop:
+				for {
+					select {
+					case event := <-s.queue:
+						s.interruptedEvents.Push(event)
+					default:
+						s.SetStateStatus(STATE_DISCONNECTING, currentStatus)
+						break drainLoop
+					}
 				}
 			}
-
 		}
 	}
 }
@@ -246,28 +305,33 @@ connectLoop:
 // Enqueue is called to add an event to the send queue for a particular subscriber.
 func (s *BaseSubscriber) Enqueue(event *pb.Event) {
 
-	// TODO (current location): Enqueue should only add events to s.queue when state == CONNECTED.
-	// Otherwise it should just add them directly to the interruptedEvents buffer.
-	// However that is not currently thread safe.
-	// Options include:
-	// (a) add a Mutex to EventRingBuffer
-	// There is also some overhead due to locking, but it should be fairly minimal since we only
-	// need to coordinate between the drainLoop and Enqueue (which shouldn't happen often).
-	// But if we're wanting to keep events in sequential order, this doesn't provide that guarantee.
-	// Especially if we implement the mutex properly inside the methods of EventRingBuffer.
-	// We made it public we could use it to coordinate between drainLoop and Enqueue.
-	// The connectedLoop could lock the mutex before changing the state of the subscriber.
-	// Then Enqueue notices the state change but has to wait for us to flush all events from s.queue.
-	// The mutex and state change also prevent Enqueue from endlessly adding new events to s.queue.
-	//
-	// (b) we the state of the subscriber to determine where the event should go.
-	// This seems like a more clear cut approach, but I'm not sure how it would work yet.
-	// Ideally we have a special drain state that Enqueue knows about, but the way we currently set
-	// states the connectedLoop changes the state to affect the disconnectLoop.
-	//
-	// Whatever we do we also need to increase the size of s.queue.
+	// This is thread safe because getting the status will block if it is currently being updated.
+	state, _ := s.GetStateStatus()
 
-	s.queue <- event
+	if state == STATE_CONNECTED {
+		s.queue <- event
+		return
+	} else if state != STATE_DRAINING {
+		s.interruptedEvents.Push(event)
+		return
+	}
+
+	// Otherwise block until the subscriber has finished draining any current events in the queue
+	// so we can add the event (and subsequent events) in the right place in the interrupted events queue.
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			s.log.Info("unable to enqueue event because the subscriber is shutting down")
+		case <-ticker.C:
+			if state, _ := s.GetStateStatus(); state != STATE_DRAINING {
+				s.interruptedEvents.Push(event)
+				return
+			}
+		}
+	}
 }
 
 // Stop is called to cancel the context associated with a particular subscriber.

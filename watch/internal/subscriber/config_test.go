@@ -47,41 +47,50 @@ func TestNewSubscribersFromJson(t *testing.T) {
 	// The order matters because we will use that to determine which expected subscriber is compared to the
 	// parsed output from the above jsonConfig.
 	// In other words the Nth valid entry in jsonConfig should line up with the Nth entry below.
-	expectedSubscribers := []Subscriber{
-		&GRPCSubscriber{
-			BaseSubscriber: BaseSubscriber{
-				id:    "1",
-				name:  "bee-remote",
-				state: DISCONNECTED,
+
+	expectedSubscribers := []*BaseSubscriber{
+		{
+			id:   "1",
+			name: "bee-remote",
+			SubscriberStateStatus: SubscriberStateStatus{
+				state:  STATE_DISCONNECTED,
+				status: STATUS_OKAY,
 			},
-			Hostname:      "br-1",
-			Port:          "1234",
-			AllowInsecure: true,
-		},
-		&GRPCSubscriber{
-			BaseSubscriber: BaseSubscriber{
-				id:    "2",
-				name:  "beegfs-mon",
-				state: DISCONNECTED,
+			Subscriber: &GRPCSubscriber{
+				Hostname:      "br-1",
+				Port:          "1234",
+				AllowInsecure: true,
 			},
-			Hostname:      "bm-1",
-			Port:          "512312",
-			AllowInsecure: false,
+		}, {
+			id:   "2",
+			name: "beegfs-mon",
+			SubscriberStateStatus: SubscriberStateStatus{
+				state:  STATE_DISCONNECTED,
+				status: STATUS_OKAY,
+			},
+			Subscriber: &GRPCSubscriber{
+				Hostname:      "bm-1",
+				Port:          "512312",
+				AllowInsecure: false,
+			},
 		},
 	}
 
 	assert.Len(t, configuredSubscribers, len(expectedSubscribers))
 
-	for i, subscriber := range configuredSubscribers {
+	for i, baseSubscriber := range configuredSubscribers {
+
+		assert.Equal(t, newComparableBaseSubscriber(expectedSubscribers[i]), newComparableBaseSubscriber(baseSubscriber))
+
 		// If support is added for new subscriber types they will need to be added to the type switch.
-		switch subscriber.Subscriber.(type) {
+		switch baseSubscriber.Subscriber.(type) {
 		case *GRPCSubscriber:
-			s := subscriber.Subscriber.(*GRPCSubscriber)
-			expectedSubscriber, ok := expectedSubscribers[i].(*GRPCSubscriber)
+			actualGRPCSubscriber := baseSubscriber.Subscriber.(*GRPCSubscriber)
+			expectedGRPCSubscriber, ok := expectedSubscribers[i].Subscriber.(*GRPCSubscriber)
 			assert.True(t, ok) // If s is the wrong subscriber type, then the expected subscriber type won't match.
 			// We use the newComparableXSubscriber() functions provided alongside each subscriber implementation
 			// to get a comparable view of the expected and configured subscriber.
-			assert.Equal(t, newComparableGRPCSubscriber(*expectedSubscriber), newComparableGRPCSubscriber(*s))
+			assert.Equal(t, newComparableGRPCSubscriber(expectedGRPCSubscriber), newComparableGRPCSubscriber(actualGRPCSubscriber))
 		default:
 			assert.Fail(t, "unable to determine subscriber type")
 		}
