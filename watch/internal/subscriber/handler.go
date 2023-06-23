@@ -45,7 +45,7 @@ func newHandler(log *zap.Logger, subscriber *BaseSubscriber) *Handler {
 
 // Handles the connection with a particular Subscriber.
 // It determines the next state a subscriber should transition to in response to external and internal factors.
-// It and the methods it calls are the only places that should update the state and status of the subscriber.
+// It is the only place that should update the state of the subscriber.
 // TODO: Consider if we should add a mutex to handle to ensure only one instances can run at a time.
 func (h *Handler) Handle() {
 
@@ -54,7 +54,7 @@ func (h *Handler) Handle() {
 		case <-h.ctx.Done():
 			h.log.Info("shutting down subscriber")
 			// If we're shutting down we need to make sure we're disconnected to avoid resource leaks:
-			if state, _ := h.GetStateStatus(); state != STATE_DISCONNECTED {
+			if state := h.GetState(); state != STATE_DISCONNECTED {
 				h.doDisconnect()
 			}
 			return
@@ -65,27 +65,27 @@ func (h *Handler) Handle() {
 			// If we're connected we should start handling the connection.
 			// Otherwise we presume we need to disconnect for some reason.
 
-			if state, _ := h.GetStateStatus(); state == STATE_DISCONNECTED {
-				h.SetStateStatus(STATE_CONNECTING, STATUS_NONE)
+			if state := h.GetState(); state == STATE_DISCONNECTED {
+				h.setState(STATE_CONNECTING)
 				if h.connectLoop() {
 					// If the subscriber disconnected for some reason there may be interrupted events
 					// that need to be sent from while the subscriber was disconnected.
 					// To ensure events are sent in order lets try to send them before entering the main connectedLoop()
 					// First we need to set the status to draining to ensure Enqueue doesn't keep adding events:
-					h.SetStateStatus(STATE_DRAINING_IE, STATUS_NONE)
+					h.setState(STATE_DRAINING_IE)
 					if h.drainInterruptedEvents() {
-						h.SetStateStatus(STATE_CONNECTED, STATUS_NONE)
+						h.setState(STATE_CONNECTED)
 						h.connectedLoop()
-						h.SetStateStatus(STATE_DRAINING_Q, STATUS_NONE)
+						h.setState(STATE_DRAINING_Q)
 						h.drainQueue()
-						h.SetStateStatus(STATE_DISCONNECTING, STATUS_NONE)
+						h.setState(STATE_DISCONNECTING)
 					}
 				}
-			} else {
+			} else { // TODO: Could we just always disconnect here then get rid of the extra disconnect above guaranteeing at the end of the loop we'll be disconnected?
 				if h.doDisconnect() {
-					h.SetStateStatus(STATE_DISCONNECTED, STATUS_NONE)
+					h.setState(STATE_DISCONNECTED)
 				} else {
-					h.SetStateStatus(STATE_DISCONNECTING, STATUS_NONE)
+					h.setState(STATE_DISCONNECTING)
 				}
 			}
 		}
@@ -236,7 +236,7 @@ func (h *Handler) drainQueue() {
 func (h *Handler) Enqueue(event *pb.Event) {
 
 	// This is thread safe because getting the status will block if it is currently being updated.
-	state, _ := h.GetStateStatus()
+	state := h.GetState()
 
 	if state == STATE_CONNECTED {
 		h.queue <- event
@@ -256,7 +256,7 @@ func (h *Handler) Enqueue(event *pb.Event) {
 		case <-h.ctx.Done():
 			h.log.Info("unable to enqueue event because the subscriber is shutting down")
 		case <-ticker.C:
-			if state, _ := h.GetStateStatus(); state != STATE_DRAINING_IE && state != STATE_DRAINING_Q {
+			if state := h.GetState(); state != STATE_DRAINING_IE && state != STATE_DRAINING_Q {
 				h.interruptedEvents.Push(event)
 				return
 			}

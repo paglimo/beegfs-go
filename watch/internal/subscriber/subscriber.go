@@ -15,9 +15,8 @@ type Subscriber interface {
 	disconnect() (err error)
 }
 
-// SubscriberState state is used to communicate the state of a subscriber to the outside world.
-// IMPORTANT: BaseSubscriber.Manage() method is the ONLY place where SubscriberStates should change.
-// All actual implementations such as connect(), send(), disconnect(), etc. should not affect the state.
+// SubscriberState should not be used directly.
+// It should be set/inspected using the thread safe SubscriberSafeState methods.
 type SubscriberState string
 
 const (
@@ -35,43 +34,29 @@ const (
 	STATE_DISCONNECTING SubscriberState = "disconnecting"
 )
 
-// SubscriberStatus state is used internally to determine what state a subscriber should be placed in next.
-// In other words it is the result of the last state change.
-// IMPORTANT: BaseSubscriber.Manage() method is the ONLY place where SubscriberStates should change.
-// All actual implementations such as connect(), send(), disconnect(), etc. should not affect the state.
-type SubscriberStatus string
-
-const (
-	STATUS_OKAY              SubscriberStatus = "ok"
-	STATUS_NONE              SubscriberStatus = "none"
-	STATUS_LOCAL_DISCONNECT  SubscriberStatus = "local_disconnect"
-	STATUS_REMOTE_DISCONNECT SubscriberStatus = "remote_disconnect"
-	STATUS_SEND_ERROR        SubscriberStatus = "send_error"
-	STATUS_CONNECT_ERROR     SubscriberStatus = "connect_error"
-	STATUS_DISCONNECT_ERROR  SubscriberStatus = "disconnect_error"
-)
-
-type SubscriberStateStatus struct {
+// The GetState() method provided by SubscriberSafeState are used to communicate the state of a subscriber to the outside world.
+// External readers SHOULD NOT inspect the state directly, but instead use the thread safe GetState() method.
+// The Handler.Handle() method is the ONLY place where SubscriberStates should change.
+// All internal handler methods and subscriber methods such as connect(), send(), disconnect(), etc. should not affect the state.
+type SubscriberSafeState struct {
 	// State should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
 	state SubscriberState
 	// Status should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
-	status SubscriberStatus
-	mutex  sync.RWMutex
+	mutex sync.RWMutex
 }
 
-// GetStateStatus() is a thread safe mechanism to get the current state and status of a subscriber.
-func (s *SubscriberStateStatus) GetStateStatus() (state SubscriberState, status SubscriberStatus) {
+// GetState() is a thread safe mechanism to get the current state and status of a subscriber.
+func (s *SubscriberSafeState) GetState() (state SubscriberState) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	return s.state, s.status
+	return s.state
 }
 
-// SetStateStatus() is a thread safe mechanism to set the current state and status of a subscriber.
-func (s *SubscriberStateStatus) SetStateStatus(state SubscriberState, status SubscriberStatus) {
+// setState() is a thread safe mechanism to set the current state and status of a subscriber.
+func (s *SubscriberSafeState) setState(state SubscriberState) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.state = state
-	s.status = status
 }
 
 // BaseSubscriber contains common fields used by all subscribers.
@@ -79,7 +64,7 @@ type BaseSubscriber struct {
 	id        string
 	name      string
 	queueSize int
-	SubscriberStateStatus
+	SubscriberSafeState
 	Subscriber
 }
 
@@ -90,7 +75,7 @@ type ComparableBaseSubscriber struct {
 	id        string
 	name      string
 	queueSize int
-	SubscriberStateStatus
+	SubscriberSafeState
 }
 
 // Used for testing (notably TestNewSubscribersFromJson).
@@ -100,9 +85,8 @@ func newComparableBaseSubscriber(s *BaseSubscriber) ComparableBaseSubscriber {
 		id:        s.id,
 		name:      s.name,
 		queueSize: s.queueSize,
-		SubscriberStateStatus: SubscriberStateStatus{
-			state:  STATE_DISCONNECTED,
-			status: STATUS_OKAY,
+		SubscriberSafeState: SubscriberSafeState{
+			state: STATE_DISCONNECTED,
 		},
 	}
 }
@@ -116,9 +100,8 @@ func newBaseSubscriber(id string, name string, queueSize int) *BaseSubscriber {
 		id:        id,
 		name:      name,
 		queueSize: queueSize,
-		SubscriberStateStatus: SubscriberStateStatus{
-			state:  STATE_DISCONNECTED,
-			status: STATUS_OKAY,
+		SubscriberSafeState: SubscriberSafeState{
+			state: STATE_DISCONNECTED,
 		},
 	}
 }

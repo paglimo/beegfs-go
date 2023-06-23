@@ -45,9 +45,8 @@ func TestNewSubscribersFromJson(t *testing.T) {
 			id:        "1",
 			name:      "bee-remote",
 			queueSize: 2048,
-			SubscriberStateStatus: SubscriberStateStatus{
-				state:  STATE_DISCONNECTED,
-				status: STATUS_OKAY,
+			SubscriberSafeState: SubscriberSafeState{
+				state: STATE_DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
 				Hostname:      "br-1",
@@ -58,9 +57,8 @@ func TestNewSubscribersFromJson(t *testing.T) {
 			id:        "2",
 			name:      "beegfs-mon",
 			queueSize: 2,
-			SubscriberStateStatus: SubscriberStateStatus{
-				state:  STATE_DISCONNECTED,
-				status: STATUS_OKAY,
+			SubscriberSafeState: SubscriberSafeState{
+				state: STATE_DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
 				Hostname:      "bm-1",
