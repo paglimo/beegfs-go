@@ -15,6 +15,8 @@ const (
 	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
 	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
 	maxReconnectBackoff = 60
+	// defaultInterruptedEventBufferSize is the number of events that can be buffered while this subscriber is disconnected.
+	defaultInterruptedEventBufferSize = 976562
 )
 
 type Handler struct {
@@ -32,9 +34,9 @@ func newHandler(log *zap.Logger, subscriber *BaseSubscriber) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
-		// interruptedEvents and the queue should always be the same size
+		// interruptedEvents should always be as larger or larger than the queue
 		// to ensure we can flush the queue to the interruptedEvents buffer.
-		interruptedEvents: types.NewEventRingBuffer(subscriber.queueSize),
+		interruptedEvents: types.NewEventRingBuffer(defaultInterruptedEventBufferSize),
 		queue:             make(chan *pb.Event, subscriber.queueSize),
 		ctx:               ctx,
 		cancel:            cancel,
@@ -53,10 +55,10 @@ func (h *Handler) Handle() {
 		select {
 		case <-h.ctx.Done():
 			h.log.Info("shutting down subscriber")
-			// If we're shutting down we need to make sure we're disconnected to avoid resource leaks:
-			if state := h.GetState(); state != STATE_DISCONNECTED {
-				h.doDisconnect()
-			}
+			// At this point we should already be disconnected, or disconnecting if there was an error.
+			// In the future we may want to consider a mechanism if we were unable to disconnect, to retry a few times.
+			// If the app is shutting down those resources should be cleaned up.
+			// For now we'll just go ahead and shutdown.
 			return
 		default:
 
@@ -78,15 +80,14 @@ func (h *Handler) Handle() {
 						h.connectedLoop()
 						h.setState(STATE_DRAINING_Q)
 						h.drainQueue()
-						h.setState(STATE_DISCONNECTING)
 					}
 				}
-			} else { // TODO: Could we just always disconnect here then get rid of the extra disconnect above guaranteeing at the end of the loop we'll be disconnected?
-				if h.doDisconnect() {
-					h.setState(STATE_DISCONNECTED)
-				} else {
-					h.setState(STATE_DISCONNECTING)
-				}
+			}
+
+			// If the connection was lost for any reason, we should first disconnect before we reconnect or shutdown:
+			h.setState(STATE_DISCONNECTING)
+			if h.doDisconnect() {
+				h.setState(STATE_DISCONNECTED)
 			}
 		}
 	}

@@ -1,6 +1,8 @@
 package types
 
 import (
+	"sync"
+
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 )
 
@@ -8,6 +10,7 @@ type EventRingBuffer struct {
 	buffer []*pb.Event
 	start  int
 	end    int
+	mutex  sync.RWMutex
 }
 
 // Returns an ring buffer used to store pointers to events.
@@ -24,6 +27,8 @@ func NewEventRingBuffer(size int) *EventRingBuffer {
 // Push adds an event to the ring buffer.
 // If the capacity is exceeded the oldest event is overwritten.
 func (b *EventRingBuffer) Push(event *pb.Event) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	b.buffer[b.end] = event
 	b.end = (b.end + 1) % len(b.buffer)
@@ -37,6 +42,8 @@ func (b *EventRingBuffer) Push(event *pb.Event) {
 // Pop returns a pointer to the next event from the ring buffer and moves to the next event.
 // The underlying buffer will also be set to nil ensuring the GC will free the memory for the event when nothing else is using it.
 func (b *EventRingBuffer) Pop() (event *pb.Event) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
 
 	// There are no more events in the buffers:
 	if b.start == b.end {
@@ -57,6 +64,9 @@ func (b *EventRingBuffer) Pop() (event *pb.Event) {
 
 // Peek returns a pointer to the next event but does not advance to the next event.
 func (b *EventRingBuffer) Peek() (event *pb.Event) {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
 	if b.IsEmpty() {
 		return nil
 	}
@@ -65,5 +75,8 @@ func (b *EventRingBuffer) Peek() (event *pb.Event) {
 
 // IsEmpty returns if there are no more events in the buffer.
 func (b *EventRingBuffer) IsEmpty() bool {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
 	return b.start == b.end
 }

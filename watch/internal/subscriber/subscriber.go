@@ -61,8 +61,13 @@ func (s *SubscriberSafeState) setState(state SubscriberState) {
 
 // BaseSubscriber contains common fields used by all subscribers.
 type BaseSubscriber struct {
-	id        string
-	name      string
+	id   string
+	name string
+	// queueSize is the number of events that will be buffered while this subscriber is connected.
+	// Ideally we'll send events to subscribers as fast as they are received from the metadata service.
+	// The queue gives us extra buffer in case of sudden bursts of events.
+	// If the queueSize is exceeded then some mechanism upstream of the subscriber is suspected to buffer the events.
+	// This may need to be set to a higher value for slower subscribers.
 	queueSize int
 	SubscriberSafeState
 	Subscriber

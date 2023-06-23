@@ -34,8 +34,12 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 	// Fow now this is a fairly rudimentary way of updating subscribers while I flush out the rest of the implementation.
 	// We'll just stop all subscribers, make the updates, then restart all subscribers.
 	// Maybe this is "good enough", but we could be more deliberate in how we move from the old->new config.
-	// Likely issues include ensuring we don't loose any events that are in the subscriber queues but not yet sent.
-	// For example:
+	// Likely issues include:
+	// * ensuring we don't loose any events that are in the subscriber queues but not yet sent.
+	// * not overwriting the last state of the subscriber, for example if it was unable to disconnect and the state is disconnecting.
+	// It is possible a configuration change is needed to correct the state of the subscriber.
+	//
+	// For example we could do something like:
 	// * Pause Run() before making any changes.
 	// * Evaluate how to get from the oldConfig to the NewConfig:
 	//   * If a subscriber exists in the old config but not the new one, stop it.
