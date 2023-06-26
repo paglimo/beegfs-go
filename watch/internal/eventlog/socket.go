@@ -66,7 +66,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 // When the context on the BeeGFSSocket is cancelled, ListenAndServe will attempt to shutdown cleanly.
 // If it is currently reading/serializing a packet, the packet will be saved before the connection is closed.
 // After exiting it will close the socket and attempt to delete the socket file.
-func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.Event) {
+func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *pb.Event) {
 
 	defer wg.Done()
 	defer b.socket.Close()
@@ -126,7 +126,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, eventBuffer chan<- *pb.E
 					// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 					seqId++
 					event.SeqId = seqId
-					eventBuffer <- event
+					metaEventBuffer <- event
 				}
 			}
 		}
