@@ -20,7 +20,9 @@ const (
 )
 
 type Handler struct {
-	interruptedEvents *types.EventRingBuffer // Used as a temp buffer if the connection with a subscriber is lost.
+	// Interrupted events is a ring buffer used to store events if the connection with a subscriber is lost.
+	// It should always be as large or larger than the queueSize to ensure the queue can be flushed to the buffer.
+	interruptedEvents *types.EventRingBuffer
 	queue             chan *pb.Event
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -34,8 +36,6 @@ func newHandler(log *zap.Logger, subscriber *BaseSubscriber) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
-		// interruptedEvents should always be as larger or larger than the queue
-		// to ensure we can flush the queue to the interruptedEvents buffer.
 		interruptedEvents: types.NewEventRingBuffer(defaultInterruptedEventBufferSize),
 		queue:             make(chan *pb.Event, subscriber.queueSize),
 		ctx:               ctx,
@@ -153,13 +153,14 @@ func (h *Handler) drainInterruptedEvents() bool {
 		// We don't want to remove the event from the buffer until we're sure it was sent successfully:
 		err := h.send(h.interruptedEvents.Peek())
 		if err != nil {
-			h.log.Error("unable to send interrupted event", zap.Error(err), zap.Any("event_seq", h.interruptedEvents.Peek().SeqId))
+			h.log.Error("unable to send interrupted event to subscriber", zap.Error(err), zap.Any("event_seq", h.interruptedEvents.Peek().SeqId))
 			// We hit an error so all we can do is try to reconnect again.
 			return false
 
 		} else {
 			// Otherwise if the event was sent lets pop it from the event buffer.
-			_ = h.interruptedEvents.Pop()
+			event := h.interruptedEvents.Pop()
+			h.log.Debug("sent interrupted event to subscriber", zap.Any("event", event.SeqId))
 		}
 	}
 	return true
@@ -175,6 +176,9 @@ func (h *Handler) connectedLoop() {
 
 	h.log.Info("beginning regular bidirectional event stream")
 
+	// Only used for debugging:
+	var lastEvent = &pb.Event{SeqId: 0}
+
 	for {
 		select {
 		case <-h.ctx.Done():
@@ -182,8 +186,12 @@ func (h *Handler) connectedLoop() {
 			h.log.Info("local disconnect requested")
 			return
 		case event := <-h.queue:
+			if h.log.Level() == zap.DebugLevel {
+				lastEvent = event
+				h.log.Debug("sending event", zap.Any("event", event.SeqId))
+			}
 			if err := h.send(event); err != nil {
-				h.log.Error("unable to send event", zap.Error(err))
+				h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
 				// We don't know if the event was sent successfully or not so lets mark it interrupted.
 				// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
 				h.interruptedEvents.Push(event)
@@ -192,6 +200,7 @@ func (h *Handler) connectedLoop() {
 		case response, ok := <-recvStream:
 			if !ok {
 				// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
+				h.log.Debug("disconnect while sending event", zap.Any("lastEvent", lastEvent.SeqId))
 				h.log.Info("remote disconnect received")
 				return
 			}
@@ -212,6 +221,7 @@ func (h *Handler) drainQueue() {
 	for {
 		select {
 		case event := <-h.queue:
+			h.log.Debug("draining event", zap.Any("event", event.SeqId))
 			h.interruptedEvents.Push(event)
 		default:
 			return
@@ -247,8 +257,10 @@ func (h *Handler) Enqueue(event *pb.Event) {
 		return
 	}
 
-	// Otherwise block until the subscriber has finished draining any current events in the queue
-	// so we can add the event (and subsequent events) in the right place in the interrupted events queue.
+	// If we're in either draining state we need to block and wait here to ensure events don't get out of order.
+	// What we do next with the event will depend on the new state:
+	// * If the state transitions back to connected, add the event to the queue.
+	// * Otherwise add the event to the interrupted events buffer.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -256,9 +268,14 @@ func (h *Handler) Enqueue(event *pb.Event) {
 		select {
 		case <-h.ctx.Done():
 			h.log.Info("unable to enqueue event because the subscriber is shutting down")
+			return
 		case <-ticker.C:
-			if state := h.GetState(); state != STATE_DRAINING_IE && state != STATE_DRAINING_Q {
-				h.interruptedEvents.Push(event)
+			if newState := h.GetState(); newState != STATE_DRAINING_IE && newState != STATE_DRAINING_Q {
+				if newState == STATE_CONNECTED {
+					h.queue <- event
+				} else {
+					h.interruptedEvents.Push(event)
+				}
 				return
 			}
 		}
