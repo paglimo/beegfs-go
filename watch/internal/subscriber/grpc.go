@@ -61,7 +61,7 @@ func newComparableGRPCSubscriber(s *GRPCSubscriber) ComparableGRPCSubscriber {
 
 }
 
-func (s *GRPCSubscriber) connect() (retry bool, err error) {
+func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 
 	var opts []grpc.DialOption
 	if s.AllowInsecure {
@@ -89,7 +89,7 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 
 // Send attempts to transmit an event to a remote subscriber.
 // It is expected to implement any logic for attempting to resend an event if the first attempt fails.
-func (s *GRPCSubscriber) send(event *pb.Event) (err error) {
+func (s *GRPCSubscriber) Send(event *pb.Event) (err error) {
 
 	if err := s.stream.Send(event); err != nil {
 		// TODO: Is there ever a scenario where we'd want to retry to send the event?
@@ -107,7 +107,7 @@ func (s *GRPCSubscriber) send(event *pb.Event) (err error) {
 // there may still be responses we need to read until we get an io.EOF error.
 // To facilitate this we actually setup the recvStream channel on the GRPCSubscriber struct,
 // then return the same channel so the base subscriber's manage() function can use it.
-func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
+func (s *GRPCSubscriber) Receive() (recvStream chan *pb.Response) {
 
 	// Typically this mutex should not be necessary.
 	// Receive() should only ever be called once for each connection to a subscriber.
@@ -160,7 +160,7 @@ func (s *GRPCSubscriber) receive() (recvStream chan *pb.Response) {
 // * If the subscriber is not already disconnected this should prompt them to wrap up and disconnect.
 // * If they don't disconnect within a configurable timeout we'll try to close the connection anyway.
 //   - We'll return an error and let the caller decide if they want to try and disconnect again.
-func (s *GRPCSubscriber) disconnect() error {
+func (s *GRPCSubscriber) Disconnect() error {
 
 	var multiErr types.MultiError
 

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var jsonConfig string = `
+var testJsonConfig string = `
 [
     {
         "type": "grpc",
@@ -33,7 +33,7 @@ var jsonConfig string = `
 // See the inline notes before adding tests for new/existing subscriber types.
 func TestNewSubscribersFromJson(t *testing.T) {
 
-	configuredSubscribers, err := newSubscribersFromJson(jsonConfig)
+	configuredSubscribers, err := NewSubscribersFromJson(testJsonConfig)
 	assert.NoError(t, err)
 
 	// The order of expectedSubscribers matters because we will use that to determine which expected subscriber
@@ -42,11 +42,11 @@ func TestNewSubscribersFromJson(t *testing.T) {
 
 	expectedSubscribers := []*BaseSubscriber{
 		{
-			id:        "1",
-			name:      "bee-remote",
-			queueSize: 2048,
-			SubscriberSafeState: SubscriberSafeState{
-				state: STATE_DISCONNECTED,
+			Id:        "1",
+			Name:      "bee-remote",
+			QueueSize: 2048,
+			State: State{
+				state: DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
 				Hostname:      "br-1",
@@ -54,11 +54,11 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				AllowInsecure: true,
 			},
 		}, {
-			id:        "2",
-			name:      "beegfs-mon",
-			queueSize: 2,
-			SubscriberSafeState: SubscriberSafeState{
-				state: STATE_DISCONNECTED,
+			Id:        "2",
+			Name:      "beegfs-mon",
+			QueueSize: 2,
+			State: State{
+				state: DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
 				Hostname:      "bm-1",

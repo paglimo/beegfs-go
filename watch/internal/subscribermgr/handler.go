@@ -1,4 +1,4 @@
-package subscriber
+package subscribermgr
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
@@ -27,17 +28,17 @@ type Handler struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	log           *zap.Logger
-	*BaseSubscriber
+	*subscriber.BaseSubscriber
 }
 
-func newHandler(log *zap.Logger, subscriber *BaseSubscriber) *Handler {
-	log = log.With(zap.String("subscriberID", subscriber.id), zap.String("subscriberName", subscriber.name))
+func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber) *Handler {
+	log = log.With(zap.String("subscriberID", subscriber.Id), zap.String("subscriberName", subscriber.Name))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
 		offlineEvents:  types.NewEventRingBuffer(defaultOfflineEventBufferSize),
-		queue:          make(chan *pb.Event, subscriber.queueSize),
+		queue:          make(chan *pb.Event, subscriber.QueueSize),
 		ctx:            ctx,
 		cancel:         cancel,
 		log:            log,
@@ -67,26 +68,26 @@ func (h *Handler) Handle() {
 			// If we're connected we should start handling the connection.
 			// Otherwise we presume we need to disconnect for some reason.
 
-			if state := h.GetState(); state == STATE_DISCONNECTED {
-				h.setState(STATE_CONNECTING)
+			if state := h.GetState(); state == subscriber.DISCONNECTED {
+				h.SetState(subscriber.CONNECTING)
 				if h.connectLoop() {
 					// If the subscriber disconnected for some reason there may be events in the offline event buffer.
 					// To ensure events are sent in order lets try to send them before entering the main connectedLoop()
 					// First we need to set the status to frozen to ensure Enqueue doesn't keep adding events:
-					h.setState(STATE_FROZEN)
+					h.SetState(subscriber.FROZEN)
 					if h.drainOfflineEvents() {
-						h.setState(STATE_CONNECTED)
+						h.SetState(subscriber.CONNECTED)
 						h.connectedLoop()
-						h.setState(STATE_FROZEN)
+						h.SetState(subscriber.FROZEN)
 						h.drainQueue()
 					}
 				}
 			}
 
 			// If the connection was lost for any reason, we should first disconnect before we reconnect or shutdown:
-			h.setState(STATE_DISCONNECTING)
+			h.SetState(subscriber.DISCONNECTING)
 			if h.doDisconnect() {
-				h.setState(STATE_DISCONNECTED)
+				h.SetState(subscriber.DISCONNECTED)
 			}
 		}
 	}
@@ -100,7 +101,7 @@ func (h *Handler) Handle() {
 // A new connection should not be attempted until doDisconnect() returns true.
 func (h *Handler) doDisconnect() bool {
 	h.log.Info("disconnecting subscriber")
-	err := h.disconnect()
+	err := h.Disconnect()
 	if err != nil {
 		h.log.Error("encountered one or more errors disconnecting subscriber (ignoring)", zap.Error(err))
 		return false
@@ -121,7 +122,7 @@ func (h *Handler) connectLoop() bool {
 			h.log.Info("not attempting to connect because the subscriber is shutting down")
 			return false
 		case <-time.After(time.Second * time.Duration(reconnectBackOff)): // We use this instead of time.Ticker so we can change the duration.
-			retry, err := h.connect()
+			retry, err := h.Connect()
 			if err != nil {
 				if !retry {
 					h.log.Error("unable to connect to subscriber (unable to retry)", zap.Error(err))
@@ -150,7 +151,7 @@ func (h *Handler) drainOfflineEvents() bool {
 
 	for !h.offlineEvents.IsEmpty() {
 		// We don't want to remove the event from the buffer until we're sure it was sent successfully:
-		err := h.send(h.offlineEvents.Peek())
+		err := h.Send(h.offlineEvents.Peek())
 		if err != nil {
 			h.log.Error("unable to send offline event to subscriber", zap.Error(err), zap.Any("event_seq", h.offlineEvents.Peek().SeqId))
 			// We hit an error so all we can do is try to reconnect again.
@@ -171,7 +172,7 @@ func (h *Handler) drainOfflineEvents() bool {
 // It does not return an error because the caller should react the same in all scenarios.
 func (h *Handler) connectedLoop() {
 	// Start listening for responses from the subscriber:
-	recvStream := h.receive()
+	recvStream := h.Receive()
 
 	h.log.Info("beginning regular bidirectional event stream")
 
@@ -189,7 +190,7 @@ func (h *Handler) connectedLoop() {
 				lastEvent = event
 				h.log.Debug("sending event", zap.Any("event", event.SeqId))
 			}
-			if err := h.send(event); err != nil {
+			if err := h.Send(event); err != nil {
 				h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
 				// We don't know if the event was sent successfully or not so lets push it to the offline event buffer.
 				// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
@@ -248,10 +249,10 @@ func (h *Handler) Enqueue(event *pb.Event) {
 	// This is thread safe because getting the status will block if it is currently being updated.
 	state := h.GetState()
 
-	if state == STATE_CONNECTED {
+	if state == subscriber.CONNECTED {
 		h.queue <- event
 		return
-	} else if state != STATE_FROZEN {
+	} else if state != subscriber.FROZEN {
 		h.offlineEvents.Push(event)
 		return
 	}
@@ -269,8 +270,8 @@ func (h *Handler) Enqueue(event *pb.Event) {
 			h.log.Info("unable to enqueue event because the subscriber is shutting down")
 			return
 		case <-ticker.C:
-			if newState := h.GetState(); newState != STATE_FROZEN {
-				if newState == STATE_CONNECTED {
+			if newState := h.GetState(); newState != subscriber.FROZEN {
+				if newState == subscriber.CONNECTED {
 					h.queue <- event
 				} else {
 					h.offlineEvents.Push(event)

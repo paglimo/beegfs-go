@@ -1,4 +1,4 @@
-package subscriber
+package subscribermgr
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"go.uber.org/zap"
 )
 
@@ -30,7 +31,8 @@ func NewManager(log *zap.Logger) Manager {
 // Any subscribers found in the old configuration but not in the new will be removed.
 func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 
-	// TODO: Consider if we want to do this better.
+	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
+	// Consider if we want to do this better.
 	// Fow now this is a fairly rudimentary way of updating subscribers while I flush out the rest of the implementation.
 	// We'll just stop all subscribers, make the updates, then restart all subscribers.
 	// Maybe this is "good enough", but we could be more deliberate in how we move from the old->new config.
@@ -53,7 +55,7 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 		h.Stop()
 	}
 
-	newSubscribers, err := newSubscribersFromJson(jsonConfig)
+	newSubscribers, err := subscriber.NewSubscribersFromJson(jsonConfig)
 	if err != nil {
 		return err
 	}

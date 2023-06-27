@@ -8,66 +8,66 @@ import (
 
 // Subscriber defines the methods all subscribers (such as gRPC) are expected to implement.
 type Subscriber interface {
-	connect() (retry bool, err error)
-	send(*pb.Event) (err error)
-	receive() chan *pb.Response
+	Connect() (retry bool, err error)
+	Send(*pb.Event) (err error)
+	Receive() chan *pb.Response
 	// disconnect should be idempotent and not return an error even if called against an already disconnected subscriber.
-	disconnect() (err error)
+	Disconnect() (err error)
 }
 
-// SubscriberState should not be used directly.
-// It should be set/inspected using the thread safe SubscriberSafeState methods.
-type SubscriberState string
+// state should not be used directly.
+// It should be set/inspected using the exported thread safe State methods.
+type state string
 
 const (
-	STATE_DISCONNECTED SubscriberState = "disconnected"
-	STATE_CONNECTING   SubscriberState = "connecting"
-	STATE_CONNECTED    SubscriberState = "connected"
+	DISCONNECTED state = "disconnected"
+	CONNECTING   state = "connecting"
+	CONNECTED    state = "connected"
 	// STATE_FROZEN indicates the subscriber is undergoing a connection state change (disconnected->connected or connected->disconnected).
 	// While in this state handlers should wait and not add new events to the queue or offline events buffer.
 	// This is to allow time for the current queue to be drained to the offline event buffer, or for the buffer to be drained to the queue.
 	// This is important to ensure events are always eventually sent in order.
-	STATE_FROZEN SubscriberState = "frozen"
+	FROZEN state = "frozen"
 	// Disconnecting signals a subscriber needs to disconnect for some reason.
-	STATE_DISCONNECTING SubscriberState = "disconnecting"
+	DISCONNECTING state = "disconnecting"
 )
 
-// The GetState() method provided by SubscriberSafeState are used to communicate the state of a subscriber to the outside world.
+// The GetState() method provided by State are used to communicate the state of a subscriber to the outside world.
 // External readers SHOULD NOT inspect the state directly, but instead use the thread safe GetState() method.
 // The Handler.Handle() method is the ONLY place where SubscriberStates should change.
 // All internal handler methods and subscriber methods such as connect(), send(), disconnect(), etc. should not affect the state.
-type SubscriberSafeState struct {
+type State struct {
 	// State should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
-	state SubscriberState
+	state state
 	// Status should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
 	mutex sync.RWMutex
 }
 
 // GetState() is a thread safe mechanism to get the current state and status of a subscriber.
-func (s *SubscriberSafeState) GetState() (state SubscriberState) {
+func (s *State) GetState() state {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.state
 }
 
-// setState() is a thread safe mechanism to set the current state and status of a subscriber.
-func (s *SubscriberSafeState) setState(state SubscriberState) {
+// SetState() is a thread safe mechanism to set the current state and status of a subscriber.
+func (s *State) SetState(newState state) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.state = state
+	s.state = newState
 }
 
 // BaseSubscriber contains common fields used by all subscribers.
 type BaseSubscriber struct {
-	id   string
-	name string
+	Id   string
+	Name string
 	// queueSize is the number of events that will be buffered while this subscriber is connected.
 	// Ideally we'll send events to subscribers as fast as they are received from the metadata service.
 	// The queue gives us extra buffer in case of sudden bursts of events.
 	// If the queueSize is exceeded then some mechanism upstream of the subscriber is suspected to buffer the events.
 	// This may need to be set to a higher value for slower subscribers.
-	queueSize int
-	SubscriberSafeState
+	QueueSize int
+	State
 	Subscriber
 }
 
@@ -75,21 +75,21 @@ type BaseSubscriber struct {
 // When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
 // Notably the queue, ctx, and log fields are not comparable and thus omitted.
 type ComparableBaseSubscriber struct {
-	id        string
-	name      string
-	queueSize int
-	SubscriberSafeState
+	Id        string
+	Name      string
+	QueueSize int
+	State
 }
 
 // Used for testing (notably TestNewSubscribersFromJson).
 // This should be updated when ComparableBaseSubscriber is modified.
 func newComparableBaseSubscriber(s *BaseSubscriber) ComparableBaseSubscriber {
 	return ComparableBaseSubscriber{
-		id:        s.id,
-		name:      s.name,
-		queueSize: s.queueSize,
-		SubscriberSafeState: SubscriberSafeState{
-			state: STATE_DISCONNECTED,
+		Id:        s.Id,
+		Name:      s.Name,
+		QueueSize: s.QueueSize,
+		State: State{
+			state: s.state,
 		},
 	}
 }
@@ -100,11 +100,11 @@ func newComparableBaseSubscriber(s *BaseSubscriber) ComparableBaseSubscriber {
 func newBaseSubscriber(id string, name string, queueSize int) *BaseSubscriber {
 
 	return &BaseSubscriber{
-		id:        id,
-		name:      name,
-		queueSize: queueSize,
-		SubscriberSafeState: SubscriberSafeState{
-			state: STATE_DISCONNECTED,
+		Id:        id,
+		Name:      name,
+		QueueSize: queueSize,
+		State: State{
+			state: DISCONNECTED,
 		},
 	}
 }

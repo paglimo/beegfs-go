@@ -11,7 +11,7 @@ import (
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/eventlog"
-	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +31,7 @@ var subscriberConfigJson string = `
     {
         "type": "grpc",
         "id": "1",
-        "name": "bee-remote",
+        "name": "test-subscriber",
         "hostname":"localhost",
 		"port":"50052",
 		"allow_insecure":true
@@ -56,10 +56,10 @@ func main() {
 	// We'll use a wait group to coordinate shutdown of all components:
 	var wg sync.WaitGroup
 
-	// Use a channel as a buffer to move events between threads:
+	// Use a channel as a buffer to move events between the metadata socket and subscriber manager:
 	metaEventBuffer := make(chan *pb.Event, *metaBufferSize)
 
-	// Create a unix domain socket and listen for incoming connections:
+	// Create a unix domain socket and listen for incoming connections from the metadata service:
 	socket, err := eventlog.New(ctx, log, *socketPath)
 	if err != nil {
 		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
@@ -68,7 +68,7 @@ func main() {
 	wg.Add(1)
 
 	// Setup our subscriber manager:
-	sm := subscriber.NewManager(log)
+	sm := subscribermgr.NewManager(log)
 	err = sm.UpdateConfiguration(subscriberConfigJson)
 	if err != nil {
 		log.Fatal("unable to configure subscribers", zap.Error(err))
