@@ -7,17 +7,18 @@ import (
 
 // TODO: We should probably handle the default as part of global configuration.
 const (
-	defaultQueueSize = 2048
+	defaultQueueSize = 1048576 // Presuming <1KiB per events this keeps memory utilization under 1GiB.
 )
 
 // jsonConfig defines the configuration options that could be set on any type of subscriber.
 // It embeds each type of subscriber so their fields can be unmarshalled/initialized based on the selected "Type".
 type baseConfig struct {
-	Type       string `json:"type"`
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	QueueSize  int    `json:"queue_size"`
-	grpcConfig        // Configuration options for type gRPC.
+	Type              string `json:"type"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	OfflineBufferSize int    `json:"offline_buffer_size"`
+	QueueSize         int    `json:"queue_size"`
+	grpcConfig               // Configuration options for type gRPC.
 }
 
 // grpcConfig defines fields that only apply to gRPC subscribers.
@@ -58,12 +59,23 @@ func NewSubscribersFromJson(rawJson string) ([]*BaseSubscriber, error) {
 // It will return an error if the requested subscriber type is unknown.
 func newSubscriberFromConfig(config baseConfig) (*BaseSubscriber, error) {
 
-	queueSize := config.QueueSize
-	if queueSize == 0 {
-		queueSize = defaultQueueSize
+	if config.QueueSize == 0 {
+		config.QueueSize = defaultQueueSize
 	}
 
-	base := newBaseSubscriber(config.ID, config.Name, queueSize)
+	if config.OfflineBufferSize < config.QueueSize {
+		config.OfflineBufferSize = config.QueueSize
+	}
+
+	base := &BaseSubscriber{
+		Id:                config.ID,
+		Name:              config.Name,
+		OfflineBufferSize: config.OfflineBufferSize,
+		QueueSize:         config.QueueSize,
+		State: State{
+			state: DISCONNECTED,
+		},
+	}
 
 	switch config.Type {
 	case "grpc":

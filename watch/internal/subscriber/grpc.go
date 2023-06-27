@@ -50,17 +50,6 @@ type ComparableGRPCSubscriber struct {
 	AllowInsecure bool
 }
 
-// Used for testing (notably TestNewSubscribersFromJson).
-func newComparableGRPCSubscriber(s *GRPCSubscriber) ComparableGRPCSubscriber {
-
-	return ComparableGRPCSubscriber{
-		Hostname:      s.Hostname,
-		Port:          s.Port,
-		AllowInsecure: s.AllowInsecure,
-	}
-
-}
-
 func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 
 	var opts []grpc.DialOption

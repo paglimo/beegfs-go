@@ -14,7 +14,8 @@ var testJsonConfig string = `
         "name": "bee-remote",
         "hostname":"br-1",
 		"port":"1234",
-		"allow_insecure":true
+		"allow_insecure":true,
+		"offline_buffer_size":1
     },
     {
         "type": "grpc",
@@ -23,6 +24,7 @@ var testJsonConfig string = `
         "hostname":"bm-1",
 		"port":"512312",
 		"allow_insecure":false,
+		"offline_buffer_size":3,		
 		"queue_size":2
     }
 ]
@@ -42,9 +44,11 @@ func TestNewSubscribersFromJson(t *testing.T) {
 
 	expectedSubscribers := []*BaseSubscriber{
 		{
-			Id:        "1",
-			Name:      "bee-remote",
-			QueueSize: 2048,
+			Id:   "1",
+			Name: "bee-remote",
+			// If OfflineBufferSize < QueueSize it should be set to the default queue size.
+			OfflineBufferSize: defaultQueueSize,
+			QueueSize:         defaultQueueSize,
 			State: State{
 				state: DISCONNECTED,
 			},
@@ -54,9 +58,10 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				AllowInsecure: true,
 			},
 		}, {
-			Id:        "2",
-			Name:      "beegfs-mon",
-			QueueSize: 2,
+			Id:                "2",
+			Name:              "beegfs-mon",
+			OfflineBufferSize: 3,
+			QueueSize:         2,
 			State: State{
 				state: DISCONNECTED,
 			},
@@ -72,9 +77,10 @@ func TestNewSubscribersFromJson(t *testing.T) {
 
 	for i, baseSubscriber := range configuredSubscribers {
 
-		assert.Equal(t, newComparableBaseSubscriber(expectedSubscribers[i]), newComparableBaseSubscriber(baseSubscriber))
+		assert.Equal(t, newComparableSubscriber(expectedSubscribers[i], &ComparableBaseSubscriber{}), newComparableSubscriber(baseSubscriber, &ComparableBaseSubscriber{}))
 
 		// If support is added for new subscriber types they will need to be added to the type switch.
+		// They will also need to be added to the ComparableSubscriber type constraint before using newComparableSubscriber().
 		switch baseSubscriber.Subscriber.(type) {
 		case *GRPCSubscriber:
 			actualGRPCSubscriber := baseSubscriber.Subscriber.(*GRPCSubscriber)
@@ -82,9 +88,15 @@ func TestNewSubscribersFromJson(t *testing.T) {
 			assert.True(t, ok) // If s is the wrong subscriber type, then the expected subscriber type won't match.
 			// We use the newComparableXSubscriber() functions provided alongside each subscriber implementation
 			// to get a comparable view of the expected and configured subscriber.
-			assert.Equal(t, newComparableGRPCSubscriber(expectedGRPCSubscriber), newComparableGRPCSubscriber(actualGRPCSubscriber))
+			assert.Equal(t, newComparableSubscriber(expectedGRPCSubscriber, &ComparableGRPCSubscriber{}), newComparableSubscriber(actualGRPCSubscriber, &ComparableGRPCSubscriber{}))
 		default:
 			assert.Fail(t, "unable to determine subscriber type")
 		}
 	}
 }
+
+// TODO:
+// Add a test that verifies NewSubscribersFromJson initializes all fields for base and concrete subscriber types.
+// In particular to catch if a new field is added.
+// So ideally use reflect to iterate over and attempt to read the fields.
+// Thus triggering a segfault if one was missed.

@@ -16,18 +16,17 @@ const (
 	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
 	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
 	maxReconnectBackoff = 60
-	// defaultOfflineEventBufferSize is the number of events that can be buffered while this subscriber is disconnected.
-	defaultOfflineEventBufferSize = 976562
 )
 
 type Handler struct {
-	// Offline events is a ring buffer used to store events if the connection with a subscriber is lost.
-	// It should always be as large or larger than the queueSize to ensure the queue can be flushed to the buffer.
+	// Offline events is a ring buffer used to store events while a subscriber is not connected.
+	// The use of a ring buffer ensures we don't use infinite memory and drop older events for newer ones.
 	offlineEvents *types.EventRingBuffer
-	queue         chan *pb.Event
-	ctx           context.Context
-	cancel        context.CancelFunc
-	log           *zap.Logger
+	// The queue is where new events are published while the subscriber is connected.
+	queue  chan *pb.Event
+	ctx    context.Context
+	cancel context.CancelFunc
+	log    *zap.Logger
 	*subscriber.BaseSubscriber
 }
 
@@ -37,7 +36,7 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber) *Handler
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
-		offlineEvents:  types.NewEventRingBuffer(defaultOfflineEventBufferSize),
+		offlineEvents:  types.NewEventRingBuffer(subscriber.OfflineBufferSize),
 		queue:          make(chan *pb.Event, subscriber.QueueSize),
 		ctx:            ctx,
 		cancel:         cancel,

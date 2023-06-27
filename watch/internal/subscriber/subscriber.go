@@ -61,10 +61,14 @@ func (s *State) SetState(newState state) {
 type BaseSubscriber struct {
 	Id   string
 	Name string
-	// queueSize is the number of events that will be buffered while this subscriber is connected.
+	// OfflineBufferSize is the number of events that will be buffered while this subscriber is disconnected.
+	// It should be larger than QueueSize to ensure the queue can be flushed if the subscriber disconnects.
+	// If the buffer is exceeded the oldest events in the buffer will be overwritten by newer ones.
+	OfflineBufferSize int
+	// QueueSize is the number of events that will be buffered while this subscriber is connected.
 	// Ideally we'll send events to subscribers as fast as they are received from the metadata service.
 	// The queue gives us extra buffer in case of sudden bursts of events.
-	// If the queueSize is exceeded then some mechanism upstream of the subscriber is suspected to buffer the events.
+	// If the QueueSize is exceeded then some mechanism upstream of the subscriber is suspected to buffer the events.
 	// This may need to be set to a higher value for slower subscribers.
 	QueueSize int
 	State
@@ -75,36 +79,9 @@ type BaseSubscriber struct {
 // When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
 // Notably the queue, ctx, and log fields are not comparable and thus omitted.
 type ComparableBaseSubscriber struct {
-	Id        string
-	Name      string
-	QueueSize int
+	Id                string
+	Name              string
+	OfflineBufferSize int
+	QueueSize         int
 	State
-}
-
-// Used for testing (notably TestNewSubscribersFromJson).
-// This should be updated when ComparableBaseSubscriber is modified.
-func newComparableBaseSubscriber(s *BaseSubscriber) ComparableBaseSubscriber {
-	return ComparableBaseSubscriber{
-		Id:        s.Id,
-		Name:      s.Name,
-		QueueSize: s.QueueSize,
-		State: State{
-			state: s.state,
-		},
-	}
-}
-
-// newBaseSubscriber is intended to be used with newSubscriberFromConfig.
-// It DOES NOT handle setting the Subscriber interface to a valid subscriber.
-// Typically you would not use this directly and instead use newSubscriberFromConfig().
-func newBaseSubscriber(id string, name string, queueSize int) *BaseSubscriber {
-
-	return &BaseSubscriber{
-		Id:        id,
-		Name:      name,
-		QueueSize: queueSize,
-		State: State{
-			state: DISCONNECTED,
-		},
-	}
 }
