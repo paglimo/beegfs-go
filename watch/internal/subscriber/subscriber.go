@@ -23,13 +23,11 @@ const (
 	STATE_DISCONNECTED SubscriberState = "disconnected"
 	STATE_CONNECTING   SubscriberState = "connecting"
 	STATE_CONNECTED    SubscriberState = "connected"
-	// STATE_DRAINING_IE indicates we've just connected (or reconnected) to a subscriber, and any events in the interrupted events
-	// buffer are being sent to the subscriber. While in this state Enqueue() should not add new events to the queue or interrupted events buffer.
-	STATE_DRAINING_IE SubscriberState = "draining_interrupted_events"
-	// STATE_DRAINING_Q indicates an issue occurred with a connection and all events need to be drained from the queue to the interrupted events buffer.
-	// While in this state Enqueue() should not add new events to the queue or interrupted events buffer.
-	// This is to allow time for the current queue to be drained to the interrupted event buffer, ensuring events are buffered in order.
-	STATE_DRAINING_Q SubscriberState = "draining_queue"
+	// STATE_FROZEN indicates the subscriber is undergoing a connection state change (disconnected->connected or connected->disconnected).
+	// While in this state handlers should wait and not add new events to the queue or offline events buffer.
+	// This is to allow time for the current queue to be drained to the offline event buffer, or for the buffer to be drained to the queue.
+	// This is important to ensure events are always eventually sent in order.
+	STATE_FROZEN SubscriberState = "frozen"
 	// Disconnecting signals a subscriber needs to disconnect for some reason.
 	STATE_DISCONNECTING SubscriberState = "disconnecting"
 )

@@ -15,18 +15,18 @@ const (
 	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
 	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
 	maxReconnectBackoff = 60
-	// defaultInterruptedEventBufferSize is the number of events that can be buffered while this subscriber is disconnected.
-	defaultInterruptedEventBufferSize = 976562
+	// defaultOfflineEventBufferSize is the number of events that can be buffered while this subscriber is disconnected.
+	defaultOfflineEventBufferSize = 976562
 )
 
 type Handler struct {
-	// Interrupted events is a ring buffer used to store events if the connection with a subscriber is lost.
+	// Offline events is a ring buffer used to store events if the connection with a subscriber is lost.
 	// It should always be as large or larger than the queueSize to ensure the queue can be flushed to the buffer.
-	interruptedEvents *types.EventRingBuffer
-	queue             chan *pb.Event
-	ctx               context.Context
-	cancel            context.CancelFunc
-	log               *zap.Logger
+	offlineEvents *types.EventRingBuffer
+	queue         chan *pb.Event
+	ctx           context.Context
+	cancel        context.CancelFunc
+	log           *zap.Logger
 	*BaseSubscriber
 }
 
@@ -36,12 +36,12 @@ func newHandler(log *zap.Logger, subscriber *BaseSubscriber) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
-		interruptedEvents: types.NewEventRingBuffer(defaultInterruptedEventBufferSize),
-		queue:             make(chan *pb.Event, subscriber.queueSize),
-		ctx:               ctx,
-		cancel:            cancel,
-		log:               log,
-		BaseSubscriber:    subscriber,
+		offlineEvents:  types.NewEventRingBuffer(defaultOfflineEventBufferSize),
+		queue:          make(chan *pb.Event, subscriber.queueSize),
+		ctx:            ctx,
+		cancel:         cancel,
+		log:            log,
+		BaseSubscriber: subscriber,
 	}
 }
 
@@ -70,15 +70,14 @@ func (h *Handler) Handle() {
 			if state := h.GetState(); state == STATE_DISCONNECTED {
 				h.setState(STATE_CONNECTING)
 				if h.connectLoop() {
-					// If the subscriber disconnected for some reason there may be interrupted events
-					// that need to be sent from while the subscriber was disconnected.
+					// If the subscriber disconnected for some reason there may be events in the offline event buffer.
 					// To ensure events are sent in order lets try to send them before entering the main connectedLoop()
-					// First we need to set the status to draining to ensure Enqueue doesn't keep adding events:
-					h.setState(STATE_DRAINING_IE)
-					if h.drainInterruptedEvents() {
+					// First we need to set the status to frozen to ensure Enqueue doesn't keep adding events:
+					h.setState(STATE_FROZEN)
+					if h.drainOfflineEvents() {
 						h.setState(STATE_CONNECTED)
 						h.connectedLoop()
-						h.setState(STATE_DRAINING_Q)
+						h.setState(STATE_FROZEN)
 						h.drainQueue()
 					}
 				}
@@ -145,22 +144,22 @@ func (h *Handler) connectLoop() bool {
 	}
 }
 
-func (h *Handler) drainInterruptedEvents() bool {
+func (h *Handler) drainOfflineEvents() bool {
 
-	h.log.Info("sending interrupted events to subscriber")
+	h.log.Info("sending offline events to subscriber")
 
-	for !h.interruptedEvents.IsEmpty() {
+	for !h.offlineEvents.IsEmpty() {
 		// We don't want to remove the event from the buffer until we're sure it was sent successfully:
-		err := h.send(h.interruptedEvents.Peek())
+		err := h.send(h.offlineEvents.Peek())
 		if err != nil {
-			h.log.Error("unable to send interrupted event to subscriber", zap.Error(err), zap.Any("event_seq", h.interruptedEvents.Peek().SeqId))
+			h.log.Error("unable to send offline event to subscriber", zap.Error(err), zap.Any("event_seq", h.offlineEvents.Peek().SeqId))
 			// We hit an error so all we can do is try to reconnect again.
 			return false
 
 		} else {
 			// Otherwise if the event was sent lets pop it from the event buffer.
-			event := h.interruptedEvents.Pop()
-			h.log.Debug("sent interrupted event to subscriber", zap.Any("event", event.SeqId))
+			event := h.offlineEvents.Pop()
+			h.log.Debug("sent offline event to subscriber", zap.Any("event", event.SeqId))
 		}
 	}
 	return true
@@ -192,9 +191,9 @@ func (h *Handler) connectedLoop() {
 			}
 			if err := h.send(event); err != nil {
 				h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
-				// We don't know if the event was sent successfully or not so lets mark it interrupted.
+				// We don't know if the event was sent successfully or not so lets push it to the offline event buffer.
 				// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
-				h.interruptedEvents.Push(event)
+				h.offlineEvents.Push(event)
 				return
 			}
 		case response, ok := <-recvStream:
@@ -215,14 +214,14 @@ func (h *Handler) connectedLoop() {
 	}
 }
 
-// drainQueue() drains all events in the queue to the interrupted events buffer.
+// drainQueue() drains all events in the queue to the offline events buffer.
 func (h *Handler) drainQueue() {
-	h.log.Info("draining queue to the interrupted events buffer")
+	h.log.Info("draining queue to the offline events buffer")
 	for {
 		select {
 		case event := <-h.queue:
 			h.log.Debug("draining event", zap.Any("event", event.SeqId))
-			h.interruptedEvents.Push(event)
+			h.offlineEvents.Push(event)
 		default:
 			return
 		}
@@ -242,7 +241,7 @@ func (h *Handler) drainQueue() {
 //
 //	If the subscriber fails to reconnect before the ring buffer is full, some events may be dropped.
 //	When a subscriber connects/reconnects we will temporarily block adding new events to it's queue.
-//	This allows the handler to send "interrupted events" generated while the subscriber was disconnected.
+//	This allows the handler to send "offline events" generated while the subscriber was disconnected.
 //	It also ensures events are sent in the order they were generated by the metadata service.
 func (h *Handler) Enqueue(event *pb.Event) {
 
@@ -252,15 +251,15 @@ func (h *Handler) Enqueue(event *pb.Event) {
 	if state == STATE_CONNECTED {
 		h.queue <- event
 		return
-	} else if state != STATE_DRAINING_IE && state != STATE_DRAINING_Q {
-		h.interruptedEvents.Push(event)
+	} else if state != STATE_FROZEN {
+		h.offlineEvents.Push(event)
 		return
 	}
 
-	// If we're in either draining state we need to block and wait here to ensure events don't get out of order.
+	// If the subscriber is frozen we need to block and wait here to ensure events don't get out of order.
 	// What we do next with the event will depend on the new state:
 	// * If the state transitions back to connected, add the event to the queue.
-	// * Otherwise add the event to the interrupted events buffer.
+	// * Otherwise add the event to the offline events buffer.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -270,11 +269,11 @@ func (h *Handler) Enqueue(event *pb.Event) {
 			h.log.Info("unable to enqueue event because the subscriber is shutting down")
 			return
 		case <-ticker.C:
-			if newState := h.GetState(); newState != STATE_DRAINING_IE && newState != STATE_DRAINING_Q {
+			if newState := h.GetState(); newState != STATE_FROZEN {
 				if newState == STATE_CONNECTED {
 					h.queue <- event
 				} else {
-					h.interruptedEvents.Push(event)
+					h.offlineEvents.Push(event)
 				}
 				return
 			}

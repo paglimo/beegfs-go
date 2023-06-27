@@ -89,7 +89,6 @@ func (s *GRPCSubscriber) connect() (retry bool, err error) {
 
 // Send attempts to transmit an event to a remote subscriber.
 // It is expected to implement any logic for attempting to resend an event if the first attempt fails.
-// If it returns an error it will add the event to an interrupted events queue for this subscriber (so it can be retried).
 func (s *GRPCSubscriber) send(event *pb.Event) (err error) {
 
 	if err := s.stream.Send(event); err != nil {

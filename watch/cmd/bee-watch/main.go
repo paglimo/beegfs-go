@@ -19,7 +19,7 @@ var (
 	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
 	logFile    = flag.String("logFile", "", "log to a file instead of stdout")
 	logDebug   = flag.Bool("logDebug", false, "enable logging at the debug level")
-	// If a subscriber disconnects there is a brief cutover before we start buffering interrupted events for that subscriber using a ring buffer.
+	// If a subscriber disconnects there is a brief cutover before we start buffering offline events for that subscriber using a ring buffer.
 	// Currently the metadata service expects events to be read as fast as they are sent to the socket otherwise it will drop events.
 	// Until we have the metadata service buffering events for us, we need the option to have BeeWatch implement the in-memory buffer.
 	// Once the metadata service is buffering events for us this can be set to zero without dropping events.
