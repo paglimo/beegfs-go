@@ -90,17 +90,11 @@ func (s *GRPCSubscriber) Send(event *pb.Event) (err error) {
 
 // Receive starts a Go routine that receives events from the subscriber.
 // It returns a channel where responses from the subscriber will be sent.
-// Normally this channel is read by the base subscriber's Manage() method.
-//
-// For gRPC even after the connection state shifts from CONNECTED,
-// there may still be responses we need to read until we get an io.EOF error.
-// To facilitate this we actually setup the recvStream channel on the GRPCSubscriber struct,
-// then return the same channel so the base subscriber's manage() function can use it.
+// Normally this channel is read by methods of the handler.
+// Receive() is idempotent, and multiple calls will return the same recvStream channel.
 func (s *GRPCSubscriber) Receive() (recvStream chan *pb.Response) {
 
-	// Typically this mutex should not be necessary.
-	// Receive() should only ever be called once for each connection to a subscriber.
-	// However it guarantees there will only ever be one Go routine listening to subscriber responses.
+	// This is how we guarantee the method is idempotent and there is only one goroutine listening to responses.
 	// It also guarantees we don't try and reinitialize an in-use channel until it is closed.
 	if !s.recvMutex.TryLock() {
 		// TODO: We don't have a logger on the subscribers anymore.
@@ -132,6 +126,11 @@ func (s *GRPCSubscriber) Receive() (recvStream chan *pb.Response) {
 				return
 			}
 			s.recvStream <- in
+			// TODO: Do we ever need to worry about leaking goroutines here?
+			// I don't think so because if the app is shutting down or the subscriber disconnected,
+			// we don't try to send on the channel and just return.
+			// It'd be a corner case where we got a response, but the subscriber handler had already
+			// stopped listening to the receive stream.
 		}
 	}()
 
