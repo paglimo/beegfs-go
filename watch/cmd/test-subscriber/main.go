@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	bw "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"go.uber.org/zap"
@@ -24,6 +25,7 @@ const (
 var (
 	logFile                  = flag.String("logFile", "", "log to a file instead of stdout")
 	logDebug                 = flag.Bool("logDebug", false, "enable logging at the debug level")
+	enableSampling           = flag.Bool("enableSampling", false, "output events per second")
 	eventSubscriberInterface = flag.String("eventSubscriberInterface", "localhost:50052", "Where this subscriber will listen for events from BeeWatch nodes.")
 	db                       = &MockDB{}
 )
@@ -129,7 +131,7 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 		}
 
 		// TODO: Add logic to ignore duplicate events here.
-
+		s.log.Debug("received event", zap.Any("event", event))
 		db.Add(event)
 		if err = stream.Send(&bw.Response{CompletedSeq: event.SeqId}); err != nil {
 			s.log.Error("error sending response", zap.Error(err), zap.Any("event", event.SeqId))
@@ -138,9 +140,12 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 }
 
 type MockDB struct {
-	ctx    context.Context
-	log    *zap.Logger
-	events chan *bw.Event
+	ctx            context.Context
+	log            *zap.Logger
+	events         chan *bw.Event
+	lastSeqID      uint64
+	lastDroppedSeq uint64
+	lastMissedSeq  uint64
 }
 
 func newDB(ctx context.Context, log *zap.Logger) *MockDB {
@@ -149,6 +154,30 @@ func newDB(ctx context.Context, log *zap.Logger) *MockDB {
 		ctx:    ctx,
 		log:    log,
 		events: make(chan *bw.Event),
+	}
+}
+
+func (db *MockDB) Sample() {
+
+	for {
+		select {
+		case <-db.ctx.Done():
+			return
+		default:
+			// Since we're just reading we're not doing any locking.
+			// This means our sampling may be slightly off.
+			start := db.lastSeqID
+			startTime := time.Now()
+			time.Sleep(time.Second)
+			end := db.lastSeqID
+			endTime := time.Now()
+
+			eventsReceived := end - start
+			duration := endTime.Sub(startTime).Seconds()
+
+			eventsPerSecond := float64(eventsReceived) / duration
+			db.log.Info("events per second", zap.Any("EPS", eventsPerSecond))
+		}
 	}
 }
 
@@ -175,21 +204,25 @@ func (db *MockDB) Run(wg *sync.WaitGroup) {
 
 	file.Close()
 
-	var lastSeqID, lastDroppedSeq, lastMissedSeq uint64
+	//var lastSeqID, lastDroppedSeq, lastMissedSeq uint64
 
 	dataCleaned := strings.TrimSpace(string(data))
 
 	if dataCleaned != "" {
 		//l, err := strconv.Atoi(dataCleaned)
-		_, err := fmt.Sscanf(dataCleaned, "%d,%d,%d", &lastSeqID, &lastDroppedSeq, &lastMissedSeq)
+		_, err := fmt.Sscanf(dataCleaned, "%d,%d,%d", &db.lastSeqID, &db.lastDroppedSeq, &db.lastMissedSeq)
 		if err != nil {
 			db.log.Fatal("unable to parse file", zap.Error(err))
 		} else {
-			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", lastSeqID), zap.Any("lastDroppedSequence", lastDroppedSeq), zap.Any("lastMissedSeq", lastMissedSeq))
+			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSeq", db.lastMissedSeq))
 		}
 	} else {
 		db.log.Info("resetting sequence IDs (file not found or empty)", zap.Any("mockDBFilename", mockDBFilename))
-		lastSeqID, lastDroppedSeq, lastMissedSeq = 0, 0, 0
+		db.lastSeqID, db.lastDroppedSeq, db.lastMissedSeq = 0, 0, 0
+	}
+
+	if *enableSampling {
+		go db.Sample()
 	}
 
 readEvents:
@@ -199,25 +232,34 @@ readEvents:
 			break readEvents
 		case event := <-db.events:
 
-			if event.SeqId != lastSeqID+1 && lastSeqID != 0 {
-				db.log.Error("warning: client dropped event(s) or sent events out of order", zap.Any("expectedSeqID", lastSeqID+1), zap.Any("actualSeqID", event.SeqId))
+			if event.SeqId != db.lastSeqID+1 && db.lastSeqID != 0 {
+				if event.SeqId > db.lastSeqID+1 {
+					db.log.Error("warning: client dropped event(s) or sent events out of order", zap.Any("expectedSeqID", db.lastSeqID+1), zap.Any("actualSeqID", event.SeqId))
+				} else {
+					db.log.Info("detected duplicate event", zap.Any("expectedSeqID", db.lastSeqID+1), zap.Any("actualSeqID", event.SeqId))
+					// TODO: Think about how to handle this.
+					// If we just reset the lastSeqID then we don't know about any additional duplicates.
+					// If we just continue, we can have problems if the uint64 sequence ID rolls over.
+					// Or if for some other reason BeeWatch and subscriber sequence IDs get out of sync.
+					//continue readEvents
+				}
 			}
 
-			lastSeqID = event.SeqId
+			db.lastSeqID = event.SeqId
 
-			if event.DroppedSeq != lastDroppedSeq {
-				db.log.Error("warning: metadata service dropped event(s)", zap.Any("lastDroppedSeq", lastDroppedSeq), zap.Any("currentDroppedSeq", event.DroppedSeq))
-				lastDroppedSeq = event.DroppedSeq
+			if event.DroppedSeq != db.lastDroppedSeq {
+				db.log.Error("warning: metadata service dropped event(s)", zap.Any("lastDroppedSeq", db.lastDroppedSeq), zap.Any("currentDroppedSeq", event.DroppedSeq))
+				db.lastDroppedSeq = event.DroppedSeq
 			}
 
-			if event.MissedSeq != lastMissedSeq {
-				db.log.Error("warning: metadata service missed event(s)", zap.Any("lastMisedSeq", lastMissedSeq), zap.Any("currentMissedSeq", event.MissedSeq))
-				lastMissedSeq = event.MissedSeq
+			if event.MissedSeq != db.lastMissedSeq {
+				db.log.Error("warning: metadata service missed event(s)", zap.Any("lastMisedSeq", db.lastMissedSeq), zap.Any("currentMissedSeq", event.MissedSeq))
+				db.lastMissedSeq = event.MissedSeq
 			}
 		}
 	}
 
-	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", lastSeqID), zap.Any("lastDroppedSequence", lastDroppedSeq), zap.Any("lastMissedSequence", lastMissedSeq))
+	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSequence", db.lastMissedSeq))
 
 	file, err = os.OpenFile(mockDBFilename, os.O_RDWR|os.O_TRUNC, 0755)
 	if err != nil {
@@ -226,7 +268,7 @@ readEvents:
 
 	defer file.Close()
 
-	_, err = file.WriteString(fmt.Sprintf("%d,%d,%d", lastSeqID, lastDroppedSeq, lastMissedSeq))
+	_, err = file.WriteString(fmt.Sprintf("%d,%d,%d", db.lastSeqID, db.lastDroppedSeq, db.lastMissedSeq))
 	if err != nil {
 		db.log.Error("error writing out updated sequence IDs", zap.Error(err))
 	}
