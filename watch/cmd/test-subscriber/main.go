@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,12 +15,10 @@ import (
 	bw "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
-	lastSequenceIDFilename = "scratch"
+	mockDBFilename = "scratch"
 )
 
 var (
@@ -53,35 +50,37 @@ func main() {
 	waitDB.Add(1)
 
 	// Setup and start the gRPC server used to receive events from BeeWatch:
-	var waitGRPC sync.WaitGroup
 	var grpcServerOpts []grpc.ServerOption
 	lis, err := net.Listen("tcp", *eventSubscriberInterface)
 	if err != nil {
 		log.Fatal("failed to setup listener for BeeWatch events", zap.Error(err))
 	}
-	grpcServer := grpc.NewServer(grpcServerOpts...)
-	bw.RegisterSubscriberServer(grpcServer, NewEventSubscriberServer(log, ctx))
+	genericGRPCServer := grpc.NewServer(grpcServerOpts...)
+	eventSubscriberServer := NewEventSubscriberServer(log, ctx)
+	bw.RegisterSubscriberServer(genericGRPCServer, eventSubscriberServer)
 
 	// We'll run the gRPC server in a separate goroutine so we can catch signals
 	// and coordinate shutdown in the main goroutine:
 	go func() {
-		defer waitGRPC.Done()
 		log.Info("starting gRPC server")
-		if grpcServer.Serve(lis); err != nil {
+		if genericGRPCServer.Serve(lis); err != nil {
 			log.Fatal("unable to serve gRPC requests", zap.Error(err))
 		}
 	}()
-	waitGRPC.Add(1)
 
 	// Wait here until we're signaled to shutdown:
 	<-ctx.Done()
 
 	// Coordinate shutdown ensuring to disconnect all subscribers before shutting down the database.
 	log.Info("shutting down gRPC server")
-	grpcServer.Stop()
-	// Note we could also use grpcServer.GracefulStop() which would block until all RPCs are finished.
-	// However its better to always test for the worst case scenario where streams aren't given time to close nicely.
-	waitGRPC.Wait()
+	genericGRPCServer.Stop()
+	eventSubscriberServer.wg.Wait()
+	// Note we don't use grpcServer.GracefulStop() because it will block until active RPCs are finished.
+	// It will cancel the context associated with the stream, but stream.Recv() blocks so we can't use select.
+	// To accommodate GracefulStop() we need ReceiveEvents() to start stream.Recv() in a separate goroutine.
+	// That way ReceiveEvents() can watch for the context to be cancelled and return causing Recv() to return an error.
+	// The trouble is this can lead to race conditions that often cause an event to be dropped.
+	// Using Stop() is less convoluted and lets us always test the worst case scenario where streams don't close nicely.
 
 	log.Info("shutting down database")
 	dbShutdown()
@@ -90,76 +89,52 @@ func main() {
 }
 
 type EventSubscriberServer struct {
-	log *zap.Logger
-	ctx context.Context
 	bw.UnimplementedSubscriberServer
+	log *zap.Logger
+	wg  sync.WaitGroup
+	mu  sync.Mutex
 }
 
 func NewEventSubscriberServer(log *zap.Logger, ctx context.Context) *EventSubscriberServer {
-	return &EventSubscriberServer{log: log, ctx: ctx}
+	return &EventSubscriberServer{log: log}
 }
 
 func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEventsServer) error {
 
+	s.mu.Lock()
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
+
 	s.log.Info("gRPC client connected")
 
-	errCh := make(chan error)
+	ctx := stream.Context()
 
-	// Recv() will block until the context of the stream is cancelled (or an even is received).
-	// We don't need to run Recv() as a separate goroutine if we only use grpcServer.Stop() because it will close the connections
-	// effectively cancelling the context of the stream causing Recv() to return with an error. However if we want to support
-	// grpcServer.GracefulStop() then we need a goroutine so the handler ReceiveEvents() can watch for the server context to be
-	// cancelled and return, also cancelling the context on the stream unblocking the receive call and terminating the goroutine.
-	// Coordinating shutdown of a bidirectional streaming server is known to be a bit of a pain point:
-	// * https://stackoverflow.com/questions/68218469/how-to-un-wedge-go-grpc-bidi-streaming-server-from-the-blocking-recv-call
-	// * https://github.com/grpc/grpc-go/issues/2888
-	// I have yet to find a more optimal/straightforward approach than something like this.
-	go func() {
-		for {
-			in, err := stream.Recv()
-
-			if err != nil {
-				if status, ok := status.FromError(err); ok {
-					if status.Code() == codes.Canceled {
-						s.log.Info("gRPC stream was cancelled (probably the app or client is shutting down)", zap.Error(err))
-						// If the context was cancelled ReceiveEvents is no longer listening to the channel.
-						// Don't send anything else and just close the channel and return so we don't leak resources.
-					}
-				} else if err == io.EOF {
-					s.log.Info("client closed the gRPC stream", zap.Error(err))
-					errCh <- nil
-				} else {
-					s.log.Error("unknown error receiving from gRPC stream", zap.Error(err))
-					errCh <- err
-				}
-				close(errCh)
-				return
-			}
-			s.log.Debug("received event", zap.Any("event", in.SeqId))
-			db.Add(in)
-			if err = stream.Send(&bw.Response{CompletedSeq: in.SeqId}); err != nil {
-				errCh <- err
-				close(errCh)
-				return
-			}
-		}
-	}()
-
-connectedLoop:
 	for {
 		select {
-		case <-s.ctx.Done():
-			s.log.Info("stopping receiving events because the app is shutting down")
-			break connectedLoop
-		case err, ok := <-errCh:
-			if ok {
-				return err
-			}
+		case <-ctx.Done():
+			s.log.Info("stream was cancelled (is the server shutting down?)")
+			return ctx.Err()
+		default:
+		}
+
+		event, err := stream.Recv()
+
+		if err == io.EOF {
+			s.log.Info("client closed the stream")
 			return nil
+		} else if err != nil {
+			s.log.Info("error receiving from client", zap.Error(err))
+			continue
+		}
+
+		// TODO: Add logic to ignore duplicate events here.
+
+		db.Add(event)
+		if err = stream.Send(&bw.Response{CompletedSeq: event.SeqId}); err != nil {
+			s.log.Error("error sending response", zap.Error(err), zap.Any("event", event.SeqId))
 		}
 	}
-
-	return nil
 }
 
 type MockDB struct {
@@ -184,7 +159,7 @@ func (db *MockDB) Add(event *bw.Event) {
 func (db *MockDB) Run(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	file, err := os.OpenFile(lastSequenceIDFilename, os.O_RDWR|os.O_CREATE, 0755)
+	file, err := os.OpenFile(mockDBFilename, os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
 		db.log.Fatal("unable to open file", zap.Error(err))
@@ -200,54 +175,68 @@ func (db *MockDB) Run(wg *sync.WaitGroup) {
 
 	file.Close()
 
-	var lastSeq uint64 = 0
+	var lastSeqID, lastDroppedSeq, lastMissedSeq uint64
+
 	dataCleaned := strings.TrimSpace(string(data))
 
 	if dataCleaned != "" {
-		l, err := strconv.Atoi(dataCleaned)
-
+		//l, err := strconv.Atoi(dataCleaned)
+		_, err := fmt.Sscanf(dataCleaned, "%d,%d,%d", &lastSeqID, &lastDroppedSeq, &lastMissedSeq)
 		if err != nil {
 			db.log.Fatal("unable to parse file", zap.Error(err))
 		} else {
-			lastSeq = uint64(l)
-			db.log.Info("using last sequence ID from file", zap.Any("lastSequenceID", lastSeq))
+			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", lastSeqID), zap.Any("lastDroppedSequence", lastDroppedSeq), zap.Any("lastMissedSeq", lastMissedSeq))
 		}
 	} else {
-		db.log.Info("resetting lastSequenceID (file not found or empty)", zap.Any("lastSequenceIDFilename", lastSequenceIDFilename))
+		db.log.Info("resetting sequence IDs (file not found or empty)", zap.Any("mockDBFilename", mockDBFilename))
+		lastSeqID, lastDroppedSeq, lastMissedSeq = 0, 0, 0
 	}
 
 readEvents:
 	for {
 		select {
 		case <-db.ctx.Done():
-			db.log.Info("writing out last sequence ID and shutting down", zap.Int("lastSeq", int(lastSeq)))
 			break readEvents
 		case event := <-db.events:
 
-			if event.SeqId != lastSeq+1 && lastSeq != 0 {
-				db.log.Error("warning: detected dropped event", zap.Any("expected", lastSeq+1), zap.Any("actual", event.SeqId))
+			if event.SeqId != lastSeqID+1 && lastSeqID != 0 {
+				db.log.Error("warning: client dropped event(s) or sent events out of order", zap.Any("expectedSeqID", lastSeqID+1), zap.Any("actualSeqID", event.SeqId))
 			}
 
-			lastSeq = event.SeqId
+			lastSeqID = event.SeqId
+
+			if event.DroppedSeq != lastDroppedSeq {
+				db.log.Error("warning: metadata service dropped event(s)", zap.Any("lastDroppedSeq", lastDroppedSeq), zap.Any("currentDroppedSeq", event.DroppedSeq))
+				lastDroppedSeq = event.DroppedSeq
+			}
+
+			if event.MissedSeq != lastMissedSeq {
+				db.log.Error("warning: metadata service missed event(s)", zap.Any("lastMisedSeq", lastMissedSeq), zap.Any("currentMissedSeq", event.MissedSeq))
+				lastMissedSeq = event.MissedSeq
+			}
 		}
 	}
 
-	file, err = os.OpenFile(lastSequenceIDFilename, os.O_RDWR|os.O_TRUNC, 0755)
+	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", lastSeqID), zap.Any("lastDroppedSequence", lastDroppedSeq), zap.Any("lastMissedSequence", lastMissedSeq))
+
+	file, err = os.OpenFile(mockDBFilename, os.O_RDWR|os.O_TRUNC, 0755)
 	if err != nil {
 		db.log.Error("unable to open file to write out sequence ID", zap.Error(err))
 	}
 
 	defer file.Close()
 
-	_, err = file.WriteString(fmt.Sprint(lastSeq))
+	_, err = file.WriteString(fmt.Sprintf("%d,%d,%d", lastSeqID, lastDroppedSeq, lastMissedSeq))
 	if err != nil {
-		db.log.Error("error writing out sequence ID", zap.Error(err))
+		db.log.Error("error writing out updated sequence IDs", zap.Error(err))
 	}
 
 	err = file.Sync()
 	if err != nil {
-		db.log.Error("error syncing sequence ID file", zap.Error(err))
+		db.log.Error("error syncing database file", zap.Error(err))
 	}
+
+	db.log.Info("synchronized database to disk")
 }
 
 // getLogger parses command line logging options and returns an appropriately configured zap.Logger.
