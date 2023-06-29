@@ -103,7 +103,7 @@ func TestDeserialize(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		packet, err := deserialize(tc.input)
+		packet, err := deserialize(tc.input, len(tc.input))
 		assert.NoError(t, err)
 		assert.Equal(t, &tc.want, packet)
 	}

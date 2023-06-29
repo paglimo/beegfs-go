@@ -18,6 +18,10 @@ type MetaSocket struct {
 	socket     net.Listener
 	log        *zap.Logger
 	socketPath string
+	// Allocating a new buffer for every event has an immense impact on performance.
+	// So we allocate it once and reuse it.
+	//
+	buffer []byte
 }
 
 // Create returns a Unix socket where the BeeGFS metadata service can send events.
@@ -49,6 +53,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 		socket:     socket,
 		log:        log,
 		socketPath: socketPath,
+		buffer:     make([]byte, 65536),
 	}, nil
 }
 
@@ -101,9 +106,10 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 				continue
 			}
 
+			go b.readConnection(conn, eventStream)
+
 		readLoop:
 			for {
-				go b.readConnection(conn, eventStream)
 				select {
 				case <-b.ctx.Done():
 					b.log.Info("attempting to close active metadata connection and shutdown")
@@ -163,40 +169,33 @@ func (b MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) 
 	// Right now the meta service establishes and sends events over a single connection.
 	// It expects that connection will remain active indefinitely and will indicate "broken pipe" otherwise.
 
-	// TODO: Explore ways to optimize buffer allocation.
-	// Buffer size is based on what is used in beegfs_file_event_log.hpp.
-	// Presumably this is the max size a message could be given the max file path lengths in BeeGFS.
-	// I thought we could maybe optimize by first reading the header (8 bytes) including the packet size,
-	// then allocating an appropriately sized buffer to read the rest of the message.
-	// However if we do this the meta will log a connection reset then resend the entire packet.
-	// So we'd have to change the meta for this to work (and maybe Unix sockets aren't meant to be used like this).
-
-	buf := make([]byte, 65536)
-	bytesRead, err := conn.Read(buf)
-	if err != nil {
-		// Handle if we're gracefully shutting down and the socket was closed.
-		if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
+	for {
+		bytesRead, err := conn.Read(b.buffer)
+		if err != nil {
+			// Handle if we're gracefully shutting down and the socket was closed.
+			if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
+				return
+			}
+			b.log.Error("error reading from metadata connection", zap.Error(err))
+			eventStream <- nil
 			return
 		}
-		b.log.Error("error reading from metadata connection", zap.Error(err))
-		eventStream <- nil
-		return
+
+		event, err := deserialize(b.buffer, bytesRead)
+
+		if err != nil {
+			// Probably we received a malformed event packet. There really isn't much we can do here other than warn.
+			// Hopefully this would only come up in development when network protocols and packet versions may be in flux.
+			// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
+			b.log.Warn("unable to correctly deserialize packet due to an error (ignoring)", zap.Error(err))
+		} else if bytesRead < int(event.Size) {
+			// In "theory" this shouldn't happen.
+			// If the connection broke while we were reading from it, we should get an error earlier.
+			// Likely If this happens the BeeGFS meta service is sending us malformed event packets.
+			// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
+			b.log.Warn("received a packet that is smaller than the expected packet size (ignoring)", zap.Uint32("expected size", event.Size), zap.Int("actual size", bytesRead))
+		}
+
+		eventStream <- event
 	}
-
-	event, err := deserialize(buf)
-
-	if err != nil {
-		// Probably we received a malformed event packet. There really isn't much we can do here other than warn.
-		// Hopefully this would only come up in development when network protocols and packet versions may be in flux.
-		// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
-		b.log.Warn("unable to correctly deserialize packet due to an error (ignoring)", zap.Error(err))
-	} else if bytesRead < int(event.Size) {
-		// In "theory" this shouldn't happen.
-		// If the connection broke while we were reading from it, we should get an error earlier.
-		// Likely If this happens the BeeGFS meta service is sending us malformed event packets.
-		// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
-		b.log.Warn("received a packet that is smaller than the expected packet size (ignoring)", zap.Uint32("expected size", event.Size), zap.Int("actual size", bytesRead))
-	}
-
-	eventStream <- event
 }

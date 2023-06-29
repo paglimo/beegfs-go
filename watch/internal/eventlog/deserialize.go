@@ -7,17 +7,17 @@ import (
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 )
 
-// Types for BeeGFS events are defined as part of the external API at api/proto.
-// This file contains functions that deserialize BeeGFS modification events packets into this format.
-
-func deserialize(buf []byte) (*pb.Event, error) {
+// deserialize takes a buffer and the number of bytes to deserialize from that buffer into an event.
+// This allows it to work with a reusable fixed sized buffer to minimize allocations.
+// If successful it will return a pointer to a new event that should be reused until sent to all subscribers.
+// The the format of the deserialized event is defined as part of the external API at api/proto.
+func deserialize(buf []byte, numBytes int) (*pb.Event, error) {
 
 	var event pb.Event
 
-	actualSize := len(buf)
-	if actualSize < 28 {
+	if numBytes < 28 {
 		// If for some reason we received a packet that doesn't contain enough bytes for a header we should bail out.
-		return &event, fmt.Errorf("unable to deserialize any packet fields because the provided buffer was smaller than the expected header size (packet size: %d)", actualSize)
+		return &event, fmt.Errorf("unable to deserialize any packet fields because the provided buffer was smaller than the expected header size (packet size: %d)", numBytes)
 	}
 
 	// Integer values are easy to deserialize based on their sizes:
@@ -28,9 +28,9 @@ func deserialize(buf []byte) (*pb.Event, error) {
 	event.MissedSeq = binary.LittleEndian.Uint64(buf[16:24])
 	event.Type = pb.Event_Type(binary.LittleEndian.Uint32(buf[24:28]))
 
-	if actualSize < int(event.Size) {
+	if numBytes < int(event.Size) {
 		// If the packet size we parsed is smaller than the buffer we were provided we should bail out to avoid a panic.
-		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", event.Size, actualSize)
+		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", event.Size, numBytes)
 	}
 
 	// The rest of the packet is an array of strings.
