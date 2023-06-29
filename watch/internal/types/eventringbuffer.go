@@ -45,7 +45,7 @@ func (b *EventRingBuffer) Pop() (event *pb.Event) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	// There are no more events in the buffers:
+	// There are no more events in the buffer:
 	if b.start == b.end {
 		return nil
 	}
@@ -60,6 +60,36 @@ func (b *EventRingBuffer) Pop() (event *pb.Event) {
 	b.start = (b.start + 1) % len(b.buffer)
 
 	return event
+}
+
+// RemoveUntil accepts a sequence ID.
+// It then removes all events in the queue up to and including that ID.
+// It is intended to be used when the events are not needed.
+func (b *EventRingBuffer) RemoveUntil(id uint64) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	var event *pb.Event
+
+	for {
+		// There are no more events in the buffer:
+		if b.start == b.end {
+			return
+		}
+
+		// Save the current event:
+		event = b.buffer[b.start]
+
+		if event.SeqId <= id {
+			// Clear the buffer (important so the garbage collector will free up memory):
+			b.buffer[b.start] = nil
+
+			// Advance the start pointer to the next event wrapping around to the start if needed:
+			b.start = (b.start + 1) % len(b.buffer)
+		} else {
+			break
+		}
+	}
 }
 
 // Peek returns a pointer to the next event but does not advance to the next event.

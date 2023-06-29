@@ -42,8 +42,34 @@ func TestEventBufferPushPop(t *testing.T) {
 		assert.Equal(t, i, event.SeqId)
 	}
 
-	// The ring buffer should now be empty and Pop() should return nil and an error:
+	// The ring buffer should now be empty and Pop() should return nil:
 	event = b.Pop()
 	assert.Nil(t, event)
+	assert.True(t, b.IsEmpty())
+}
+
+func TestRemoveUntil(t *testing.T) {
+
+	testEvents := []*pb.Event{}
+	var i uint64 = 0
+
+	for ; i <= 10; i++ {
+		testEvents = append(testEvents, &pb.Event{SeqId: i})
+	}
+
+	// Push fifteen events to the ring buffer:
+	b := NewEventRingBuffer(15)
+	for _, event := range testEvents {
+		b.Push(event)
+	}
+
+	// Remove the first five:
+	b.RemoveUntil(5)
+
+	// We should have exactly five items remaining:
+	for i := 0; i < 5; i++ {
+		assert.NotNil(t, b.Pop())
+	}
+
 	assert.True(t, b.IsEmpty())
 }
