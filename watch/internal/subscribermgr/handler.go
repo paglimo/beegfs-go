@@ -70,15 +70,31 @@ func (h *Handler) Handle() {
 			if state := h.GetState(); state == subscriber.DISCONNECTED {
 				h.SetState(subscriber.CONNECTING)
 				if h.connectLoop() {
+					// We need to start listening for responses from the subscriber before we do anything.
+					// Some subscribers may block on receiving new events until they can send responses.
+					doneReceiving, cancelReceive := h.receiveLoop()
 					// If the subscriber disconnected for some reason there may be events in the offline event buffer.
-					// To ensure events are sent in order lets try to send them before entering the main connectedLoop()
-					// First we need to set the status to frozen to ensure Enqueue doesn't keep adding events:
+					// To ensure events are sent in order lets try to send them before starting the main sendLoop()
+					// First we need to set the status to frozen to ensure Enqueue doesn't keep adding events to the buffer:
 					h.SetState(subscriber.FROZEN)
 					if h.drainOfflineEvents() {
 						h.SetState(subscriber.CONNECTED)
-						h.connectedLoop()
+						doneSending, cancelSend := h.sendLoop()
+						// If either the receive or send goroutines are done, we should fully disconnect:
+						select {
+						case <-doneReceiving:
+							cancelSend()
+							<-doneSending
+						case <-doneSending:
+							cancelReceive()
+							<-doneReceiving
+						}
 						h.SetState(subscriber.FROZEN)
 						h.drainQueue()
+					} else {
+						// Make sure we stop receiving if we can't drain offline events:
+						cancelReceive()
+						<-doneReceiving
 					}
 				}
 			}
@@ -144,22 +160,64 @@ func (h *Handler) connectLoop() bool {
 	}
 }
 
+func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
+
+	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	recvStream := h.Receive()
+	h.log.Info("starting to receive responses from subscriber")
+
+	go func() {
+		defer close(done)
+		defer cancel()
+		for {
+			select {
+			case <-h.ctx.Done():
+				// The context should only be cancelled if something local requested a disconnect.
+				h.log.Info("stopping receive loop because the handler is shutting down")
+				return
+			case <-ctx.Done():
+				h.log.Info("stopping receive loop because the context was cancelled")
+				return
+			case response, ok := <-recvStream:
+				if !ok {
+					// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
+					h.log.Info("stopping receive loop due to a remote disconnect")
+					return
+				}
+				h.dequeue(response)
+			}
+		}
+	}()
+
+	return done, cancel
+}
+
 func (h *Handler) drainOfflineEvents() bool {
 
-	h.log.Info("sending offline events to subscriber")
+	if !h.offlineEvents.IsEmpty() {
+		h.log.Info("sending offline events to subscriber")
 
-	for !h.offlineEvents.IsEmpty() {
-		// We don't want to remove the event from the buffer until we're sure it was sent successfully:
-		err := h.Send(h.offlineEvents.Peek())
-		if err != nil {
-			h.log.Error("unable to send offline event to subscriber", zap.Error(err), zap.Any("event_seq", h.offlineEvents.Peek().SeqId))
-			// We hit an error so all we can do is try to reconnect again.
-			return false
+		for !h.offlineEvents.IsEmpty() {
+			select {
+			case <-h.ctx.Done():
+				// The context should only be cancelled if something local requested a disconnect.
+				h.log.Info("local disconnect requested while sending offline events to subscriber")
+				return false
+			default:
+				// We don't want to remove the event from the buffer until we're sure it was sent successfully:
+				err := h.Send(h.offlineEvents.Peek())
+				if err != nil {
+					h.log.Error("unable to send offline event to subscriber", zap.Error(err), zap.Any("event_seq", h.offlineEvents.Peek().SeqId))
+					// We hit an error so all we can do is try to reconnect again.
+					return false
 
-		} else {
-			// Otherwise if the event was sent lets pop it from the event buffer.
-			event := h.offlineEvents.Pop()
-			h.log.Debug("sent offline event to subscriber", zap.Any("event", event.SeqId))
+				} else {
+					// Otherwise if the event was sent lets pop it from the event buffer.
+					event := h.offlineEvents.Pop()
+					h.log.Debug("sent offline event to subscriber", zap.Any("event", event.SeqId))
+				}
+			}
 		}
 	}
 	return true
@@ -169,49 +227,37 @@ func (h *Handler) drainOfflineEvents() bool {
 // It will do this until the connection breaks for any reason (gracefully or otherwise).
 // Once it returns the connection must be disconnected and reconnected before connectedLoop() is called again.
 // It does not return an error because the caller should react the same in all scenarios.
-func (h *Handler) connectedLoop() {
-	// Start listening for responses from the subscriber:
-	recvStream := h.Receive()
+func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 
-	h.log.Info("beginning regular bidirectional event stream")
+	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	h.log.Info("beginning normal event stream")
 
-	// Only used for debugging:
-	var lastEvent = &pb.Event{SeqId: 0}
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			// The context should only be cancelled if something local requested a disconnect.
-			h.log.Info("local disconnect requested")
-			return
-		case event := <-h.queue:
-			if h.log.Level() == zap.DebugLevel {
-				lastEvent = event
+	go func() {
+		defer close(done)
+		defer cancel()
+		for {
+			select {
+			case <-h.ctx.Done():
+				// The context should only be cancelled if something local requested a disconnect.
+				h.log.Info("stopping send loop because the handler is shutting down")
+				return
+			case <-ctx.Done():
+				h.log.Info("stopping send loop because the context was cancelled")
+				return
+			case event := <-h.queue:
 				h.log.Debug("sending event", zap.Any("event", event.SeqId))
+				if err := h.Send(event); err != nil {
+					h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
+					// We don't know if the event was sent successfully or not so lets push it to the offline event buffer.
+					// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
+					h.offlineEvents.Push(event)
+					return
+				}
 			}
-			if err := h.Send(event); err != nil {
-				h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
-				// We don't know if the event was sent successfully or not so lets push it to the offline event buffer.
-				// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
-				h.offlineEvents.Push(event)
-				return
-			}
-		case response, ok := <-recvStream:
-			if !ok {
-				// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
-				h.log.Debug("disconnect while sending event", zap.Any("lastEvent", lastEvent.SeqId))
-				h.log.Info("remote disconnect received")
-				return
-			}
-			h.log.Debug("received response from subscriber", zap.Any("response", response))
-			// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
-			// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
-			// Probably nothing because there is no expectation subscribers ack every event back to BeeWatch, or BW ack every event to meta.
-			// If we're able to reconnect then we'll start reading the recvStream again.
-			// If we're shutting down it doesn't matter since BeeWatch doesn't store any state on-disk.
-			// Whatever ack'h events back to meta will need to handle if a subscriber is removed, knowing to disregard events it hasn't ack'd.
 		}
-	}
+	}()
+	return done, cancel
 }
 
 // drainQueue() drains all events in the queue to the offline events buffer.
@@ -286,4 +332,17 @@ func (h *Handler) Enqueue(event *pb.Event) {
 func (h *Handler) Stop() {
 	h.log.Info("stopping handler")
 	h.cancel()
+}
+
+// dequeue() is a placeholder method for how we'll handle responses from the subscriber.
+// It exists so all places that listen for responses already call to a common handler method.
+// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
+// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
+// Probably nothing because there is no expectation subscribers ack every event back to BeeWatch, or BW ack every event to meta.
+// If we're able to reconnect then we'll start reading the recvStream again.
+// If we're shutting down it doesn't matter since BeeWatch doesn't store any state on-disk.
+// Whatever ack'h events back to meta will need to handle if a subscriber is removed, knowing to disregard events it hasn't ack'd.
+func (h *Handler) dequeue(response *pb.Response) {
+
+	h.log.Debug("received response from subscriber", zap.Any("response", response))
 }
