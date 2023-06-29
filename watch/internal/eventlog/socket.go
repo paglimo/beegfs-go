@@ -101,6 +101,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 				continue
 			}
 
+		readLoop:
 			for {
 				go b.readConnection(conn, eventStream)
 				select {
@@ -119,7 +120,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 						if err != nil {
 							b.log.Error("unable to close metadata connection", zap.Error(err))
 						}
-						break
+						break readLoop
 					}
 					// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
 					// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
@@ -179,6 +180,7 @@ func (b MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) 
 		}
 		b.log.Error("error reading from metadata connection", zap.Error(err))
 		eventStream <- nil
+		return
 	}
 
 	event, err := deserialize(buf)
