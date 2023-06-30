@@ -71,11 +71,11 @@ func main() {
 	metaEventBuffer := make(chan *pb.Event, *metaBufferSize)
 
 	// Create a unix domain socket and listen for incoming connections from the metadata service:
-	socket, err := eventlog.New(ctx, log, *socketPath)
+	socket, err := eventlog.New(ctx, log, *socketPath, metaEventBuffer)
 	if err != nil {
 		log.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", *socketPath))
 	}
-	go socket.ListenAndServe(&wg, metaEventBuffer) // Don't move this away from the creation to ensure the socket is cleaned up.
+	go socket.ListenAndServe(&wg) // Don't move this away from the creation to ensure the socket is cleaned up.
 	wg.Add(1)
 
 	if *enableSampling {
