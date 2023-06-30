@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,14 +18,17 @@ import (
 )
 
 var (
-	socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
-	logFile    = flag.String("logFile", "", "log to a file instead of stdout")
-	logDebug   = flag.Bool("logDebug", false, "enable logging at the debug level")
+	socketPath     = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
+	logFile        = flag.String("logFile", "", "log to a file instead of stdout")
+	logDebug       = flag.Bool("logDebug", false, "enable logging at the debug level")
+	enableSampling = flag.Bool("enableSampling", false, "output events per second")
+	enablePProf    = flag.Int("enablePProf", 0, "specify a port where performance profiles will be made available on the localhost")
 	// If a subscriber disconnects there is a brief cutover before we start buffering offline events for that subscriber using a ring buffer.
 	// Currently the metadata service expects events to be read as fast as they are sent to the socket otherwise it will drop events.
 	// Until we have the metadata service buffering events for us, we need the option to have BeeWatch implement the in-memory buffer.
 	// Once the metadata service is buffering events for us this can be set to zero without dropping events.
-	metaBufferSize = flag.Int("metaBufferSize", 976562, "buffer up to this many events before they can be added to subscriber buffers")
+	// If we're targeting 500,000 EPS, then a buffer of 300,000,000 allows us to take up to 600s to drain offline events.
+	metaBufferSize = flag.Int("metaBufferSize", 300000000, "buffer up to this many events before they can be added to subscriber buffers")
 )
 
 var subscriberConfigJson string = `
@@ -49,6 +54,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *enablePProf != 0 {
+		go func() {
+			http.ListenAndServe(fmt.Sprintf(":%d", *enablePProf), nil)
+		}()
+	}
+
 	// We'll use a context to cleanly shutdown goroutines:
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -66,6 +77,10 @@ func main() {
 	}
 	go socket.ListenAndServe(&wg, metaEventBuffer) // Don't move this away from the creation to ensure the socket is cleaned up.
 	wg.Add(1)
+
+	if *enableSampling {
+		go socket.Sample() // We don't care about adding this to the wg.
+	}
 
 	// Setup our subscriber manager:
 	sm := subscribermgr.NewManager(log)
