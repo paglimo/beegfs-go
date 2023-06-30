@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -26,7 +28,9 @@ var (
 	logFile                  = flag.String("logFile", "", "log to a file instead of stdout")
 	logDebug                 = flag.Bool("logDebug", false, "enable logging at the debug level")
 	enableSampling           = flag.Bool("enableSampling", false, "output events per second")
+	enablePProf              = flag.Int("enablePProf", 0, "specify a port where performance profiles will be made available on the localhost")
 	eventSubscriberInterface = flag.String("eventSubscriberInterface", "localhost:50052", "Where this subscriber will listen for events from BeeWatch nodes.")
+	ackFrequency             = flag.Duration("ackFrequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
 	db                       = &MockDB{}
 )
 
@@ -36,6 +40,12 @@ func main() {
 	if err != nil {
 		fmt.Println("Unable to initialize logger: ", err)
 		os.Exit(1)
+	}
+
+	if *enablePProf != 0 {
+		go func() {
+			http.ListenAndServe(fmt.Sprintf(":%d", *enablePProf), nil)
+		}()
 	}
 
 	defer log.Sync() // Make sure we flush logs before shutting down.
@@ -112,6 +122,25 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 
 	ctx := stream.Context()
 
+	// Send responses in a separate goroutine on a fixed period to optimize performance:
+	if *ackFrequency != 0 {
+		go func() {
+			ticker := time.NewTicker(*ackFrequency)
+			for {
+				select {
+				case <-ctx.Done():
+					s.log.Info("no longer sending responses because the stream was cancelled")
+					return
+				case <-ticker.C:
+					seqID := db.GetSeqID()
+					if err := stream.Send(&bw.Response{CompletedSeq: seqID}); err != nil {
+						s.log.Error("error sending response", zap.Error(err), zap.Any("event", seqID))
+					}
+				}
+			}
+		}()
+	}
+	// Listen for new events:
 	for {
 		select {
 		case <-ctx.Done():
@@ -130,12 +159,8 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 			continue
 		}
 
-		// TODO: Add logic to ignore duplicate events here.
 		s.log.Debug("received event", zap.Any("event", event))
 		db.Add(event)
-		if err = stream.Send(&bw.Response{CompletedSeq: event.SeqId}); err != nil {
-			s.log.Error("error sending response", zap.Error(err), zap.Any("event", event.SeqId))
-		}
 	}
 }
 
@@ -181,8 +206,16 @@ func (db *MockDB) Sample() {
 	}
 }
 
+// Add sends an event to the database.
+// It is not thread safe and should only be called by one goroutine at a time.
 func (db *MockDB) Add(event *bw.Event) {
 	db.events <- event
+}
+
+// GetSeqID gets the latest sequence ID from the database.
+// Since we're not doing any locking, this may be slightly behind the actual latest event.
+func (db *MockDB) GetSeqID() uint64 {
+	return db.lastSeqID
 }
 
 func (db *MockDB) Run(wg *sync.WaitGroup) {
