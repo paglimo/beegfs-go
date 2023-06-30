@@ -16,6 +16,10 @@ const (
 	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
 	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
 	maxReconnectBackoff = 60
+	// TODO: Possibly we want the ability to define this on a per subscriber basis.
+	defaultUnackEventsBufferSize = 4096
+	defaultQueueSize             = 1048576
+	defaultOfflineBufferSize     = 300000000
 )
 
 type Handler struct {
@@ -23,11 +27,22 @@ type Handler struct {
 	// They are kept in this buffer until the event is acknowledged by the subscriber,
 	// or the subscriber disconnects for any reason, then they are added to the front of the
 	// offlineEvents buffer and resent when the subscriber reconnects.
+	// Depending how subscribers handle events and the network we don't really need a large buffer here:
+	// * From a network perspective:
+	//   This should be the maximum number of events that can be "on the wire" at any moment.
+	//   So if our stream breaks this is at most the number of events that could be dropped.
+	// * From a subscriber perspective:
+	//   So long as they are handling events as they are received, even if they aren't acknowledging each event,
+	//   this buffer size shouldn't matter. If they need us to hold on-to events for some amount of time,
+	//   perhaps they're processing events in batches, this may need to be set to their "batch size",
+	//   or the max number of events that can be received between them sending each acknowledgement.
 	unacknowledgedEvents *types.EventRingBuffer
 	// Offline events is a ring buffer used to store events while a subscriber is not connected.
 	// The use of a ring buffer ensures we don't use infinite memory and drop older events for newer ones.
 	offlineEvents *types.EventRingBuffer
 	// The queue is where new events are published while the subscriber is connected.
+	// If the subscriber is unable to process events faster than they are published to this queue,
+	// the overall rate at which new events are accepted will be throttled by the subscriber manager.
 	queue  chan *pb.Event
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -40,9 +55,25 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber) *Handler
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Ensure the subscriber has provided us sane values:
+	if subscriber.QueueSize == 0 {
+		log.Info("using default queue size for subscriber")
+		subscriber.QueueSize = defaultQueueSize
+	}
+
+	if subscriber.OfflineBufferSize == 0 {
+		log.Info("using default offline buffer size for subscriber")
+		subscriber.OfflineBufferSize = defaultOfflineBufferSize
+	}
+
+	if subscriber.OfflineBufferSize < subscriber.QueueSize+defaultUnackEventsBufferSize {
+		log.Info("offline buffer size cannot be less than combined queue and unacknowledged buffer size, setting equal")
+		subscriber.OfflineBufferSize = subscriber.QueueSize + defaultUnackEventsBufferSize
+	}
+
 	return &Handler{
 		// TODO: This probably doesn't need to be as large as the offlineEvents buffer.
-		unacknowledgedEvents: types.NewEventRingBuffer(subscriber.OfflineBufferSize),
+		unacknowledgedEvents: types.NewEventRingBuffer(defaultUnackEventsBufferSize),
 		offlineEvents:        types.NewEventRingBuffer(subscriber.OfflineBufferSize),
 		queue:                make(chan *pb.Event, subscriber.QueueSize),
 		ctx:                  ctx,

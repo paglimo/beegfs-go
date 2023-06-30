@@ -14,8 +14,7 @@ var testJsonConfig string = `
         "name": "bee-remote",
         "hostname":"br-1",
 		"port":"1234",
-		"allow_insecure":true,
-		"offline_buffer_size":1
+		"allow_insecure":true
     },
     {
         "type": "grpc",
@@ -47,8 +46,8 @@ func TestNewSubscribersFromJson(t *testing.T) {
 			Id:   "1",
 			Name: "bee-remote",
 			// If OfflineBufferSize < QueueSize it should be set to the default queue size.
-			OfflineBufferSize: defaultQueueSize,
-			QueueSize:         defaultQueueSize,
+			OfflineBufferSize: 0,
+			QueueSize:         0,
 			State: State{
 				state: DISCONNECTED,
 			},

@@ -5,11 +5,6 @@ import (
 	"fmt"
 )
 
-// TODO: We should probably handle the default as part of global configuration.
-const (
-	defaultQueueSize = 1048576 // Presuming <1KiB per events this keeps memory utilization under 1GiB.
-)
-
 // jsonConfig defines the configuration options that could be set on any type of subscriber.
 // It embeds each type of subscriber so their fields can be unmarshalled/initialized based on the selected "Type".
 type baseConfig struct {
@@ -58,14 +53,6 @@ func NewSubscribersFromJson(rawJson string) ([]*BaseSubscriber, error) {
 // newSubscriberFromConfig takes a SubscriberConfig and returns an initialized struct for the indicated subscriber type.
 // It will return an error if the requested subscriber type is unknown.
 func newSubscriberFromConfig(config baseConfig) (*BaseSubscriber, error) {
-
-	if config.QueueSize == 0 {
-		config.QueueSize = defaultQueueSize
-	}
-
-	if config.OfflineBufferSize < config.QueueSize {
-		config.OfflineBufferSize = config.QueueSize
-	}
 
 	base := &BaseSubscriber{
 		Id:                config.ID,
