@@ -8,6 +8,7 @@ import (
 	"path"
 	"reflect"
 	"sync"
+	"time"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"go.uber.org/zap"
@@ -20,8 +21,11 @@ type MetaSocket struct {
 	socketPath string
 	// Allocating a new buffer for every event has an immense impact on performance.
 	// So we allocate it once and reuse it.
-	//
 	buffer []byte
+	// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
+	// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
+	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
+	seqId uint64
 }
 
 // Create returns a Unix socket where the BeeGFS metadata service can send events.
@@ -54,6 +58,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string) (*MetaSocket, 
 		log:        log,
 		socketPath: socketPath,
 		buffer:     make([]byte, 65536),
+		seqId:      0,
 	}, nil
 }
 
@@ -75,11 +80,6 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 
 	defer wg.Done()
 	defer b.socket.Close()
-
-	// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
-	// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
-	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
-	var seqId uint64 = 0
 
 	// Clean up socket path when exiting.
 	defer func() {
@@ -131,8 +131,8 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 					// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
 					// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
 					// Remove once the BeeGFS metadata service starts sending us sequence IDs.
-					seqId++
-					event.SeqId = seqId
+					b.seqId++
+					event.SeqId = b.seqId
 					metaEventBuffer <- event
 				}
 			}
@@ -144,7 +144,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup, metaEventBuffer chan<- *
 // acceptConnection will block until it receives a connection.
 // When it establishes a connection it will be returned on the provided channel.
 // If there is an error accepting a connection it will return a nil connection for upstream handling.
-func (b MetaSocket) acceptConnection(connections chan<- net.Conn) {
+func (b *MetaSocket) acceptConnection(connections chan<- net.Conn) {
 
 	b.log.Info("waiting for metadata connection")
 	c, err := b.socket.Accept()
@@ -165,7 +165,7 @@ func (b MetaSocket) acceptConnection(connections chan<- net.Conn) {
 // readConnection will block until it receives a packet on the provided connection.
 // When it reads a packet it will be deserialized and returned on the provided channel.
 // If there is an error reading from the connection it will return a nil packet for upstream handling.
-func (b MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) {
+func (b *MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) {
 	// Right now the meta service establishes and sends events over a single connection.
 	// It expects that connection will remain active indefinitely and will indicate "broken pipe" otherwise.
 
@@ -197,5 +197,29 @@ func (b MetaSocket) readConnection(conn net.Conn, eventStream chan<- *pb.Event) 
 		}
 
 		eventStream <- event
+	}
+}
+
+func (b *MetaSocket) Sample() {
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		default:
+			// Since we're just reading we're not doing any locking.
+			// This means our sampling may be slightly off.
+			start := b.seqId
+			startTime := time.Now()
+			time.Sleep(time.Second)
+			end := b.seqId
+			endTime := time.Now()
+
+			eventsReceived := end - start
+			duration := endTime.Sub(startTime).Seconds()
+
+			eventsPerSecond := float64(eventsReceived) / duration
+			b.log.Info("incoming events per second", zap.Any("EPS", eventsPerSecond))
+		}
 	}
 }
