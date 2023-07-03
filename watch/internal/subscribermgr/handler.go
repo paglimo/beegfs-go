@@ -18,7 +18,7 @@ const (
 	maxReconnectBackoff = 60
 	// TODO: Possibly we want the ability to define this on a per subscriber basis.
 	defaultUnackEventsBufferSize = 4096
-	defaultQueueSize             = 1048576
+	defaultQueueSize             = 300000000
 	defaultOfflineBufferSize     = 300000000
 )
 
@@ -72,7 +72,6 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber) *Handler
 	}
 
 	return &Handler{
-		// TODO: This probably doesn't need to be as large as the offlineEvents buffer.
 		unacknowledgedEvents: types.NewEventRingBuffer(defaultUnackEventsBufferSize),
 		offlineEvents:        types.NewEventRingBuffer(subscriber.OfflineBufferSize),
 		queue:                make(chan *pb.Event, subscriber.QueueSize),

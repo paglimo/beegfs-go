@@ -159,7 +159,7 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 			continue
 		}
 
-		s.log.Debug("received event", zap.Any("event", event))
+		//s.log.Debug("received event", zap.Any("event", event))
 		db.Add(event)
 	}
 }
