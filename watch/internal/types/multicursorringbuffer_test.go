@@ -41,6 +41,9 @@ func TestMCRBGC(t *testing.T) {
 	// TODO: Test to verify logic around determining oldestAckPosition,
 	// and moving start to point at the oldest event works as expected.
 
+	err := rb.AckEvent(1, 3)
+	assert.NoError(t, err)
+
 }
 
 func TestMCRBGetEventAndResetSendCursor(t *testing.T) {
@@ -76,23 +79,87 @@ func TestMCRBGetEventAndResetSendCursor(t *testing.T) {
 		assert.Equal(t, rb.cursors[1].ackCursor, rb.cursors[1].sendCursor)
 		// Then re-run once as if we were resending lost events.
 	}
-
 }
 
-func TestBinarySearch(t *testing.T) {
+func TestAckEvent(t *testing.T) {
 	rb := NewMultiCursorRingBuffer(10)
+	rb.AddCursor(1)
 
-	// 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21...
-	for i := 1; i <= 21; i = i + 2 {
+	// If we push 12 events we should drop the two oldest:
+	for i := 1; i <= 12; i++ {
 		rb.Push(&pb.Event{SeqId: uint64(i)})
 	}
 
-	result := rb.binarySearchIndexOfSeqID(1, 6, 6)
-	assert.Equal(t, 2, result)
-	result = rb.binarySearchIndexOfSeqID(1, 6, 13)
-	assert.Equal(t, 6, result)
-	result = rb.binarySearchIndexOfSeqID(1, 6, 1)
-	assert.Equal(t, -1, result)
-	result = rb.binarySearchIndexOfSeqID(1, 6, 15)
-	assert.Equal(t, -2, result)
+	// Ack events that were already dropped and the cursor shouldn't move:
+	currAckLocation := rb.cursors[1].ackCursor
+	rb.AckEvent(1, 1)
+	rb.AckEvent(2, 1)
+	assert.Equal(t, currAckLocation, rb.cursors[1].ackCursor)
+
+	// Now ack an actual event and the cursor should move:
+	rb.AckEvent(1, 3)
+	assert.Equal(t, 3, rb.cursors[1].ackCursor)
+
+	// TODO (current location): Continue building out tests and verifying AckEvent().
+
+}
+
+func TestSearchIndexOfSeqID(t *testing.T) {
+	rb := NewMultiCursorRingBuffer(10)
+
+	// 23, 25, nil, 7, 9, 11, 13, 15, 17, 19, 21...
+	for i := 1; i <= 25; i = i + 2 {
+		rb.Push(&pb.Event{SeqId: uint64(i)})
+	}
+
+	// Search for a seqID that was dropped:
+	idx, found := rb.searchIndexOfSeqID(3, 8, 8)
+	assert.Equal(t, 4, idx)
+	assert.False(t, found)
+
+	// Search for a seqID that exists:
+	idx, found = rb.searchIndexOfSeqID(3, 8, 7)
+	assert.Equal(t, 3, idx)
+	assert.True(t, found)
+
+	// Search for a seqID that was dropped where the buffer wraps around:
+	idx, found = rb.searchIndexOfSeqID(3, 1, 22)
+	assert.Equal(t, 0, idx)
+	assert.False(t, found)
+
+	// Search for a seqID that exists after the buffer wraps around:
+	idx, found = rb.searchIndexOfSeqID(3, 1, 23)
+	assert.Equal(t, 0, idx)
+	assert.True(t, found)
+
+	// Search for a seqID that exists at the end of the buffer:
+	idx, found = rb.searchIndexOfSeqID(3, 1, 25)
+	assert.Equal(t, 1, idx)
+	assert.True(t, found)
+
+	// Search for a seqID that was already ack'd (lower than startIndex):
+	idx, found = rb.searchIndexOfSeqID(4, 6, 7)
+	assert.Equal(t, 4, idx)
+	assert.False(t, found)
+
+	// Search for a seqID that wasn't sent yet but has wrapped around in the buffer:
+	idx, found = rb.searchIndexOfSeqID(4, 8, 25)
+	assert.Equal(t, -1, idx)
+	assert.False(t, found)
+
+	// Search for a seqID that wasn't sent yet and doesn't exist:
+	idx, found = rb.searchIndexOfSeqID(4, 8, 27)
+	assert.Equal(t, -1, idx)
+	assert.False(t, found)
+
+	rb = NewMultiCursorRingBuffer(10)
+
+	// 23, 25, 27, 29, nil, 11, 13, 15, 17, 19, 21...
+	for i := 1; i <= 29; i = i + 2 {
+		rb.Push(&pb.Event{SeqId: uint64(i)})
+	}
+
+	// Search for a sequence ID in a deeper buffer wraparound:
+	idx, found = rb.searchIndexOfSeqID(5, 3, 27)
+	assert.Equal(t, 2, idx)
 }
