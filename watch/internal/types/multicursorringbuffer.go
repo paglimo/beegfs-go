@@ -110,36 +110,41 @@ func (b *MultiCursorRingBuffer) Push(event *pb.Event) {
 // collectGarbage frees up space in the ring buffer dropping the oldest events first.
 // It first examines the SubscriberCursors to determine the oldest unacknowledged event.
 // It always frees at least one slot in the buffer.
+// This may result in the ackCursor pointing at the same position as the sendCursor.
 // If possible it will free up multiple slots at once to optimize performance.
 // It SHOULD ONLY be called from Push() as it expects the mutex to already be locked.
 func (b *MultiCursorRingBuffer) collectGarbage() {
 
-	// First lets get the position of the oldest ack:
-	oldestAckPosition := -1
+	// oldestAckCursor is the oldest unacknowledged event across all subscribers.
+	var oldestAckCursor int
 	currentStart := b.start
 	end := b.end
+
+	// TODO (current location): This doesn't work properly in all scenarios.
+	// It needs to be updated to determine which ackCursor is closer to start,
+	// taking into consideration the buffer can wrap around.
 
 	for _, c := range b.cursors {
 		// Lock individual cursors:
 		c.mutex.Lock()
 		defer c.mutex.Unlock()
 
-		if oldestAckPosition == -1 {
-			oldestAckPosition = c.ackCursor
+		if oldestAckCursor == -1 {
+			oldestAckCursor = c.ackCursor
 		} else {
 			// If the oldest ack is greater or equal to start:
-			if oldestAckPosition >= currentStart {
+			if oldestAckCursor >= currentStart {
 				// Then the oldest events are anything larger than the oldestAckPosition:
-				if c.ackCursor > oldestAckPosition {
-					oldestAckPosition = c.ackCursor
+				if c.ackCursor > oldestAckCursor {
+					oldestAckCursor = c.ackCursor
 				} else if c.ackCursor < currentStart {
 					// Or anything less than start:
-					oldestAckPosition = c.ackCursor
+					oldestAckCursor = c.ackCursor
 				}
 			} else { // Otherwise if the oldest ack is less than start:
-				if c.ackCursor < currentStart && c.ackCursor > oldestAckPosition {
+				if c.ackCursor < currentStart && c.ackCursor > oldestAckCursor {
 					// Then the oldest events are less than start, but greater than oldest ack:
-					oldestAckPosition = c.ackCursor
+					oldestAckCursor = c.ackCursor
 				}
 			}
 		}
@@ -147,18 +152,18 @@ func (b *MultiCursorRingBuffer) collectGarbage() {
 
 	// We'll always clear the oldest event in the buffer:
 	b.buffer[currentStart] = nil
-	b.start++
+	b.start = (currentStart + 1) % len(b.buffer)
 
 	// If the oldest acknowledged event was already at the old start of the buffer we shouldn't clear more events.
 	// Otherwise if the oldest acknowledged event is still -1 there are no subscribers configured yet, so lets keep as many events as possible for now and still only clear the oldest event.
-	if oldestAckPosition == currentStart || oldestAckPosition == -1 {
+	if oldestAckCursor == currentStart || oldestAckCursor == -1 {
 		// Advance any ack or send cursors that were pointing at the oldestAckPosition to the new start:
 		for _, c := range b.cursors {
-			if c.ackCursor == oldestAckPosition {
+			if c.ackCursor == oldestAckCursor {
 				c.ackCursor = b.start
 			}
 
-			if c.sendCursor == oldestAckPosition {
+			if c.sendCursor == oldestAckCursor {
 				c.sendCursor = b.start
 			}
 		}
@@ -166,18 +171,18 @@ func (b *MultiCursorRingBuffer) collectGarbage() {
 	}
 
 	// Otherwise lets try and free up as much space as we can:
-	b.start++
+	newStart := b.start
 	for {
-		// start==end if the buffer is empty. Otherwise keep clearing to the oldest ack position:
-		if currentStart == end || currentStart == oldestAckPosition {
+		// start==end means the buffer is empty. Otherwise keep clearing to the oldest ack position:
+		if newStart == end || newStart == oldestAckCursor {
 			break
 		}
-		b.buffer[currentStart] = nil
-		currentStart = (currentStart + 1) % len(b.buffer)
+		b.buffer[newStart] = nil
+		newStart = (newStart + 1) % len(b.buffer)
 	}
 
 	// Move start to point at the oldest unacknowledged event.
-	b.start = currentStart
+	b.start = newStart
 }
 
 // GetEvent() returns the next event for the provided subscriberID and moves the sendCursor forward by one.
@@ -223,20 +228,22 @@ func (b *MultiCursorRingBuffer) ResetSendCursor(subscriberID int) error {
 }
 
 // AckEvent moves the ackCursor for a subscriberID forward to the next unacknowledged seqID.
+// It will never advance the ackCursor past the sendCursor.
+// The ackCursor may be the same as the sendCursor if all sent events have been acknowledged.
 // It works as follows:
-// (1) If the seqID of the current ackCursor is greater then the provided seqID do nothing.
-// (2) If the seqID at the current ackCursor matches the provided seqID increase the ackCursor by one.
-// (3) If the provided seqID is between the ackCursor.SeqID and sendCursor.SeqID, try to calculate the expected location of seqID.
-//   - If found increase the ackCursor by one.
 //
-// (4) If unable to calculate the expected location, fall back on a binary search between the ackCursor and sendCursor.
-//   - If found increase the ackCursor by one.
-//   - Otherwise point the ackCursor at the next highest seqID after the acknowledged seqID.
+//   - If the seqID of the current ackCursor is greater then the provided seqID do nothing.
+//   - If the seqID at the current ackCursor matches the provided seqID increase the ackCursor by one.
+//   - If the provided seqID is between the ackCursor.SeqID and sendCursor.SeqID, try to calculate the expected location of seqID.
+//     If found increase the ackCursor by one.
+//   - If unable to calculate the expected location, fall back on a binary search between the ackCursor and sendCursor.
+//     If found increase the ackCursor by one.
+//     Otherwise point the ackCursor at the next highest seqID after the acknowledged seqID.
 //
 // If the seqID is greater than or equal to the seqID at the sendCursor it returns an error.
 // If the provided subscriberID doesn't exist it returns an error.
 // If the ackCursor points at a nil event it returns an error.
-func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqID uint64) error {
+func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) error {
 	c, ok := b.cursors[subscriberID]
 	if !ok {
 		return fmt.Errorf("the specified subscriber ID doesn't exist: %d", subscriberID)
@@ -246,58 +253,79 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqID uint64) error {
 
 	// This should only happen if the subscriber calls AckEvent before any events were actually sent (and the buffer is empty).
 	if b.buffer[c.ackCursor] == nil {
-		return fmt.Errorf("subscriber tried to acknowledge an event but the next event to acknowledge is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqID)
+		return fmt.Errorf("subscriber tried to acknowledge an event but the next event to acknowledge is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 	}
 
-	// We shouldn't hit this unless there is a bug somewhere.
-	if b.buffer[c.sendCursor] == nil {
-		return fmt.Errorf("subscriber tried to acknowledge an event but the next expected event is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqID)
+	// The sendCursor points at the next event to send.
+	// If we're all caught up on sending events, the sendCursor points at an empty (nil) buffer.
+	// To make things easier we'll always search for the event to ack between the ackCursor and the lastSentSeqID.
+	var lastSentSeqID uint64
+	// lastSentIndex is the buffer location of the last event that was actually sent to the subscriber.
+	lastSentIndex := c.sendCursor - 1
+	if lastSentIndex == -1 {
+		// If the send cursor was at the start of the buffer, wrap it back around to the end.
+		lastSentIndex = len(b.buffer) - 1
 	}
 
-	// TODO: Do we actually need some of these error checks? Consider removing once BeeWatch is in a more stable state.
-	// Otherwise we should probably add more checking to account for "holes" in the buffer.
+	if b.buffer[lastSentIndex] == nil {
+		// We shouldn't hit this unless there is a bug somewhere.
+		return fmt.Errorf("subscriber tried to acknowledge an event but the last sent event is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
+	}
+
+	// TODO: Do we actually need more checking to account for "holes" in the buffer?
 	// For example if there are events that are nil surrounded by valid events we would panic.
+	lastSentSeqID = b.buffer[lastSentIndex].SeqId
 
-	if b.buffer[c.ackCursor].SeqId > seqID {
+	if seqIDToAck > lastSentSeqID {
+		return fmt.Errorf("subscriber tried to acknowledge an event that wasn't sent yet (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
+	} else if b.buffer[c.ackCursor].SeqId > seqIDToAck {
 		// Subscriber either sent a double ack or we dropped the event the subscriber tried to acknowledge.
 		// Either way don't move the ack cursor and don't return an error as there is nothing more we can do.
 		return nil
-	} else if b.buffer[c.ackCursor].SeqId == seqID {
+	} else if b.buffer[c.ackCursor].SeqId == seqIDToAck {
 		// Subscriber acknowledged the next expected event.
 		// Just increment the ack cursor by one.
 		c.ackCursor = (c.ackCursor + 1) % len(b.buffer)
 		return nil
-	} else if seqID > b.buffer[c.ackCursor].SeqId && seqID < b.buffer[c.sendCursor].SeqId {
+	} else if seqIDToAck > b.buffer[c.ackCursor].SeqId && seqIDToAck <= lastSentSeqID {
+
+		// TODO: Evaluate if its faster to just fallback immediately on binary search.
+		// Having this may be confusing and not actually help speed things up.
+
 		// Otherwise it is possible the subscriber is not acknowledging each event.
 		// Since events should always be in order in the buffer,
 		// and our seqID falls between the ackCursor and the sendCursor,
 		// it is likely we can calculate the location of this seqID in the buffer.
 		// Try adding the difference between the acknowledged seqID and the last acknowledged sequence ID (ackCursorSeqID).
 		// We then add this to the current location of the ackCursor wrapping it around the end of the buffer if needed.
-		expectedLocation := (uint64(c.ackCursor) + (seqID - b.buffer[c.ackCursor].SeqId)) % uint64(len(b.buffer))
-		expectedLocSeqID := b.buffer[expectedLocation].SeqId
-		if expectedLocSeqID == seqID {
-			c.ackCursor = int(expectedLocation)
-			return nil
+		expectedLocation := (uint64(c.ackCursor) + (seqIDToAck - b.buffer[c.ackCursor].SeqId)) % uint64(len(b.buffer))
+
+		// If we dropped an event, it is possible the calculated expectedLocation is the end of the buffer:
+		if b.buffer[expectedLocation] != nil {
+			expectedLocSeqID := b.buffer[expectedLocation].SeqId
+			if expectedLocSeqID == seqIDToAck {
+				c.ackCursor = (int(expectedLocation) + 1) % len(b.buffer)
+				return nil
+			}
+			// If the event wasn't where we expected, probably there was a dropped event.
+			// We'll fall back on our slower mechanism to find it.
 		}
-		// If the event wasn't where we expected, probably there was a dropped event.
-		// We'll fall back on our slower mechanism to find it.
 	}
 
-	if seqID < b.buffer[c.sendCursor].SeqId {
+	if seqIDToAck <= lastSentSeqID {
 		// If we can't calculate the exact position of the acknowledged event, probably there is a dropped event somewhere.
 		// Perhaps our internal buffer overflowed or the meta dropped an event.
 		// We'll fall back on binary search to point the ackCursor at the next closet event we expect to be acknowledged.
-		// We can only do this as long as our seqID is less than the sendCursorSeqID.
+		// We can only do this as long as our seqID is less than the the index of the last event that was sent (lastSentIndex).
 		// This should be the case as long as the subscriber is not acknowledging events before we send them.
 
-		ackdEventIndex, foundExact := b.searchIndexOfSeqID(c.ackCursor, c.sendCursor-1, seqID)
+		ackdEventIndex, foundExact := b.searchIndexOfSeqID(c.ackCursor, lastSentIndex, seqIDToAck)
 
 		// This shouldn't happen unless the containing if statement was changed or there is a bug in searchIndexOfSeqID().
 		// We should only ever attempt the search if the targetSeqID is less than the sendCursorSeqID.
 		// The search should only return -1 if all numbers between the ackCursor and sendCursor-1 are less than targetSeqID.
 		if ackdEventIndex == -1 {
-			return fmt.Errorf("unable to find the specified seqID or the next closest seqID (subscriber: %d, seqID %d)", subscriberID, seqID)
+			return fmt.Errorf("unable to find the specified seqID or the next closest seqID (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 		}
 
 		if foundExact {
@@ -310,13 +338,10 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqID uint64) error {
 		}
 
 		return nil
-
-	} else if seqID >= b.buffer[c.sendCursor].SeqId {
-		return fmt.Errorf("subscriber tried to acknowledge an event that wasn't sent yet (subscriber: %d, seqID %d)", subscriberID, seqID)
 	}
 
 	// In theory we should never hit this vague error..
-	return fmt.Errorf("unable to acknowledge event (subscriber: %d, seqID %d)", subscriberID, seqID)
+	return fmt.Errorf("unable to acknowledge event (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 }
 
 // searchIndexOfSeqID is a ring buffer aware binary search implementation.
