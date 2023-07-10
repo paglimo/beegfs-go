@@ -7,17 +7,6 @@ import (
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 )
 
-const (
-	// The multi-cursor ring buffer garbage collection frequency determines after many new events the Push function checks
-	// for and purges events that no longer referenced by any SubscriberCursors by moving forward the start of the buffer.
-	// This is to avoid running out of capacity in the ring buffer, which would mean for each Push we have to lock
-	// subscriber cursors in case they need to be moved ahead to purge old events.
-	// By only requiring this expensive GC to be performed periodically, we can amortize the cost over a large number of Pushes.
-	// This only provides a benefit if all subscriber cursors are able to stay ahead of the start of the buffer.
-	// Otherwise we have to fall back on garbage collecting the oldest event with every Push.
-	mcrbGCFrequency = 1000
-)
-
 // MultiCursorRingBuffer is an optimized single writer multi-reader data structure.
 // It achieves this optimization by only requiring SubscriberCursors to be lost during garbage collection.
 // Otherwise events can be added to the buffer and subscribers can get/ack those events with no lock contention.
@@ -27,11 +16,11 @@ type MultiCursorRingBuffer struct {
 	// The buffer size is fixed when the buffer is initialized and should never change.
 	// Multiple functions rely on len(buf) to calculate when indices should "rollover" (len() is fast = O(1)).
 	buffer []*pb.Event
-	// Start represents the oldest event in the buffer.
+	// Start represents the index of the oldest event in the buffer.
 	start int
 	// TODO: Do we need a startMutex?
 	// startMutex sync.RWMutex
-	// End represents the location where the next (newest) event will be written.
+	// End represents the index where the next (newest) event will be written.
 	end int
 	// cursors is a map of subscriberIDs to SubscriberCursors.
 	// TODO: If this is slow consider using https://pkg.go.dev/sync#Map
@@ -39,12 +28,24 @@ type MultiCursorRingBuffer struct {
 	cursors map[int]*SubscriberCursor
 	// The mutex is used when accessing direct fields of MultiCursorRingBuffer.
 	mutex sync.RWMutex
+	// The garbage collection counter controls when the Push function check for and purges events no longer referenced by any SubscriberCursors.
+	// It is initially initialized to gcFrequency then once it reaches zero GC happens and it is reinitialized to gcFrequency.
+	// It is reset to gcFrequency if manual GC was required because the buffer ran out of space.
+	gcCounter int
+	// The multi-cursor ring buffer garbage collection frequency determines after many new events the Push function checks
+	// for and purges events that no longer referenced by any SubscriberCursors by moving forward the start of the buffer.
+	// This is to avoid running out of capacity in the ring buffer, which would mean for each Push we have to lock
+	// subscriber cursors in case they need to be moved ahead to purge old events.
+	// By only requiring this expensive GC to be performed periodically, we can amortize the cost over a large number of Pushes.
+	// This only provides a benefit if all subscriber cursors are able to stay ahead of the start of the buffer.
+	// Otherwise we have to fall back on garbage collecting the oldest event with every Push.
+	gcFrequency int
 }
 
 type SubscriberCursor struct {
-	// sendCursor is the location of the next event to send.
+	// sendCursor is the index of the next event to send.
 	sendCursor int
-	// ackCursor is the location of the next unacknowledged event.
+	// ackCursor is the index of the next unacknowledged event.
 	ackCursor int
 	// mutex is used when accessing the sendCursor or ackCursor.
 	mutex sync.RWMutex
@@ -53,12 +54,14 @@ type SubscriberCursor struct {
 // Returns an ring buffer used to store pointers to events.
 // The usable size of the buffer (number of pointers that can be stored in total) is based on size.
 // The actual capacity as reflected in memory use is size+1 due to how the buffer distinguishes between an empty and full buffer.
-func NewMultiCursorRingBuffer(size int) *MultiCursorRingBuffer {
+func NewMultiCursorRingBuffer(size int, gcFrequency int) *MultiCursorRingBuffer {
 	return &MultiCursorRingBuffer{
-		start:   0,
-		end:     0,
-		buffer:  make([]*pb.Event, size+1),
-		cursors: make(map[int]*SubscriberCursor),
+		start:       0,
+		end:         0,
+		buffer:      make([]*pb.Event, size+1),
+		cursors:     make(map[int]*SubscriberCursor),
+		gcFrequency: gcFrequency,
+		gcCounter:   gcFrequency,
 	}
 }
 
@@ -98,13 +101,12 @@ func (b *MultiCursorRingBuffer) Push(event *pb.Event) {
 	b.buffer[b.end] = event
 	b.end = (b.end + 1) % len(b.buffer)
 
-	// If we wrapped around to the start of the buffer we need to free up space:
-	if b.start == b.end {
+	// If we wrapped around to the start of the buffer or we've hit the threshold for GC free up space:
+	if b.start == b.end || b.gcCounter == 0 {
 		b.collectGarbage()
+		b.gcCounter = b.gcFrequency
 	}
-
-	// TODO: Always run collectGarbage based on mcrbGCFrequency.
-
+	b.gcCounter--
 }
 
 // collectGarbage frees up space in the ring buffer dropping the oldest events first.
@@ -115,42 +117,11 @@ func (b *MultiCursorRingBuffer) Push(event *pb.Event) {
 // It SHOULD ONLY be called from Push() as it expects the mutex to already be locked.
 func (b *MultiCursorRingBuffer) collectGarbage() {
 
-	// oldestAckCursor is the oldest unacknowledged event across all subscribers.
-	var oldestAckCursor int
-	currentStart := b.start
-	end := b.end
-
-	// TODO (current location): This doesn't work properly in all scenarios.
-	// It needs to be updated to determine which ackCursor is closer to start,
-	// taking into consideration the buffer can wrap around.
-
-	for _, c := range b.cursors {
-		// Lock individual cursors:
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-
-		if oldestAckCursor == -1 {
-			oldestAckCursor = c.ackCursor
-		} else {
-			// If the oldest ack is greater or equal to start:
-			if oldestAckCursor >= currentStart {
-				// Then the oldest events are anything larger than the oldestAckPosition:
-				if c.ackCursor > oldestAckCursor {
-					oldestAckCursor = c.ackCursor
-				} else if c.ackCursor < currentStart {
-					// Or anything less than start:
-					oldestAckCursor = c.ackCursor
-				}
-			} else { // Otherwise if the oldest ack is less than start:
-				if c.ackCursor < currentStart && c.ackCursor > oldestAckCursor {
-					// Then the oldest events are less than start, but greater than oldest ack:
-					oldestAckCursor = c.ackCursor
-				}
-			}
-		}
-	}
+	// Determine the index of the oldest ackCursor in case we can free up lots of space:
+	oldestAckCursor := b.getOldestAckCursor()
 
 	// We'll always clear the oldest event in the buffer:
+	currentStart := b.start
 	b.buffer[currentStart] = nil
 	b.start = (currentStart + 1) % len(b.buffer)
 
@@ -174,7 +145,7 @@ func (b *MultiCursorRingBuffer) collectGarbage() {
 	newStart := b.start
 	for {
 		// start==end means the buffer is empty. Otherwise keep clearing to the oldest ack position:
-		if newStart == end || newStart == oldestAckCursor {
+		if newStart == b.end || newStart == oldestAckCursor {
 			break
 		}
 		b.buffer[newStart] = nil
@@ -183,6 +154,53 @@ func (b *MultiCursorRingBuffer) collectGarbage() {
 
 	// Move start to point at the oldest unacknowledged event.
 	b.start = newStart
+}
+
+// getOldestAckCursor returns the index of the ackCursor that is the furthest away from the end of the buffer.
+// It SHOULD ONLY be called from collectGarbage() as it expects the mutex to already be locked.
+func (b *MultiCursorRingBuffer) getOldestAckCursor() int {
+
+	// The index the oldest ackCursor is pointing to.
+	// There may be multiple ackCursors pointing to the same index.
+	oldestAckCursor := -1
+	// The offset is the distance from the end to a particular ackCursor.
+	// Thus the closest offset is zero, indicating an ackCursor is all caught up.
+	var oldestOffset int
+
+	for _, c := range b.cursors {
+		// Lock individual cursors:
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+
+		if oldestAckCursor == -1 {
+			oldestAckCursor = c.ackCursor
+			oldestOffset = b.end - c.ackCursor
+		} else {
+			offset := b.end - c.ackCursor
+
+			// The oldest offset is always the highest negative number:
+			if offset < 0 {
+				if oldestOffset < 0 {
+					// If both offsets are negative, the oldest offset will be greater:
+					if offset > oldestOffset {
+						oldestAckCursor = c.ackCursor
+						oldestOffset = offset
+					}
+				} else {
+					// Otherwise if the new offset is negative it will always be older:
+					oldestAckCursor = c.ackCursor
+					oldestOffset = offset
+				}
+			} else if oldestOffset >= 0 { // Otherwise the offset is positive. If the oldest offset was already negative it is older.
+				// If both the offset and the oldest offset are positive, the oldest offset is whichever one is greater:
+				if offset > oldestOffset {
+					oldestAckCursor = c.ackCursor
+					oldestOffset = offset
+				}
+			}
+		}
+	}
+	return oldestAckCursor
 }
 
 // GetEvent() returns the next event for the provided subscriberID and moves the sendCursor forward by one.
@@ -269,7 +287,7 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 
 	if b.buffer[lastSentIndex] == nil {
 		// We shouldn't hit this unless there is a bug somewhere.
-		return fmt.Errorf("subscriber tried to acknowledge an event but the last sent event is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
+		return fmt.Errorf("subscriber tried to acknowledge an event but the last sent event is nil: have any events been sent yet? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 	}
 
 	// TODO: Do we actually need more checking to account for "holes" in the buffer?

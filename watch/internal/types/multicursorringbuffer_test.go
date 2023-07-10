@@ -1,67 +1,250 @@
 package types
 
 import (
-	"fmt"
 	"testing"
 
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMCRBGC(t *testing.T) {
+// Test case for a MultiCursorRingBuffer.
+// It can be used to define the starting state of a ring buffer as the input to test internal functionality.
+// The type of the expected output varies depending on the particular functionality under test.
+// It can be used with the Testify assert functions which accept an interface.
+type MCRBTestCase struct {
+	name     string
+	input    *MultiCursorRingBuffer
+	expected any
+}
 
-	// testEvents := []*pb.Event{
-	// 	{SeqId: 1},
-	// 	{SeqId: 2},
-	// 	{SeqId: 3},
-	// 	{SeqId: 4},
-	// 	{SeqId: 5},
-	// 	{SeqId: 6},
-	// 	{SeqId: 7},
-	// 	{SeqId: 8},
-	// 	{SeqId: 9},
-	// 	{SeqId: 10},
-	// 	{SeqId: 11},
-	// 	{SeqId: 12},
-	// }
-
-	rb := NewMultiCursorRingBuffer(10)
+func TestPush(t *testing.T) {
+	rb := NewMultiCursorRingBuffer(7, 10)
 	rb.AddCursor(1)
 	rb.AddCursor(2)
 
-	// If we push 12 events we should drop the two oldest:
-	for i := 1; i <= 12; i++ {
+	// If we push 10 events we should drop the three oldest:
+	for i := 1; i <= 10; i++ {
 		rb.Push(&pb.Event{SeqId: uint64(i)})
 	}
 
-	// Both cursors ack and next event should point at the next oldest:
-	assert.Equal(t, 2, rb.cursors[1].sendCursor)
-	assert.Equal(t, 2, rb.cursors[1].ackCursor)
-	assert.Equal(t, 2, rb.cursors[2].sendCursor)
-	assert.Equal(t, 2, rb.cursors[2].ackCursor)
+	// All subscribers ackCursor and nextCursor should point at the next oldest event:
+	assert.Equal(t, 3, rb.cursors[1].sendCursor)
+	assert.Equal(t, 3, rb.cursors[1].ackCursor)
+	assert.Equal(t, 3, rb.cursors[2].sendCursor)
+	assert.Equal(t, 3, rb.cursors[2].ackCursor)
 
-	// Get 3 events for both subscribers,
-	// but only acknowledge the events for subscriber 1:
-	for i := 3; i <= 5; i++ {
+	// If we send and ack all events:
+	for i := 3; i <= 10; i++ {
 		rb.GetEvent(1)
+		rb.AckEvent(1, uint64(i))
 		rb.GetEvent(2)
+		rb.AckEvent(2, uint64(i))
+	}
+
+	// Then push another event and the buffer should be clear except for the newest event:
+	rb.Push(&pb.Event{SeqId: 11})
+	assert.Equal(t, []*pb.Event{nil, nil, {SeqId: 11}, nil, nil, nil, nil, nil}, rb.buffer)
+
+	// Make a larger ring buffer with GC set to happen every 100 events:
+	rb = NewMultiCursorRingBuffer(1000, 100)
+	rb.AddCursor(1)
+
+	// Push in some events and have the subscriber send/acknowledge them:
+	for i := 1; i <= 300; i++ {
+		rb.Push(&pb.Event{SeqId: uint64(i)})
+		rb.GetEvent(1)
 		rb.AckEvent(1, uint64(i))
 	}
 
-	// Then push another event.
-	// Because subscriber 2 hasn't ack'd anything, we should only free one buffer.
-	rb.Push(&pb.Event{SeqId: uint64(13)})
-	assert.Equal(t, 3, rb.cursors[2].sendCursor)
-	assert.Equal(t, 3, rb.cursors[5].ackCursor)
+	// GC should happen every 100 events, meaning everything before index 199 and after 299 should be nil:
+	for i, e := range rb.buffer {
+		if i >= 200 && i < 300 {
+			assert.NotNil(t, e)
+		} else {
+			assert.Nil(t, e)
+		}
+	}
 
-	// TODO: After fixing collectGarbage() continue adding tests.
-	// In particular around verifying logic to determine oldestAckCursor,
-	// and that we always (a) clear the oldest event in the buffer even if we need to move an ackCursor,
-	// and (b) free up as much space as possible but never go past oldestAckCursor.
+	// If we push one more event, GC should happen making it the only one in the buffer:
+	rb.Push(&pb.Event{SeqId: 301})
+	for i, e := range rb.buffer {
+		if i == 300 {
+			assert.NotNil(t, e)
+		} else {
+			assert.Nil(t, e)
+		}
+	}
+}
+
+func TestCollectGarbage(t *testing.T) {
+
+	tests := []MCRBTestCase{
+		{
+			name: "Test when only the oldest event can be cleared.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 0},
+					2: {sendCursor: 3, ackCursor: 1},
+				},
+			},
+			expected: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+		},
+		{
+			name: "Test when multiple events can be cleared.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 4},
+					2: {sendCursor: 3, ackCursor: 3},
+				},
+			},
+			expected: []*pb.Event{nil, nil, nil, {SeqId: 3}, nil},
+		},
+		{
+			name: "Test when multiple events can be cleared and the buffer wraps around.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 5}, {SeqId: 6}, nil, {SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+				start:  3,
+				end:    2,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 2, ackCursor: 1},
+					2: {sendCursor: 1, ackCursor: 7},
+				},
+			},
+			expected: []*pb.Event{{SeqId: 5}, {SeqId: 6}, nil, nil, nil, nil, nil, {SeqId: 4}},
+		},
+	}
+
+	for _, test := range tests {
+		test.input.collectGarbage()
+		assert.Equal(t, test.expected, test.input.buffer, test.name)
+	}
+}
+
+func TestGetOldestAckCursor(t *testing.T) {
+
+	tests := []MCRBTestCase{
+		{
+			name: "Test when ackCursor and end offsets are positive.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 0},
+					2: {sendCursor: 3, ackCursor: 1},
+				},
+			},
+			expected: 0,
+		},
+		{
+			name: "Test when ackCursor and end offsets are zero then positive.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 4},
+					2: {sendCursor: 3, ackCursor: 3},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "Test when ackCursor and end offsets are zero then negative.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 2}, {SeqId: 3}, nil, {SeqId: 0}, {SeqId: 1}},
+				start:  3,
+				end:    2,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 1, ackCursor: 2},
+					2: {sendCursor: 2, ackCursor: 3},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "Test when ackCursor and end offsets are negative then zero.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 2}, {SeqId: 3}, nil, {SeqId: 0}, {SeqId: 1}},
+				start:  3,
+				end:    2,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 1, ackCursor: 3},
+					2: {sendCursor: 2, ackCursor: 2},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "Test when ackCursor and end offsets are negative then positive.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 2}, {SeqId: 3}, {SeqId: 4}, nil, {SeqId: 1}},
+				start:  4,
+				end:    3,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 1, ackCursor: 4},
+					2: {sendCursor: 2, ackCursor: 2},
+				},
+			},
+			expected: 4,
+		},
+		{
+			name: "Test when ackCursor and end offsets are positive then negative.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 2}, {SeqId: 3}, {SeqId: 4}, nil, {SeqId: 1}},
+				start:  4,
+				end:    3,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 1, ackCursor: 2},
+					2: {sendCursor: 2, ackCursor: 4},
+				},
+			},
+			expected: 4,
+		},
+		{
+			name: "Test when ackCursor and end offsets are all negative and the oldest is in the middle of the ackCursor map.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 5}, {SeqId: 6}, nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+				start:  3,
+				end:    2,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 0, ackCursor: 5},
+					2: {sendCursor: 1, ackCursor: 3},
+					3: {sendCursor: 2, ackCursor: 4},
+				},
+			},
+			expected: 3,
+		},
+		{
+			name: "Test when ackCursor and end offsets are all negative and the oldest is at the start of the ackCursor map. ",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+				start:  1,
+				end:    0,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 0, ackCursor: 1},
+					2: {sendCursor: 4, ackCursor: 2},
+					3: {sendCursor: 4, ackCursor: 4},
+				},
+			},
+			expected: 1,
+		},
+	}
+
+	for _, test := range tests {
+		actual := test.input.getOldestAckCursor()
+		assert.Equal(t, test.expected, actual, test.name)
+	}
 }
 
 func TestMCRBGetEventAndResetSendCursor(t *testing.T) {
-	rb := NewMultiCursorRingBuffer(10)
+	rb := NewMultiCursorRingBuffer(10, 5)
 	rb.AddCursor(1)
 	rb.AddCursor(2)
 
@@ -96,8 +279,17 @@ func TestMCRBGetEventAndResetSendCursor(t *testing.T) {
 }
 
 func TestAckEvent(t *testing.T) {
-	rb := NewMultiCursorRingBuffer(10)
+	rb := NewMultiCursorRingBuffer(10, 5)
 	rb.AddCursor(1)
+
+	// Ack an event for a non-existent subscriber and we should get an error:
+	err := rb.AckEvent(2, 1)
+	assert.Error(t, err)
+
+	// Ack an event while the buffer is empty and the cursor shouldn't move and we should get an error:
+	err = rb.AckEvent(1, 1)
+	assert.Equal(t, 0, rb.cursors[1].ackCursor)
+	assert.Error(t, err)
 
 	// If we push 12 events we should drop the two oldest:
 	for i := 1; i <= 12; i++ {
@@ -105,7 +297,7 @@ func TestAckEvent(t *testing.T) {
 	}
 
 	// Ack an event that wasn't sent yet and the cursor shouldn't move and we should get an error:
-	err := rb.AckEvent(1, 3)
+	err = rb.AckEvent(1, 3)
 	assert.Equal(t, 2, rb.cursors[1].ackCursor)
 	assert.Error(t, err)
 
@@ -113,6 +305,11 @@ func TestAckEvent(t *testing.T) {
 	event, err := rb.GetEvent(1)
 	assert.Equal(t, uint64(3), event.SeqId)
 	assert.NoError(t, err)
+
+	// Ack an event that wasn't sent yet:
+	err = rb.AckEvent(1, 4)
+	assert.Equal(t, 2, rb.cursors[1].ackCursor)
+	assert.Error(t, err)
 
 	// Ack events that were already dropped and the cursor shouldn't move:
 	currAckLocation := rb.cursors[1].ackCursor
@@ -194,16 +391,25 @@ func TestAckEvent(t *testing.T) {
 	// Acknowledge the event that was skipped:
 	err = rb.AckEvent(1, 15)
 	assert.NoError(t, err)
+	// The ackCursor shouldn't move since we dropped the ack'd event:
 	assert.Equal(t, 2, rb.cursors[1].ackCursor)
 
-	fmt.Print("test")
+	// Push in another event again skipping sequence IDs:
+	rb.Push(&pb.Event{SeqId: uint64(18)})
+	event, err = rb.GetEvent(1)
+	assert.NoError(t, err)
+	assert.Equal(t, uint64(18), event.SeqId)
 
-	// TODO (current location): Continue building out tests and verifying AckEvent().
+	// Acknowledge the missing sequence ID:
+	err = rb.AckEvent(1, 17)
+	assert.NoError(t, err)
+	// Even though we didn't directly ack seqID 16 and ack'd missing seqID 17, the ackCursor should point to seqID 18:
+	assert.Equal(t, 3, rb.cursors[1].ackCursor)
 
 }
 
 func TestSearchIndexOfSeqID(t *testing.T) {
-	rb := NewMultiCursorRingBuffer(10)
+	rb := NewMultiCursorRingBuffer(10, 5)
 
 	// 23, 25, nil, 7, 9, 11, 13, 15, 17, 19, 21...
 	for i := 1; i <= 25; i = i + 2 {
@@ -250,7 +456,7 @@ func TestSearchIndexOfSeqID(t *testing.T) {
 	assert.Equal(t, -1, idx)
 	assert.False(t, found)
 
-	rb = NewMultiCursorRingBuffer(10)
+	rb = NewMultiCursorRingBuffer(10, 5)
 
 	// 23, 25, 27, 29, nil, 11, 13, 15, 17, 19, 21...
 	for i := 1; i <= 29; i = i + 2 {
@@ -260,4 +466,5 @@ func TestSearchIndexOfSeqID(t *testing.T) {
 	// Search for a sequence ID in a deeper buffer wraparound:
 	idx, found = rb.searchIndexOfSeqID(5, 3, 27)
 	assert.Equal(t, 2, idx)
+	assert.True(t, found)
 }
