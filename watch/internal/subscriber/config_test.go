@@ -10,7 +10,7 @@ var testJsonConfig string = `
 [
     {
         "type": "grpc",
-        "id": "1",
+        "id": 1,
         "name": "bee-remote",
         "hostname":"br-1",
 		"port":"1234",
@@ -18,7 +18,7 @@ var testJsonConfig string = `
     },
     {
         "type": "grpc",
-        "id": "2",
+        "id": 2,
         "name": "beegfs-mon",
         "hostname":"bm-1",
 		"port":"512312",
@@ -43,11 +43,8 @@ func TestNewSubscribersFromJson(t *testing.T) {
 
 	expectedSubscribers := []*BaseSubscriber{
 		{
-			Id:   "1",
+			Id:   1,
 			Name: "bee-remote",
-			// If OfflineBufferSize < QueueSize it should be set to the default queue size.
-			OfflineBufferSize: 0,
-			QueueSize:         0,
 			State: State{
 				state: DISCONNECTED,
 			},
@@ -57,10 +54,8 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				AllowInsecure: true,
 			},
 		}, {
-			Id:                "2",
-			Name:              "beegfs-mon",
-			OfflineBufferSize: 3,
-			QueueSize:         2,
+			Id:   2,
+			Name: "beegfs-mon",
 			State: State{
 				state: DISCONNECTED,
 			},

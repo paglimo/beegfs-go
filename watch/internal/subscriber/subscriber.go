@@ -20,15 +20,9 @@ type Subscriber interface {
 type state string
 
 const (
-	DISCONNECTED state = "disconnected"
-	CONNECTING   state = "connecting"
-	CONNECTED    state = "connected"
-	// STATE_FROZEN indicates the subscriber is undergoing a connection state change (disconnected->connected or connected->disconnected).
-	// While in this state handlers should wait and not add new events to the queue or offline events buffer.
-	// This is to allow time for the current queue to be drained to the offline event buffer, or for the buffer to be drained to the queue.
-	// This is important to ensure events are always eventually sent in order.
-	FROZEN state = "frozen"
-	// Disconnecting signals a subscriber needs to disconnect for some reason.
+	DISCONNECTED  state = "disconnected"
+	CONNECTING    state = "connecting"
+	CONNECTED     state = "connected"
 	DISCONNECTING state = "disconnecting"
 )
 
@@ -59,29 +53,17 @@ func (s *State) SetState(newState state) {
 
 // BaseSubscriber contains common fields used by all subscribers.
 type BaseSubscriber struct {
-	Id   string
+	Id   int
 	Name string
-	// OfflineBufferSize is the number of events that will be buffered while this subscriber is disconnected.
-	// It should be larger than QueueSize to ensure the queue can be flushed if the subscriber disconnects.
-	// If the buffer is exceeded the oldest events in the buffer will be overwritten by newer ones.
-	OfflineBufferSize int
-	// QueueSize is the number of events that will be buffered while this subscriber is connected.
-	// Ideally we'll send events to subscribers as fast as they are received from the metadata service.
-	// The queue gives us extra buffer in case of sudden bursts of events.
-	// If the QueueSize is exceeded then some mechanism upstream of the subscriber is suspected to buffer the events.
-	// This may need to be set to a higher value for slower subscribers.
-	QueueSize int
 	State
 	Subscriber
 }
 
 // This is a "comparable" view of the BaseSubscriber struct used for testing.
 // When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
-// Notably the queue, ctx, and log fields are not comparable and thus omitted.
+// Notably the Subscriber field is omitted and each Subscriber should implement its own comparable type.
 type ComparableBaseSubscriber struct {
-	Id                string
-	Name              string
-	OfflineBufferSize int
-	QueueSize         int
+	Id   int
+	Name string
 	State
 }

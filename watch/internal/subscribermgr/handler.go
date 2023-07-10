@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"time"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
@@ -16,69 +15,29 @@ const (
 	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
 	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
 	maxReconnectBackoff = 60
-	// TODO: Possibly we want the ability to define this on a per subscriber basis.
-	defaultUnackEventsBufferSize = 4096
-	defaultQueueSize             = 300000000
-	defaultOfflineBufferSize     = 300000000
 )
 
 type Handler struct {
-	// unacknowledgedEvents is a ring buffer used to store events immediately after they are sent.
-	// They are kept in this buffer until the event is acknowledged by the subscriber,
-	// or the subscriber disconnects for any reason, then they are added to the front of the
-	// offlineEvents buffer and resent when the subscriber reconnects.
-	// Depending how subscribers handle events and the network we don't really need a large buffer here:
-	// * From a network perspective:
-	//   This should be the maximum number of events that can be "on the wire" at any moment.
-	//   So if our stream breaks this is at most the number of events that could be dropped.
-	// * From a subscriber perspective:
-	//   So long as they are handling events as they are received, even if they aren't acknowledging each event,
-	//   this buffer size shouldn't matter. If they need us to hold on-to events for some amount of time,
-	//   perhaps they're processing events in batches, this may need to be set to their "batch size",
-	//   or the max number of events that can be received between them sending each acknowledgement.
-	unacknowledgedEvents *types.EventRingBuffer
-	// Offline events is a ring buffer used to store events while a subscriber is not connected.
-	// The use of a ring buffer ensures we don't use infinite memory and drop older events for newer ones.
-	offlineEvents *types.EventRingBuffer
-	// The queue is where new events are published while the subscriber is connected.
-	// If the subscriber is unable to process events faster than they are published to this queue,
-	// the overall rate at which new events are accepted will be throttled by the subscriber manager.
-	queue  chan *pb.Event
-	ctx    context.Context
-	cancel context.CancelFunc
-	log    *zap.Logger
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	log                     *zap.Logger
+	metaEventBuffer         *types.MultiCursorRingBuffer
+	metaBufferPollFrequency int
 	*subscriber.BaseSubscriber
 }
 
-func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber) *Handler {
-	log = log.With(zap.String("subscriberID", subscriber.Id), zap.String("subscriberName", subscriber.Name))
+func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) *Handler {
+	log = log.With(zap.Int("subscriberID", subscriber.Id), zap.String("subscriberName", subscriber.Name))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Ensure the subscriber has provided us sane values:
-	if subscriber.QueueSize == 0 {
-		log.Info("using default queue size for subscriber")
-		subscriber.QueueSize = defaultQueueSize
-	}
-
-	if subscriber.OfflineBufferSize == 0 {
-		log.Info("using default offline buffer size for subscriber")
-		subscriber.OfflineBufferSize = defaultOfflineBufferSize
-	}
-
-	if subscriber.OfflineBufferSize < subscriber.QueueSize+defaultUnackEventsBufferSize {
-		log.Info("offline buffer size cannot be less than combined queue and unacknowledged buffer size, setting equal")
-		subscriber.OfflineBufferSize = subscriber.QueueSize + defaultUnackEventsBufferSize
-	}
-
 	return &Handler{
-		unacknowledgedEvents: types.NewEventRingBuffer(defaultUnackEventsBufferSize),
-		offlineEvents:        types.NewEventRingBuffer(subscriber.OfflineBufferSize),
-		queue:                make(chan *pb.Event, subscriber.QueueSize),
-		ctx:                  ctx,
-		cancel:               cancel,
-		log:                  log,
-		BaseSubscriber:       subscriber,
+		ctx:                     ctx,
+		cancel:                  cancel,
+		log:                     log,
+		metaEventBuffer:         metaEventBuffer,
+		metaBufferPollFrequency: metaBufferPollFrequency,
+		BaseSubscriber:          subscriber,
 	}
 }
 
@@ -107,37 +66,30 @@ func (h *Handler) Handle() {
 			if state := h.GetState(); state == subscriber.DISCONNECTED {
 				h.SetState(subscriber.CONNECTING)
 				if h.connectLoop() {
+					h.SetState(subscriber.CONNECTED)
+
 					// We need to start listening for responses from the subscriber before we do anything.
 					// Some subscribers may block on receiving new events until they can send responses.
+					// Some subscribers may also tell us the last event they successfully received so we can avoid sending duplicate events.
 					doneReceiving, cancelReceive := h.receiveLoop()
-					// If the subscriber disconnected for some reason there may be events in the offline event buffer.
-					// To ensure events are sent in order lets try to send them before starting the main sendLoop()
-					// First we need to set the status to frozen to ensure Enqueue doesn't keep adding events to the buffer:
-					h.SetState(subscriber.FROZEN)
-					if h.drainOfflineEvents() {
-						h.SetState(subscriber.CONNECTED)
-						doneSending, cancelSend := h.sendLoop()
-						// If either the receive or send goroutines are done, we should fully disconnect:
-						select {
-						case <-doneReceiving:
-							cancelSend()
-							<-doneSending
-						case <-doneSending:
-							cancelReceive()
-							<-doneReceiving
-						}
-						h.SetState(subscriber.FROZEN)
-						h.drainOutstandingEvents()
-					} else {
-						// Make sure we stop receiving if we can't drain offline events:
+
+					// Start sending events to this subscriber:
+					doneSending, cancelSend := h.sendLoop()
+
+					// If either the receive or send goroutines are done, we should fully disconnect:
+					select {
+					case <-doneReceiving:
+						cancelSend()
+						<-doneSending
+					case <-doneSending:
 						cancelReceive()
 						<-doneReceiving
 					}
+					h.SetState(subscriber.DISCONNECTING)
 				}
 			}
 
 			// If the connection was lost for any reason, we should first disconnect before we reconnect or shutdown:
-			h.SetState(subscriber.DISCONNECTING)
 			if h.doDisconnect() {
 				h.SetState(subscriber.DISCONNECTED)
 			}
@@ -203,6 +155,23 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	recvStream := h.Receive()
 	h.log.Info("starting to receive responses from subscriber")
+	// When we connect, some subscribers may acknowledge the last event they successfully received before a disconnect.
+	// TODO: Consider if the time we wait should be configurable based per subscriber.
+	select {
+	case response, ok := <-recvStream:
+		if ok {
+			// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
+			h.log.Info("subscriber acknowledged last event received before disconnect", zap.Any("sequenceID", response.CompletedSeq))
+			h.metaEventBuffer.AckEvent(h.Id, response.CompletedSeq)
+		}
+		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
+	case <-time.After(2 * time.Second):
+		h.log.Info("subscriber did not acknowledge last event received before disconnect, resending events from the last acknowledged event")
+	}
+
+	// Move the send cursor back to the last acknowledged event.
+	// This may result in duplicate events being sent if the subscriber didn't tell us the last event they received.
+	h.metaEventBuffer.ResetSendCursor(h.Id)
 
 	go func() {
 		defer close(done)
@@ -223,7 +192,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 					return
 				}
 				//h.log.Debug("received response from subscriber", zap.Any("response", response))
-				h.unacknowledgedEvents.RemoveUntil(response.CompletedSeq)
+				h.metaEventBuffer.AckEvent(h.Id, response.CompletedSeq)
 
 				// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
 				// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
@@ -236,36 +205,6 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 	}()
 
 	return done, cancel
-}
-
-func (h *Handler) drainOfflineEvents() bool {
-
-	if !h.offlineEvents.IsEmpty() {
-		h.log.Info("sending offline events to subscriber")
-
-		for !h.offlineEvents.IsEmpty() {
-			select {
-			case <-h.ctx.Done():
-				// The context should only be cancelled if something local requested a disconnect.
-				h.log.Info("local disconnect requested while sending offline events to subscriber")
-				return false
-			default:
-				// We don't want to remove the event from the buffer until we're sure it was sent successfully:
-				err := h.Send(h.offlineEvents.Peek())
-				if err != nil {
-					h.log.Error("unable to send offline event to subscriber", zap.Error(err), zap.Any("event_seq", h.offlineEvents.Peek().SeqId))
-					// We hit an error so all we can do is try to reconnect again.
-					return false
-
-				} else {
-					// Otherwise if the event was sent lets pop it from the event buffer.
-					h.offlineEvents.Pop()
-					//h.log.Debug("sent offline event to subscriber", zap.Any("event", event.SeqId))
-				}
-			}
-		}
-	}
-	return true
 }
 
 // connectedLoop() handles sending events and receiving responses from the subscriber.
@@ -290,98 +229,30 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 			case <-ctx.Done():
 				h.log.Info("stopping send loop because the context was cancelled")
 				return
-			case event := <-h.queue:
-				//h.log.Debug("sending event", zap.Any("event", event.SeqId))
-				// We don't know if the event was sent successfully or not so lets push it to the unacknowledgedEvents event buffer.
-				// Subscribers are expected to handle duplicate events so we'll err on the side of caution.
-				h.unacknowledgedEvents.Push(event)
-				if err := h.Send(event); err != nil {
-					h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
-					return
+			case <-time.After(time.Duration(h.metaBufferPollFrequency) * time.Second):
+				// Poll on a configurable period for new events to be added to the buffer.
+			sendEvents:
+				for {
+					event, err := h.metaEventBuffer.GetEvent(h.Id)
+					if err != nil {
+						h.log.Error("unable to get the next event in the buffer", zap.Error(err))
+						break sendEvents
+					}
+
+					// Continue sending events until there are no more events to send:
+					if event != nil {
+						if err := h.Send(event); err != nil {
+							h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
+							return
+						}
+					} else {
+						break sendEvents
+					}
 				}
 			}
 		}
 	}()
 	return done, cancel
-}
-
-// drainOutstandingEvents() drains all unacknowledged events and events in the queue to the offline events buffer.
-func (h *Handler) drainOutstandingEvents() {
-
-	h.log.Info("draining unacknowledged events to the offline events buffer")
-
-drainUnacknowledged:
-	for {
-		if event := h.unacknowledgedEvents.Pop(); event != nil {
-			h.offlineEvents.Push(event)
-			continue drainUnacknowledged
-		}
-		break drainUnacknowledged
-	}
-
-	h.log.Info("draining queue to the offline events buffer")
-	for {
-		select {
-		case event := <-h.queue:
-			//h.log.Debug("draining event", zap.Any("event", event.SeqId))
-			h.offlineEvents.Push(event)
-		default:
-			return
-		}
-	}
-}
-
-// Enqueue is called to add an event to the send queue for a particular subscriber.
-// If the subscriber is connected the event will be sent to a buffered channel.
-//
-//	The use of a buffered channel allows us to handle bursts in events without blocking.
-//	If we get to far behind sending events to this subscriber it will block.
-//	This is an intentional design decision to avoid dropping events for a connected subscriber.
-//	The idea is to create an artificial bottleneck that will limit the number of events BeeWatch buffers.
-//	Thus reducing memory consumption by pushing the buffering back upstream to the metadata service.
-//
-// If the subscriber is not connected the event will be added to a ring buffer.
-//
-//	If the subscriber fails to reconnect before the ring buffer is full, some events may be dropped.
-//	When a subscriber connects/reconnects we will temporarily block adding new events to it's queue.
-//	This allows the handler to send "offline events" generated while the subscriber was disconnected.
-//	It also ensures events are sent in the order they were generated by the metadata service.
-func (h *Handler) Enqueue(event *pb.Event) {
-
-	// This is thread safe because getting the status will block if it is currently being updated.
-	state := h.GetState()
-
-	if state == subscriber.CONNECTED {
-		h.queue <- event
-		return
-	} else if state != subscriber.FROZEN {
-		h.offlineEvents.Push(event)
-		return
-	}
-
-	// If the subscriber is frozen we need to block and wait here to ensure events don't get out of order.
-	// What we do next with the event will depend on the new state:
-	// * If the state transitions back to connected, add the event to the queue.
-	// * Otherwise add the event to the offline events buffer.
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			h.log.Info("unable to enqueue event because the subscriber is shutting down")
-			return
-		case <-ticker.C:
-			if newState := h.GetState(); newState != subscriber.FROZEN {
-				if newState == subscriber.CONNECTED {
-					h.queue <- event
-				} else {
-					h.offlineEvents.Push(event)
-				}
-				return
-			}
-		}
-	}
 }
 
 // Stop is called to cancel the context associated with a particular handler.

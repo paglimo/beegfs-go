@@ -8,12 +8,10 @@ import (
 // jsonConfig defines the configuration options that could be set on any type of subscriber.
 // It embeds each type of subscriber so their fields can be unmarshalled/initialized based on the selected "Type".
 type baseConfig struct {
-	Type              string `json:"type"`
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	OfflineBufferSize int    `json:"offline_buffer_size"`
-	QueueSize         int    `json:"queue_size"`
-	grpcConfig               // Configuration options for type gRPC.
+	Type       string `json:"type"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	grpcConfig        // Configuration options for type gRPC.
 }
 
 // grpcConfig defines fields that only apply to gRPC subscribers.
@@ -55,10 +53,8 @@ func NewSubscribersFromJson(rawJson string) ([]*BaseSubscriber, error) {
 func newSubscriberFromConfig(config baseConfig) (*BaseSubscriber, error) {
 
 	base := &BaseSubscriber{
-		Id:                config.ID,
-		Name:              config.Name,
-		OfflineBufferSize: config.OfflineBufferSize,
-		QueueSize:         config.QueueSize,
+		Id:   config.ID,
+		Name: config.Name,
 		State: State{
 			state: DISCONNECTED,
 		},

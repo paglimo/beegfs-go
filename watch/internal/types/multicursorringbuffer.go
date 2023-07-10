@@ -114,7 +114,7 @@ func (b *MultiCursorRingBuffer) Push(event *pb.Event) {
 // It always frees at least one slot in the buffer.
 // This may result in the ackCursor pointing at the same position as the sendCursor.
 // If possible it will free up multiple slots at once to optimize performance.
-// It SHOULD ONLY be called from Push() as it expects the mutex to already be locked.
+// It SHOULD ONLY be called from Push() as it expects the MultiCursorRingBuffer mutex to already be locked.
 func (b *MultiCursorRingBuffer) collectGarbage() {
 
 	// Determine the index of the oldest ackCursor in case we can free up lots of space:
@@ -157,7 +157,7 @@ func (b *MultiCursorRingBuffer) collectGarbage() {
 }
 
 // getOldestAckCursor returns the index of the ackCursor that is the furthest away from the end of the buffer.
-// It SHOULD ONLY be called from collectGarbage() as it expects the mutex to already be locked.
+// It SHOULD ONLY be called from collectGarbage() as it expects the MultiCursorRingBuffer mutex to already be locked.
 func (b *MultiCursorRingBuffer) getOldestAckCursor() int {
 
 	// The index the oldest ackCursor is pointing to.

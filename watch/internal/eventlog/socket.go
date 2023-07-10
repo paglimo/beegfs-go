@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -27,12 +27,12 @@ type MetaSocket struct {
 	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 	seqId uint64
 	// Buffer to send events once they are deserialized:
-	metaEventBuffer chan<- *pb.Event
+	metaEventBuffer *types.MultiCursorRingBuffer
 }
 
 // Create returns a Unix socket where the BeeGFS metadata service can send events.
 // To avoid leaking resources, ListenAndServe MUST be called immediately after the socket is created.
-func New(ctx context.Context, log *zap.Logger, socketPath string, metaEventBuffer chan<- *pb.Event) (*MetaSocket, error) {
+func New(ctx context.Context, log *zap.Logger, socketPath string, metaEventBuffer *types.MultiCursorRingBuffer) (*MetaSocket, error) {
 
 	// Cleanup old socket if needed:
 	stat, err := os.Stat(socketPath)
@@ -202,7 +202,7 @@ func (b *MetaSocket) readConnection(conn net.Conn, connMutex *sync.Mutex, cancel
 		// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 		b.seqId++
 		event.SeqId = b.seqId
-		b.metaEventBuffer <- event
+		b.metaEventBuffer.Push(event)
 
 	}
 }

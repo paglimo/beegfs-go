@@ -11,9 +11,9 @@ import (
 	"sync"
 	"syscall"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/eventlog"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -23,19 +23,17 @@ var (
 	logDebug       = flag.Bool("logDebug", false, "enable logging at the debug level")
 	enableSampling = flag.Bool("enableSampling", false, "output events per second")
 	enablePProf    = flag.Int("enablePProf", 0, "specify a port where performance profiles will be made available on the localhost")
-	// If a subscriber disconnects there is a brief cutover before we start buffering offline events for that subscriber using a ring buffer.
-	// Currently the metadata service expects events to be read as fast as they are sent to the socket otherwise it will drop events.
-	// Until we have the metadata service buffering events for us, we need the option to have BeeWatch implement the in-memory buffer.
-	// Once the metadata service is buffering events for us this can be set to zero without dropping events.
 	// If we're targeting 500,000 EPS, then a buffer of 300,000,000 allows us to take up to 600s to drain offline events.
-	metaBufferSize = flag.Int("metaBufferSize", 300000000, "buffer up to this many events before they can be added to subscriber buffers")
+	metaBufferSize          = flag.Int("metaBufferSize", 300000000, "how many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected")
+	metaBufferGCFrequency   = flag.Int("metaBufferGCFrequency", 100000, "after how many new events should unused buffer space be reclaimed automatically")
+	metaBufferPollFrequency = flag.Int("metaBufferPollFrequency", 1, "how often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle)")
 )
 
 var subscriberConfigJson string = `
 [
     {
         "type": "grpc",
-        "id": "1",
+        "id": 1,
         "name": "test-subscriber",
         "hostname":"localhost",
 		"port":"50052",
@@ -67,8 +65,8 @@ func main() {
 	// We'll use a wait group to coordinate shutdown of all components:
 	var wg sync.WaitGroup
 
-	// Use a channel as a buffer to move events between the metadata socket and subscriber manager:
-	metaEventBuffer := make(chan *pb.Event, *metaBufferSize)
+	// Use a custom ring buffer to move events between the metadata socket and multiple subscribers:
+	metaEventBuffer := types.NewMultiCursorRingBuffer(*metaBufferSize, *metaBufferGCFrequency)
 
 	// Create a unix domain socket and listen for incoming connections from the metadata service:
 	socket, err := eventlog.New(ctx, log, *socketPath, metaEventBuffer)
@@ -84,11 +82,11 @@ func main() {
 
 	// Setup our subscriber manager:
 	sm := subscribermgr.NewManager(log)
-	err = sm.UpdateConfiguration(subscriberConfigJson)
+	err = sm.UpdateConfiguration(subscriberConfigJson, metaEventBuffer, *metaBufferPollFrequency)
 	if err != nil {
 		log.Fatal("unable to configure subscribers", zap.Error(err))
 	}
-	go sm.Manage(ctx, &wg, metaEventBuffer)
+	go sm.Manage(ctx, &wg)
 	wg.Add(1)
 
 	wg.Wait()

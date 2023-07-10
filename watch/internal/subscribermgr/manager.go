@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"sync"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
@@ -26,19 +26,20 @@ func NewManager(log *zap.Logger) Manager {
 }
 
 // Update subscribers takes a string containing JSON configuration specifying a list of subscribers to manage.
+// It also takes a pointer to the metadata event buffer and how frequently handlers should poll this buffer for new events to send to subscribers.
 // This is the external mechanism external functions should call to dynamically add/update/remove subscribers.
 // This configuration should contain all subscribers including any changes to existing ones.
 // Any subscribers found in the old configuration but not in the new will be removed.
-func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
+func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) error {
 
 	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
 	// Consider if we want to do this better.
 	// Fow now this is a fairly rudimentary way of updating subscribers while I flush out the rest of the implementation.
 	// We'll just stop all subscribers, make the updates, then restart all subscribers.
 	// Maybe this is "good enough", but we could be more deliberate in how we move from the old->new config.
-	// Likely issues include:
-	// * ensuring we don't loose any events that are in the subscriber queues but not yet sent.
-	// * not overwriting the last state of the subscriber, for example if it was unable to disconnect and the state is disconnecting.
+	// Current issues include:
+	// * We will always delete the metaEventBuffer cursors which will reset what events were ack'd/sent likely causing dropped events even if we just update a subscriber.
+	// * We will always overwrite the last state of the subscriber, for example if it was unable to disconnect and the state is disconnecting.
 	// It is possible a configuration change is needed to correct the state of the subscriber.
 	//
 	// For example we could do something like:
@@ -53,6 +54,7 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 
 	for _, h := range sm.handlers {
 		h.Stop()
+		metaEventBuffer.RemoveCursor(h.Id)
 	}
 
 	newSubscribers, err := subscriber.NewSubscribersFromJson(jsonConfig)
@@ -62,7 +64,8 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
-		newHandlers = append(newHandlers, newHandler(sm.log, s))
+		newHandlers = append(newHandlers, newHandler(sm.log, s, metaEventBuffer, metaBufferPollFrequency))
+		metaEventBuffer.AddCursor(s.Id) // TODO: We may want to do this as part of newHandler().
 	}
 
 	sm.handlers = newHandlers
@@ -73,25 +76,15 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string) error {
 	return nil
 }
 
-// Manage watches for new events and adds them to the queue for each subscriber.
-// It also handles shutting down all subscribers when the app is shutting down.
-func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup, eventBuffer <-chan *pb.Event) {
+// Manage handles shutting down all subscribers when the app is shutting down.
+func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
-	for {
-		select {
-		case <-ctx.Done():
-			sm.log.Info("shutting down subscriber handlers")
-			for _, h := range sm.handlers {
-				h.Stop()
-			}
-			return
-		case event := <-eventBuffer:
-			for _, h := range sm.handlers {
-				h.Enqueue(event)
-			}
-		}
-
+	<-ctx.Done()
+	sm.log.Info("shutting down subscriber handlers")
+	for _, h := range sm.handlers {
+		h.Stop()
 	}
+
 }
