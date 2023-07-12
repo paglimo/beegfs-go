@@ -7,6 +7,16 @@ import (
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 )
 
+var (
+	lenStart  uint32 = 28
+	lenEnd    uint32 = 28 + 4
+	strLength uint32
+)
+
+const (
+	enableLengthBasedStringDeserialization = true
+)
+
 // deserialize takes a buffer and the number of bytes to deserialize from that buffer into an event.
 // This allows it to work with a reusable fixed sized buffer to minimize allocations.
 // If successful it will return a pointer to a new event that should be reused until sent to all subscribers.
@@ -31,6 +41,50 @@ func deserialize(buf []byte, numBytes int) (*pb.Event, error) {
 	if numBytes < int(event.Size) {
 		// If the packet size we parsed is smaller than the buffer we were provided we should bail out to avoid a panic.
 		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", event.Size, numBytes)
+	}
+
+	// TODO: Evaluate if we want to keep or remove this.
+	// If we're not sure could leave in and expose a better way to enable/disable it.
+	// It seems to be faster if the event size is larger. So we could also use it based on event size.
+	// While at it evaluate if the global variables are actually helping improve performance.
+	if enableLengthBasedStringDeserialization {
+		// The remaining strings are separated by a uint32 value indicating the length of the string to follow.
+		// Use that to calculate the start and end index of each string.
+		lenStart = 28
+		lenEnd = 28 + 4
+
+		// Get the entry ID:
+		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
+		event.EntryId = string(buf[lenEnd : lenEnd+strLength])
+
+		// Get the parent entry ID:
+		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
+		lenEnd = lenStart + 4
+		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
+		event.ParentEntryId = string(buf[lenEnd : lenEnd+strLength])
+
+		// Get the path:
+		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
+		lenEnd = lenStart + 4
+		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
+		event.Path = string(buf[lenEnd : lenEnd+strLength])
+
+		// Get the target path:
+		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
+		lenEnd = lenStart + 4
+		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
+		if strLength == 0 {
+			return &event, nil
+		}
+		event.TargetPath = string(buf[lenEnd : lenEnd+strLength])
+
+		// Get the target parent ID:
+		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
+		lenEnd = lenStart + 4
+		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
+		event.TargetParentId = string(buf[lenEnd : lenEnd+strLength])
+
+		return &event, nil
 	}
 
 	// The rest of the packet is an array of strings.
