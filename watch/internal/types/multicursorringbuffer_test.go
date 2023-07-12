@@ -80,7 +80,7 @@ func TestCollectGarbage(t *testing.T) {
 
 	tests := []MCRBTestCase{
 		{
-			name: "Test when only the oldest event can be cleared.",
+			name: "Test when no events should be cleared because we haven't run out of space and a cursor still points to the start of the buffer.",
 			input: &MultiCursorRingBuffer{
 				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
 				start:  0,
@@ -90,7 +90,20 @@ func TestCollectGarbage(t *testing.T) {
 					2: {sendCursor: 3, ackCursor: 1},
 				},
 			},
-			expected: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+			expected: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+		},
+		{
+			name: "Test when we run out of space but only the oldest event can be cleared.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+				start:  0,
+				end:    0,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 0},
+					2: {sendCursor: 3, ackCursor: 1},
+				},
+			},
+			expected: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
 		},
 		{
 			name: "Test when multiple events can be cleared.",
