@@ -28,10 +28,10 @@ func TestPush(t *testing.T) {
 	}
 
 	// All subscribers ackCursor and nextCursor should point at the next oldest event:
-	assert.Equal(t, 3, rb.cursors[1].sendCursor)
-	assert.Equal(t, 3, rb.cursors[1].ackCursor)
-	assert.Equal(t, 3, rb.cursors[2].sendCursor)
-	assert.Equal(t, 3, rb.cursors[2].ackCursor)
+	assert.Equal(t, 4, rb.cursors[1].sendCursor)
+	assert.Equal(t, 4, rb.cursors[1].ackCursor)
+	assert.Equal(t, 4, rb.cursors[2].sendCursor)
+	assert.Equal(t, 4, rb.cursors[2].ackCursor)
 
 	// If we send and ack all events:
 	for i := 3; i <= 10; i++ {
@@ -82,7 +82,7 @@ func TestCollectGarbage(t *testing.T) {
 		{
 			name: "Test when no events should be cleared because we haven't run out of space and a cursor still points to the start of the buffer.",
 			input: &MultiCursorRingBuffer{
-				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil, nil},
 				start:  0,
 				end:    4,
 				cursors: map[int]*SubscriberCursor{
@@ -90,20 +90,20 @@ func TestCollectGarbage(t *testing.T) {
 					2: {sendCursor: 3, ackCursor: 1},
 				},
 			},
-			expected: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+			expected: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil, nil},
 		},
 		{
-			name: "Test when we run out of space but only the oldest event can be cleared.",
+			name: "Test when we run out of space but only the oldest event can be cleared (GC should always end with two nil events).",
 			input: &MultiCursorRingBuffer{
-				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}, nil},
 				start:  0,
-				end:    0,
+				end:    5,
 				cursors: map[int]*SubscriberCursor{
 					1: {sendCursor: 4, ackCursor: 0},
 					2: {sendCursor: 3, ackCursor: 1},
 				},
 			},
-			expected: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}},
+			expected: []*pb.Event{nil, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, {SeqId: 4}, nil},
 		},
 		{
 			name: "Test when multiple events can be cleared.",
@@ -268,7 +268,7 @@ func TestMCRBGetEventAndResetSendCursor(t *testing.T) {
 
 	// Run twice so we can test resetting the send cursor:
 	for i := 0; i <= 1; i++ {
-		for j := 3; j <= 12; j++ {
+		for j := 4; j <= 12; j++ {
 			e, err := rb.GetEvent(1)
 			assert.NoError(t, err)
 			assert.Equal(t, uint64(j), e.SeqId)
@@ -311,17 +311,17 @@ func TestAckEvent(t *testing.T) {
 
 	// Ack an event that wasn't sent yet and the cursor shouldn't move and we should get an error:
 	err = rb.AckEvent(1, 3)
-	assert.Equal(t, 2, rb.cursors[1].ackCursor)
+	assert.Equal(t, 3, rb.cursors[1].ackCursor)
 	assert.Error(t, err)
 
 	// Get an event:
 	event, err := rb.GetEvent(1)
-	assert.Equal(t, uint64(3), event.SeqId)
+	assert.Equal(t, uint64(4), event.SeqId)
 	assert.NoError(t, err)
 
 	// Ack an event that wasn't sent yet:
-	err = rb.AckEvent(1, 4)
-	assert.Equal(t, 2, rb.cursors[1].ackCursor)
+	err = rb.AckEvent(1, 5)
+	assert.Equal(t, 3, rb.cursors[1].ackCursor)
 	assert.Error(t, err)
 
 	// Ack events that were already dropped and the cursor shouldn't move:
@@ -333,31 +333,31 @@ func TestAckEvent(t *testing.T) {
 	assert.Equal(t, currAckLocation, rb.cursors[1].ackCursor)
 
 	// Ack an event that wasn't dropped and the ackCursor should move to the next spot:
-	err = rb.AckEvent(1, 3)
+	err = rb.AckEvent(1, 4)
 	currAckLocation++
 	assert.NoError(t, err)
 	assert.Equal(t, currAckLocation, rb.cursors[1].ackCursor)
 
 	// Get an event:
 	event, err = rb.GetEvent(1)
-	assert.Equal(t, uint64(4), event.SeqId)
+	assert.Equal(t, uint64(5), event.SeqId)
 	assert.NoError(t, err)
 
 	// Then acknowledge it. The ackCursor should move to the next spot:
-	err = rb.AckEvent(1, 4)
+	err = rb.AckEvent(1, 5)
 	currAckLocation++
 	assert.NoError(t, err)
 	assert.Equal(t, currAckLocation, rb.cursors[1].ackCursor)
 
 	// Get the next four events:
-	for i := 5; i <= 8; i++ {
+	for i := 6; i <= 8; i++ {
 		event, err = rb.GetEvent(1)
 		assert.NoError(t, err)
 		assert.Equal(t, uint64(i), event.SeqId)
 	}
 
 	// Ack in between the ackCursor and sendCursor:
-	err = rb.AckEvent(1, 6)
+	err = rb.AckEvent(1, 7)
 	currAckLocation += 2
 	assert.NoError(t, err)
 	assert.Equal(t, currAckLocation, rb.cursors[1].ackCursor)
@@ -430,27 +430,27 @@ func TestSearchIndexOfSeqID(t *testing.T) {
 	}
 
 	// Search for a seqID that was dropped:
-	idx, found := rb.searchIndexOfSeqID(3, 8, 8)
+	idx, found := rb.searchIndexOfSeqID(4, 8, 8)
 	assert.Equal(t, 4, idx)
 	assert.False(t, found)
 
 	// Search for a seqID that exists:
-	idx, found = rb.searchIndexOfSeqID(3, 8, 7)
-	assert.Equal(t, 3, idx)
+	idx, found = rb.searchIndexOfSeqID(4, 8, 9)
+	assert.Equal(t, 4, idx)
 	assert.True(t, found)
 
 	// Search for a seqID that was dropped where the buffer wraps around:
-	idx, found = rb.searchIndexOfSeqID(3, 1, 22)
+	idx, found = rb.searchIndexOfSeqID(4, 1, 22)
 	assert.Equal(t, 0, idx)
 	assert.False(t, found)
 
 	// Search for a seqID that exists after the buffer wraps around:
-	idx, found = rb.searchIndexOfSeqID(3, 1, 23)
+	idx, found = rb.searchIndexOfSeqID(4, 1, 23)
 	assert.Equal(t, 0, idx)
 	assert.True(t, found)
 
 	// Search for a seqID that exists at the end of the buffer:
-	idx, found = rb.searchIndexOfSeqID(3, 1, 25)
+	idx, found = rb.searchIndexOfSeqID(4, 1, 25)
 	assert.Equal(t, 1, idx)
 	assert.True(t, found)
 
