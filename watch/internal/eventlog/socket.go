@@ -1,3 +1,5 @@
+// Package eventlog  reads from the event log published by the BeeGFS metadata service over a
+// unix socket and provides methods for deserializing file system modification event packets.
 package eventlog
 
 import (
@@ -14,24 +16,29 @@ import (
 	"go.uber.org/zap"
 )
 
+// A MetaSocket represents a Unix socket where the BeeGFS metadata service can send events.
+// It is a wrapper around the built-in net.Listener
 type MetaSocket struct {
-	ctx        context.Context
-	socket     net.Listener
-	log        *zap.Logger
+	ctx context.Context
+	log *zap.Logger
+	// This is the path where a socket will be created where the metadata server can send events.
 	socketPath string
+	socket     net.Listener
 	// Allocating a new buffer for every event has an immense impact on performance.
-	// So we allocate it once and reuse it.
+	// So we allocate a buffer once and reuse it.
 	buffer []byte
+	// Sequence IDs are not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
 	// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
-	// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
 	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 	seqId uint64
 	// Buffer to send events once they are deserialized:
 	metaEventBuffer *types.MultiCursorRingBuffer
 }
 
-// Create returns a Unix socket where the BeeGFS metadata service can send events.
-// To avoid leaking resources, ListenAndServe MUST be called immediately after the socket is created.
+// Create creates a new MetaSocket for the specified socketPath and publishes events to metaEventBuffer.
+// The MetaSocket will be disconnected when the provided context is cancelled.
+//
+// It is the callers responsibility to immediately call ListenAndServe if the socket is created successfully to avoid leaking resources.
 func New(ctx context.Context, log *zap.Logger, socketPath string, metaEventBuffer *types.MultiCursorRingBuffer) (*MetaSocket, error) {
 
 	// Cleanup old socket if needed:
@@ -74,7 +81,7 @@ func New(ctx context.Context, log *zap.Logger, socketPath string, metaEventBuffe
 //
 // If there is a problem accepting a connection it will continue trying to accept new connections.
 // If there is an error reading from a connection it will close the connection and wait for a new one.
-// If it receives a bad packet (length doesn't match bytes read) it will warn and still save the packet.
+// If it receives a bad packet (length doesn't match bytes read) it will warn and just send the packet header.
 //
 // When the context on the BeeGFSSocket is cancelled, ListenAndServe will attempt to shutdown cleanly.
 // If it is currently reading/serializing a packet, the packet will be saved before the connection is closed.
@@ -98,7 +105,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup) {
 		go b.acceptConnection(connections)
 		select {
 		case <-b.ctx.Done():
-			b.log.Info("no longer accepting new metadata connection")
+			b.log.Info("no longer accepting new metadata connections because the app is shutting down")
 			return
 		case conn := <-connections:
 
@@ -117,7 +124,7 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup) {
 
 			select {
 			case <-b.ctx.Done():
-				b.log.Info("attempting to close active metadata connection and shutdown")
+				b.log.Info("attempting to close active metadata connection because the app is shutting down")
 				connMutex.Lock()
 				err := conn.Close()
 				connMutex.Unlock()

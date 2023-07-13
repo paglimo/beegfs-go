@@ -18,6 +18,11 @@ const (
 	disconnectTimeout = 30 // TODO: Make the disconnect timeout configurable.
 )
 
+// A GRPCSubscriber implements a gRPC client that sends messages to a subscriber over gRPC.
+// The subscriber must implement EventSubscriberServer defined by the BeeWatch API.
+// As gRPC provides ordering but not deliver guarantees, when first connecting
+// subscribers should acknowledge the sequence ID of the last received event.
+// Otherwise duplicate events may be retransmitted to avoid dropped events.
 type GRPCSubscriber struct {
 	Hostname      string
 	Port          string
@@ -26,7 +31,8 @@ type GRPCSubscriber struct {
 	client        pb.SubscriberClient
 	stream        pb.Subscriber_ReceiveEventsClient
 	recvStream    chan *pb.Response
-	recvMutex     *sync.Mutex // Guarantee there is only ever one Go routine receiving responses.
+	// recvMutex is used to ensure there is only ever one goroutine receiving responses.
+	recvMutex *sync.Mutex
 }
 
 var _ Subscriber = &GRPCSubscriber{} // Verify type satisfies interface.

@@ -1,3 +1,10 @@
+/*
+Package subscribermgr provides functionality for managing multiple subscribers.
+
+It accepts a JSON configuration with one or more subscribers, then creates a handler for each subscriber.
+It also adds cursors to the metaEventBuffer so each subscriber has their own unique window into the shared ring buffer space.
+When the app is shutting down is also coordinates shutting down all handlers.
+*/
 package subscribermgr
 
 import (
