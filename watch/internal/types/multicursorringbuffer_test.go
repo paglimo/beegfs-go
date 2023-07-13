@@ -17,6 +17,55 @@ type MCRBTestCase struct {
 	expected any
 }
 
+func TestAllEventsAcknowledged(t *testing.T) {
+	tests := []MCRBTestCase{
+		{
+			name: "One subscriber has acknowledged all events but the other hasn't.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 0},
+					2: {sendCursor: 3, ackCursor: 4},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "One subscriber has acknowledged all events but the other hasn't (reversed).",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 4},
+					2: {sendCursor: 3, ackCursor: 0},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "All subscribers are caught up.",
+			input: &MultiCursorRingBuffer{
+				buffer: []*pb.Event{{SeqId: 0}, {SeqId: 1}, {SeqId: 2}, {SeqId: 3}, nil},
+				start:  0,
+				end:    4,
+				cursors: map[int]*SubscriberCursor{
+					1: {sendCursor: 4, ackCursor: 4},
+					2: {sendCursor: 3, ackCursor: 4},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	for _, test := range tests {
+		result := test.input.AllEventsAcknowledged()
+		assert.Equal(t, test.expected, result, test.name)
+	}
+}
+
 func TestPush(t *testing.T) {
 	rb := NewMultiCursorRingBuffer(7, 10)
 	rb.AddCursor(1)

@@ -3,6 +3,7 @@ package subscribermgr
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"time"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
@@ -55,12 +56,14 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber, metaEven
 // It determines the next state a subscriber should transition to in response to external and internal factors.
 // It is the only place that should update the state of the subscriber.
 // TODO: Consider if we should add a mutex to handle to ensure only one instances can run at a time.
-func (h *Handler) Handle() {
+func (h *Handler) Handle(wg *sync.WaitGroup) {
+
+	defer wg.Done()
 
 	for {
 		select {
 		case <-h.ctx.Done():
-			h.log.Info("shutting down subscriber")
+			h.log.Debug("successfully shutdown subscriber")
 			// At this point we should already be disconnected, or disconnecting if there was an error.
 			// In the future we may want to consider a mechanism if we were unable to disconnect, to retry a few times.
 			// If the app is shutting down those resources should be cleaned up.
@@ -92,6 +95,11 @@ func (h *Handler) Handle() {
 						cancelSend()
 						<-doneSending
 					case <-doneSending:
+						cancelReceive()
+						<-doneReceiving
+					case <-h.ctx.Done():
+						cancelSend()
+						<-doneSending
 						cancelReceive()
 						<-doneReceiving
 					}
@@ -133,7 +141,7 @@ func (h *Handler) connectLoop() bool {
 	for {
 		select {
 		case <-h.ctx.Done():
-			h.log.Info("not attempting to connect because the subscriber is shutting down")
+			h.log.Info("not attempting to connect to subscriber because the handler is shutting down")
 			return false
 		case <-time.After(time.Second * time.Duration(reconnectBackOff)): // We use this instead of time.Ticker so we can change the duration.
 			retry, err := h.Connect()
@@ -164,7 +172,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	recvStream := h.Receive()
-	h.log.Info("starting to receive responses from subscriber")
+	h.log.Info("receiving responses from subscriber")
 	// When we connect, some subscribers may acknowledge the last event they successfully received before a disconnect.
 	// TODO: Consider if the time we wait should be configurable based per subscriber.
 	select {
@@ -176,7 +184,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 		}
 		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
 	case <-time.After(waitForAckAfterConnect * time.Second):
-		h.log.Info("subscriber did not acknowledge last event received before disconnect, resending events from the last acknowledged event")
+		h.log.Info("subscriber did not acknowledge last event received before disconnect, resending events from the last known acknowledged event")
 	}
 
 	// Move the send cursor back to the last acknowledged event.
@@ -188,17 +196,13 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 		defer cancel()
 		for {
 			select {
-			case <-h.ctx.Done():
-				// The context should only be cancelled if something local requested a disconnect.
-				h.log.Info("stopping receive loop because the handler is shutting down")
-				return
 			case <-ctx.Done():
-				h.log.Info("stopping receive loop because the context was cancelled")
+				h.log.Debug("stopping receiving responses because the handler is shutting down")
 				return
 			case response, ok := <-recvStream:
 				if !ok {
 					// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
-					h.log.Info("stopping receive loop due to a remote disconnect")
+					h.log.Info("stopping receiving responses because the remote subscriber disconnected")
 					return
 				}
 				//h.log.Debug("received response from subscriber", zap.Any("response", response))
@@ -232,12 +236,8 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 		defer cancel()
 		for {
 			select {
-			case <-h.ctx.Done():
-				// The context should only be cancelled if something local requested a disconnect.
-				h.log.Info("stopping send loop because the handler is shutting down")
-				return
 			case <-ctx.Done():
-				h.log.Info("stopping send loop because the context was cancelled")
+				h.log.Debug("stopping sending events because the handler is shutting down")
 				return
 			case <-time.After(time.Duration(h.metaBufferPollFrequency) * time.Second):
 				// Poll on a configurable period for new events to be added to the buffer.
@@ -248,7 +248,7 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 					// Mainly because starting to send events in not latency sensitive.
 					event, err := h.metaEventBuffer.GetEvent(h.Id)
 					if err != nil {
-						h.log.Error("unable to get the next event in the buffer", zap.Error(err))
+						h.log.Error("unable to get the next event in the local buffer", zap.Error(err))
 						break sendEvents
 					}
 
@@ -271,6 +271,6 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 // Stop is called to cancel the context associated with a particular handler.
 // This will cause the Go routine handling the subscriber to attempt to cleanly disconnect.
 func (h *Handler) Stop() {
-	h.log.Info("stopping handler")
+	h.log.Info("shutting down subscriber")
 	h.cancel()
 }

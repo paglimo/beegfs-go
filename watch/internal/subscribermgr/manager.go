@@ -37,7 +37,7 @@ func NewManager(log *zap.Logger) Manager {
 // This is the external mechanism external functions should call to dynamically add/update/remove subscribers.
 // This configuration should contain all subscribers including any changes to existing ones.
 // Any subscribers found in the old configuration but not in the new will be removed.
-func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) error {
+func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int, wg *sync.WaitGroup) error {
 
 	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
 	// Consider if we want to do this better.
@@ -77,7 +77,8 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types
 
 	sm.handlers = newHandlers
 	for _, h := range sm.handlers {
-		go h.Handle()
+		wg.Add(1)
+		go h.Handle(wg)
 	}
 
 	return nil
@@ -89,7 +90,7 @@ func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	<-ctx.Done()
-	sm.log.Info("shutting down subscriber handlers")
+	sm.log.Info("shutting down subscriber handlers because the app is shutting down")
 	for _, h := range sm.handlers {
 		h.Stop()
 	}

@@ -117,8 +117,11 @@ func (b *MetaSocket) ListenAndServe(wg *sync.WaitGroup) {
 
 			// Start a separate goroutine that reads from the connection.
 			// It can cancel the context to request the connection be closed if anything goes wrong.
-			// We use a mutex to ensure nothing is actively reading from the connection if the app shuts down.
 			connCtx, cancelConn := context.WithCancel(context.Background())
+			// connMutex coordinates reading and closing the connection.
+			// This is because we use one goroutine to wait for app shutdown and close the connection,
+			// and another to actually read from the connection. This ensures we don't block shutdown when no events are ready.
+			// It also ensures we are able to finish reading the last event and publish it to the buffer before disconnecting.
 			var connMutex sync.Mutex
 			go b.readConnection(conn, &connMutex, cancelConn)
 
@@ -183,6 +186,7 @@ func (b *MetaSocket) readConnection(conn net.Conn, connMutex *sync.Mutex, cancel
 		if err != nil {
 			// Handle if we're gracefully shutting down and the socket was closed.
 			if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
+				b.log.Debug("disconnected from metadata service")
 				return
 			}
 			b.log.Error("error reading from metadata connection", zap.Error(err))

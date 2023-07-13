@@ -9,10 +9,12 @@ import (
 
 // MultiCursorRingBuffer is an optimized single writer multi-reader data structure.
 // It achieves this optimization by only requiring locks during garbage collection.
+//
+// The buffer should only be written to by a single writer using Push so no typically no locks are required.
+// The buffer may be read by N SubscriberCursors, so long as they have locked their respective mutexes.
+// Lock contention between the writer and readers only happens when freeing up space that requires a SubscriberCursor to be moved.
 // Otherwise events can be added to the buffer and subscribers can get/ack those events with no lock contention.
 type MultiCursorRingBuffer struct {
-	// The buffer is only written to by whoever has locked MultiCursorRingBuffer.mutex.
-	// The buffer may be read by SubscriberCursors that have locked their respective mutexes.
 	// The buffer size is fixed when the buffer is initialized and should never change.
 	// Multiple functions rely on len(buf) to calculate when indices should "rollover" (len() is fast = O(1)).
 	buffer []*pb.Event
@@ -22,7 +24,8 @@ type MultiCursorRingBuffer struct {
 	end int
 	// cursors is a map of subscriberIDs to SubscriberCursors.
 	cursors map[int]*SubscriberCursor
-	// cursorsMutex is used when adding or removing cursors from the map to coordinate with functions (like GC) that need an reliable list of cursors.
+	// cursorsMutex is used when adding or removing cursors from the map to coordinate with functions (like GC or AllEventsAcknowledged)
+	// that need an reliable list of cursors.
 	cursorsMutex sync.RWMutex
 	// The garbage collection counter controls when the Push function check for and purges events no longer referenced by any SubscriberCursors.
 	// It is initially initialized to gcFrequency then once it reaches zero GC happens and it is reinitialized to gcFrequency.
@@ -38,6 +41,11 @@ type MultiCursorRingBuffer struct {
 	gcFrequency int
 }
 
+// SubscriberCursor is a single subscribers view into the buffer.
+// Whenever GetEvent() or AckEvent() is called the cursorMutex must be locked.
+// This means there can be contention between these method calls.
+// To optimize it is recommended subscribers do not acknowledge all events, but on some intermittent cadence.
+// Typically acknowledging events no more than once per second leads to minimal contention/overhead.
 type SubscriberCursor struct {
 	// sendCursor is the index of the next event to send.
 	sendCursor int
@@ -84,6 +92,24 @@ func (b *MultiCursorRingBuffer) RemoveCursor(subscriberID int) {
 	b.cursorsMutex.Lock()
 	defer b.cursorsMutex.Unlock()
 	delete(b.cursors, subscriberID)
+}
+
+// AllEventsAcknowledged verifies the ackCursor for all subscribers points at the end of the buffer.
+// It should NOT be used while events are being added to the buffer otherwise it will return unpredictable results.
+// Its intended use is determining when all subscribers have acknowledged all outstanding events to coordinate shutdown.
+func (b *MultiCursorRingBuffer) AllEventsAcknowledged() bool {
+	b.cursorsMutex.RLock()
+	defer b.cursorsMutex.RUnlock()
+
+	done := true
+
+	for _, c := range b.cursors {
+		if b.buffer[c.ackCursor] != nil {
+			return false
+		}
+	}
+
+	return done
 }
 
 // Push adds a new event to the ring buffer.
