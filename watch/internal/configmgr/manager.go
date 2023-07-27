@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
@@ -19,7 +21,7 @@ import (
 // It also allows dynamically updating configuration for select application components.
 // This works by updating the config file then sending the app a SIGHUP.
 type ConfigManager struct {
-	configFile       string
+	initialFlags     *pflag.FlagSet
 	listeners        []ConfigListener
 	currentConfig    *AppConfig
 	updateSignal     chan os.Signal
@@ -29,6 +31,14 @@ type ConfigManager struct {
 // Components that support dynamic configuration updates can be added as a
 // listener if they implement the ConfigListener interface.
 type ConfigListener interface {
+	// UpdateConfiguration is run to provide the latest AppConfig to a
+	// component. If the component is unable to update the configuration it
+	// should return a meaningful error to help diagnose and correct the
+	// configuration then wait for new configuration to be provided. The
+	// component SHOULD NOT rollback to the previous version of the
+	// configuration. The component SHOULD avoid data loss, for example if a bad
+	// list of subscribers was provided, don't delete all subscribers and drop
+	// events.
 	UpdateConfiguration(AppConfig) error
 }
 
@@ -37,12 +47,12 @@ type ConfigListener interface {
 // If it succeeds it returns an initialized ConfigManager with the provided configuration.
 // It also returns a copy of the initial AppConfig so it can be used to initialize other managers.
 // When the app is ready to accept dynamic configuration updates the Manage() method can be called.
-func New(configFile string) (*ConfigManager, AppConfig, error) {
+func New(flags *pflag.FlagSet) (*ConfigManager, AppConfig, error) {
 
 	var mutex sync.RWMutex
 
 	cfgMgr := &ConfigManager{
-		configFile:       configFile,
+		initialFlags:     flags,
 		currentConfig:    nil,
 		updateSignal:     make(chan os.Signal, 1),
 		updateInProgress: &mutex,
@@ -99,36 +109,51 @@ func (cm *ConfigManager) AddListener(listener ConfigListener) {
 	cm.listeners = append(cm.listeners, listener)
 }
 
-// UpdateConfiguration attempts to read the latest configuration from a file.
-// If it fails it will return an error to be handled by the caller.
-// It then propagates the configuration to other components in the app.
-// It does this by calling UpdateConfiguration() on all configured listeners.
+// UpdateConfiguration combines the following configuration sources. The
+// precedence order is determined by Viper: (1) command line flags, (2)
+// environmental variables, (3) a configuration file, (4) default values
+// (specified as part of the pflag definitions in main.go).
 //
-// TODO: Consider if some of this functionality could be broken out into a
-// function that doesn't require CM for easier unit testing. For example do we
-// need to compare the old/new configuration state? Do we want to warn if someone
-// updates part of the configuration we don't support setting dynamically?
+// Before applying the configuration static validation checks will be performed.
+// If any of its validation checks fail, the configuration will not be updated,
+// and an error will be returned immediately to be handled by the caller.
+//
+// If validation succeeds it will attempt to propagate the configuration update
+// to other components of the app that support dynamic configuration updates. It
+// does this by calling UpdateConfiguration() on all configured listeners. If
+// there is an error dynamically updating the configuration for any component,
+// the component is expected to return a meaningful error. Any error(s) will be
+// aggregated and returned to the caller for handling.
 func (cm *ConfigManager) UpdateConfiguration() error {
 
-	viper.SetConfigFile(cm.configFile)
+	// Viper's precedence order means flags have the highest priority.
+	// This means any configuration set using a flag is immutable.
+	// We also get
+	err := viper.BindPFlags(cm.initialFlags)
+	if err != nil {
+		return fmt.Errorf("unable to parse command line flags: %s", err)
+	}
+
+	// BeeWatch will support configuration using environment variables prefixed
+	// with BEEWATCH_<VARIABLE>. These will be revaluated if
+	// UpdateConfiguration() reruns, meaning they can be used to update the
+	// configuration dynamically.
 	viper.SetEnvPrefix("BEEWATCH")
 	viper.AutomaticEnv()
 
-	// Any defaults not specified here will use the default value for that type:
-	viper.SetDefault("logType", "stdout")
-	viper.SetDefault("logStdFile", "/var/log/beegfs/bee-watch.log")
-	viper.SetDefault("sysFileEventBufferSize", 10000000)
-	viper.SetDefault("sysFileEventBufferGCFrequency", 100000)
-	viper.SetDefault("sysFileEventPollFrequency", 1)
+	// Important we do this last as a cfgFile could be set as an environment variable.
+	// We'll allow configuring BeeWatch entirely without a config file.
+	if viper.GetString("cfgFile") != "" {
+		viper.SetConfigFile(viper.GetString("cfgFile"))
+	}
 
-	err := viper.ReadInConfig()
+	err = viper.ReadInConfig()
 	if err != nil {
 		return fmt.Errorf("unable to read config from file: %s (does the file exist?)", err)
 	}
 
 	var newConfig AppConfig
-	err = viper.Unmarshal(&newConfig)
-	if err != nil {
+	if err := viper.Unmarshal(&newConfig); err != nil {
 		return fmt.Errorf("unable to parse configuration from file: %s (is the configuration valid?)", err)
 	}
 
@@ -150,18 +175,21 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		}
 	}
 
+	// Update any components whose configuration can be set dynamically.
+	// If anything goes wrong the component is expected to handle the issue gracefully.
+	// We'll just return the error, but we won't rollback the configuration.
+	var multiErr types.MultiError
 	for _, mgr := range cm.listeners {
 		err := mgr.UpdateConfiguration(newConfig)
-		// TODO: The component should have logged a more meaningful message and handled the error.
-		// Is there any general functionality we want to perform here? Rollback the config change?
-		// If not we should just get rid of the error on the UpdateConfiguration() method.
-		// It would be ideal if we rollback, otherwise the running config may not match the actual config.
 		if err != nil {
-			fmt.Printf("TODO: Handle: %s", err)
+			multiErr.Errors = append(multiErr.Errors, err)
 		}
 	}
 
-	cm.currentConfig = &newConfig
+	if len(multiErr.Errors) > 0 {
+		return &multiErr
+	}
 
+	cm.currentConfig = &newConfig
 	return nil
 }

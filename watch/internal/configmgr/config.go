@@ -23,6 +23,7 @@ type AppConfig struct {
 	Developer   struct {
 		PerfLogIncomingEventRate bool `mapstructure:"perfLogIncomingEventRate"`
 		PerfProfilePort          int  `mapstructure:"perfProfilePort"`
+		DumpConfig               bool `mapstructure:"dumpConfig"`
 	}
 }
 
