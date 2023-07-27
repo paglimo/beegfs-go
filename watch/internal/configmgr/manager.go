@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -109,12 +110,33 @@ func (cm *ConfigManager) AddListener(listener ConfigListener) {
 // updates part of the configuration we don't support setting dynamically?
 func (cm *ConfigManager) UpdateConfiguration() error {
 
-	newConfig, err := getAppConfigFromFile(cm.configFile)
+	viper.SetConfigFile(cm.configFile)
+	viper.SetEnvPrefix("BEEWATCH")
+	viper.AutomaticEnv()
 
+	// Any defaults not specified here will use the default value for that type:
+	viper.SetDefault("logType", "stdout")
+	viper.SetDefault("logStdFile", "/var/log/beegfs/bee-watch.log")
+	viper.SetDefault("sysFileEventBufferSize", 10000000)
+	viper.SetDefault("sysFileEventBufferGCFrequency", 100000)
+	viper.SetDefault("sysFileEventPollFrequency", 1)
+
+	err := viper.ReadInConfig()
 	if err != nil {
+		return fmt.Errorf("unable to read config from file: %s (does the file exist?)", err)
+	}
+
+	var newConfig AppConfig
+	err = viper.Unmarshal(&newConfig)
+	if err != nil {
+		return fmt.Errorf("unable to parse configuration from file: %s (is the configuration valid?)", err)
+	}
+
+	if err = validateConfig(newConfig); err != nil {
 		return err
 	}
 
+	// After initial startup some of the configuration is immutable:
 	if cm.currentConfig != nil {
 		if newConfig.Developer != cm.currentConfig.Developer {
 			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup")
@@ -129,7 +151,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 	}
 
 	for _, mgr := range cm.listeners {
-		err := mgr.UpdateConfiguration(*newConfig)
+		err := mgr.UpdateConfiguration(newConfig)
 		// TODO: The component should have logged a more meaningful message and handled the error.
 		// Is there any general functionality we want to perform here? Rollback the config change?
 		// If not we should just get rid of the error on the UpdateConfiguration() method.
@@ -139,7 +161,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		}
 	}
 
-	cm.currentConfig = newConfig
+	cm.currentConfig = &newConfig
 
 	return nil
 }

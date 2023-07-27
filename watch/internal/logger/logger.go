@@ -6,7 +6,6 @@ package logger
 import (
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
@@ -46,7 +45,7 @@ func (lm *Logger) updateConfiguration(newConfig configmgr.AppConfig) error {
 	}
 
 	// TODO (BF-47): Better support multiple log types.
-	if strings.ToLower(newConfig.Logging.LogType) == "logfile" {
+	if newConfig.Logging.LogType == configmgr.LogFile {
 		logFile, err := os.OpenFile(newConfig.Logging.LogStdFile, os.O_RDWR|os.O_CREATE, 0755)
 		if err != nil {
 			return fmt.Errorf("unable to create log file: %s", err)
