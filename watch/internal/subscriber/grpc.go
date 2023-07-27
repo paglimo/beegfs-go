@@ -24,13 +24,11 @@ const (
 // subscribers should acknowledge the sequence ID of the last received event.
 // Otherwise duplicate events may be retransmitted to avoid dropped events.
 type GRPCSubscriber struct {
-	Hostname      string
-	Port          string
-	AllowInsecure bool
-	conn          *grpc.ClientConn
-	client        pb.SubscriberClient
-	stream        pb.Subscriber_ReceiveEventsClient
-	recvStream    chan *pb.Response
+	GrpcConfig
+	conn       *grpc.ClientConn
+	client     pb.SubscriberClient
+	stream     pb.Subscriber_ReceiveEventsClient
+	recvStream chan *pb.Response
 	// recvMutex is used to ensure there is only ever one goroutine receiving responses.
 	recvMutex *sync.Mutex
 }
@@ -41,10 +39,12 @@ func newGRPCSubscriber(hostname string, port string, allowInsecure bool) *GRPCSu
 	var mutex sync.Mutex
 
 	return &GRPCSubscriber{
-		Hostname:      hostname,
-		Port:          port,
-		AllowInsecure: allowInsecure,
-		recvMutex:     &mutex,
+		GrpcConfig: GrpcConfig{
+			Hostname:      hostname,
+			Port:          port,
+			AllowInsecure: allowInsecure,
+		},
+		recvMutex: &mutex,
 	}
 }
 
@@ -158,10 +158,14 @@ func (s *GRPCSubscriber) Disconnect() error {
 
 	var multiErr types.MultiError
 
-	if err := s.stream.CloseSend(); err != nil {
-		err = fmt.Errorf("an error occurred closing the send direction of the subscriber stream: %w", err)
-		multiErr.Errors = append(multiErr.Errors, err)
-	} // TODO: Handle the error if the stream was already closed.
+	// The stream could be nil if we were never connected.
+	// We'll get a segmentation violation if we don't check.
+	if s.stream != nil {
+		if err := s.stream.CloseSend(); err != nil {
+			err = fmt.Errorf("an error occurred closing the send direction of the subscriber stream: %w", err)
+			multiErr.Errors = append(multiErr.Errors, err)
+		} // TODO: Handle the error if the stream was already closed.
+	}
 
 	//
 	if s.recvStream != nil {
@@ -186,10 +190,14 @@ func (s *GRPCSubscriber) Disconnect() error {
 		}
 	}
 
-	if err := s.conn.Close(); err != nil {
-		err = fmt.Errorf("an error ocurred closing the subscriber connection: %w", err)
-		multiErr.Errors = append(multiErr.Errors, err)
-	} // TODO: Handle the error if the connection was already closed.
+	// The connection could be nil if we were never connected.
+	// We'll get a segmentation violation if we don't check.
+	if s.conn != nil {
+		if err := s.conn.Close(); err != nil {
+			err = fmt.Errorf("an error ocurred closing the subscriber connection: %w", err)
+			multiErr.Errors = append(multiErr.Errors, err)
+		} // TODO: Handle the error if the connection was already closed.
+	}
 
 	if len(multiErr.Errors) > 0 {
 		return &multiErr

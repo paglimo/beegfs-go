@@ -1,38 +1,30 @@
 package subscriber
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
-// jsonConfig defines the configuration options that could be set on any type of subscriber.
-// It embeds each type of subscriber so their fields can be unmarshalled/initialized based on the selected "Type".
-type baseConfig struct {
-	Type       string `json:"type"`
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	grpcConfig        // Configuration options for type gRPC.
+// BaseConfig defines the configuration options that could be set on any type of subscriber.
+// It embeds each type of subscriber so they can be initialized based on the selected "Type".
+type BaseConfig struct {
+	Type       string `toml:"type"`
+	ID         int    `toml:"id"`
+	Name       string `toml:"name"`
+	GrpcConfig        // Configuration options for type gRPC.
 }
 
-// grpcConfig defines fields that only apply to gRPC subscribers.
-type grpcConfig struct {
-	Hostname      string `json:"hostname"`
-	Port          string `json:"port"`
-	AllowInsecure bool   `json:"allow_insecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
+// GrpcConfig defines configuration options that only apply to gRPC subscribers.
+type GrpcConfig struct {
+	Hostname      string `toml:"hostname"`
+	Port          string `toml:"port"`
+	AllowInsecure bool   `toml:"allow_insecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
 }
 
-// NewSubscribersFromJson is the standard way for initializing one or more subscribers.
-// It takes a string containing JSON defining the configuration for one or more subscribers.
-// It attempts to unmarshal and initialize each subscriber and returns a slice of all the subscribers.
+// NewSubscribersFromConfig is the standard way for initializing one or more subscribers.
+// It takes a slice of BaseConfig defining the configuration for one or more subscribers.
+// It attempts to initialize each subscriber and returns a slice of all the subscribers.
 // It returns an error if there are any invalid subscribers (or configuration/fields).
-// It also returns an error if it was unable to unmarshal the provided JSON due to a syntax/other error.
-func NewSubscribersFromJson(rawJson string) ([]*BaseSubscriber, error) {
-
-	var configs []baseConfig
-
-	if err := json.Unmarshal([]byte(rawJson), &configs); err != nil {
-		return nil, fmt.Errorf("unable to unmarshal subscriber configuration: %w", err)
-	}
+func NewSubscribersFromConfig(configs []BaseConfig) ([]*BaseSubscriber, error) {
 
 	var newSubscribers []*BaseSubscriber
 	for _, config := range configs {
@@ -48,9 +40,9 @@ func NewSubscribersFromJson(rawJson string) ([]*BaseSubscriber, error) {
 
 }
 
-// newSubscriberFromConfig takes a SubscriberConfig and returns an initialized struct for the indicated subscriber type.
+// newSubscriberFromConfig takes a BaseConfig and returns an initialized struct for the indicated subscriber type.
 // It will return an error if the requested subscriber type is unknown.
-func newSubscriberFromConfig(config baseConfig) (*BaseSubscriber, error) {
+func newSubscriberFromConfig(config BaseConfig) (*BaseSubscriber, error) {
 
 	base := &BaseSubscriber{
 		Id:   config.ID,

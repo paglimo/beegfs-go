@@ -13,31 +13,36 @@ import (
 	"reflect"
 	"sync"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
 type Manager struct {
-	log      *zap.Logger
-	handlers []*Handler
+	log             *zap.Logger
+	handlers        []*Handler
+	metaEventBuffer *types.MultiCursorRingBuffer
+	wg              *sync.WaitGroup
 }
 
-func NewManager(log *zap.Logger) Manager {
+func New(log *zap.Logger, metaEventBuffer *types.MultiCursorRingBuffer, wg *sync.WaitGroup) *Manager {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
-	return Manager{
-		log:      log,
-		handlers: make([]*Handler, 0),
+	return &Manager{
+		log:             log,
+		handlers:        make([]*Handler, 0),
+		metaEventBuffer: metaEventBuffer,
+		wg:              wg,
 	}
 }
 
-// Update subscribers takes a string containing JSON configuration specifying a list of subscribers to manage.
+// UpdateConfiguration take a slice containing the configuration for one or more subscribers.
 // It also takes a pointer to the metadata event buffer and how frequently handlers should poll this buffer for new events to send to subscribers.
 // This is the external mechanism external functions should call to dynamically add/update/remove subscribers.
 // This configuration should contain all subscribers including any changes to existing ones.
 // Any subscribers found in the old configuration but not in the new will be removed.
-func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int, wg *sync.WaitGroup) error {
+func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
 
 	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
 	// Consider if we want to do this better.
@@ -61,24 +66,25 @@ func (sm *Manager) UpdateConfiguration(jsonConfig string, metaEventBuffer *types
 
 	for _, h := range sm.handlers {
 		h.Stop()
-		metaEventBuffer.RemoveCursor(h.Id)
+		sm.metaEventBuffer.RemoveCursor(h.Id)
+		sm.wg.Done()
 	}
 
-	newSubscribers, err := subscriber.NewSubscribersFromJson(jsonConfig)
+	newSubscribers, err := subscriber.NewSubscribersFromConfig(newConfig.Subscribers)
 	if err != nil {
 		return err
 	}
 
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
-		newHandlers = append(newHandlers, newHandler(sm.log, s, metaEventBuffer, metaBufferPollFrequency))
-		metaEventBuffer.AddCursor(s.Id) // TODO: We may want to do this as part of newHandler().
+		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, newConfig.Metadata.SysFileEventPollFrequency))
+		sm.metaEventBuffer.AddCursor(s.Id) // TODO: We may want to do this as part of newHandler().
 	}
 
 	sm.handlers = newHandlers
 	for _, h := range sm.handlers {
-		wg.Add(1)
-		go h.Handle(wg)
+		sm.wg.Add(1)
+		go h.Handle(sm.wg)
 	}
 
 	return nil

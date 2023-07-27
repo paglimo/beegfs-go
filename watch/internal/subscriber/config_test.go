@@ -6,40 +6,39 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var testJsonConfig string = `
-[
-    {
-        "type": "grpc",
-        "id": 1,
-        "name": "bee-remote",
-        "hostname":"br-1",
-		"port":"1234",
-		"allow_insecure":true
-    },
-    {
-        "type": "grpc",
-        "id": 2,
-        "name": "beegfs-mon",
-        "hostname":"bm-1",
-		"port":"512312",
-		"allow_insecure":false,
-		"offline_buffer_size":3,		
-		"queue_size":2
-    }
-]
-`
+var testConfig = []BaseConfig{
+	{
+		Type: "grpc",
+		ID:   1,
+		Name: "bee-remote",
+		GrpcConfig: GrpcConfig{
+			Hostname:      "br-1",
+			Port:          "1234",
+			AllowInsecure: true,
+		},
+	},
+	{
+		Type: "grpc",
+		ID:   2,
+		Name: "beegfs-mon",
+		GrpcConfig: GrpcConfig{
+			Hostname:      "bm-1",
+			Port:          "512312",
+			AllowInsecure: false,
+		},
+	},
+}
 
-// TestNewSubscribersFromJson also implicitly tests newSubscriberFromConfig and newBaseSubscriber.
-// It only tests fields that are unmarshalled from the JSON configuration.
+// TestNewSubscribersFromConfig also implicitly tests newSubscriberFromConfig and newBaseSubscriber.
 // See the inline notes before adding tests for new/existing subscriber types.
-func TestNewSubscribersFromJson(t *testing.T) {
+func TestNewSubscribersFromConfig(t *testing.T) {
 
-	configuredSubscribers, err := NewSubscribersFromJson(testJsonConfig)
+	configuredSubscribers, err := NewSubscribersFromConfig(testConfig)
 	assert.NoError(t, err)
 
 	// The order of expectedSubscribers matters because we will use that to determine which expected subscriber
-	// is compared to the parsed output from the above jsonConfig.
-	// In other words the Nth entry in jsonConfig should line up with the Nth entry below.
+	// is compared to the parsed output from the above testConfig.
+	// In other words the Nth entry in testConfig should line up with the Nth entry below.
 
 	expectedSubscribers := []*BaseSubscriber{
 		{
@@ -49,9 +48,11 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				state: DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
-				Hostname:      "br-1",
-				Port:          "1234",
-				AllowInsecure: true,
+				GrpcConfig: GrpcConfig{
+					Hostname:      "br-1",
+					Port:          "1234",
+					AllowInsecure: true,
+				},
 			},
 		}, {
 			Id:   2,
@@ -60,9 +61,11 @@ func TestNewSubscribersFromJson(t *testing.T) {
 				state: DISCONNECTED,
 			},
 			Subscriber: &GRPCSubscriber{
-				Hostname:      "bm-1",
-				Port:          "512312",
-				AllowInsecure: false,
+				GrpcConfig: GrpcConfig{
+					Hostname:      "bm-1",
+					Port:          "512312",
+					AllowInsecure: false,
+				},
 			},
 		},
 	}
@@ -88,9 +91,3 @@ func TestNewSubscribersFromJson(t *testing.T) {
 		}
 	}
 }
-
-// TODO:
-// Add a test that verifies NewSubscribersFromJson initializes all fields for base and concrete subscriber types.
-// In particular to catch if a new field is added.
-// So ideally use reflect to iterate over and attempt to read the fields.
-// Thus triggering a segfault if one was missed.
