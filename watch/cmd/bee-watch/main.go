@@ -40,17 +40,18 @@ var (
 func main() {
 
 	pflag.String("cfgFile", "/etc/beegfs/bee-watch.conf", "The path to the BeeWatch configuration file.")
-	pflag.String("logging.logType", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
-	pflag.String("logging.logStdFile", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
-	pflag.Bool("logging.logDebug", false, "Enable logging at the debug level (will impact performance).")
-	pflag.Int("metadata.sysFileEventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
-	pflag.Int("metadata.sysFileEventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
-	pflag.Int("metadata.sysFileEventPollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
-	pflag.Bool("developer.perfLogIncomingEventRate", false, "output the rate of incoming events per second")
+	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
+	pflag.String("log.file", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
+	pflag.Bool("log.debug", false, "Enable logging at the debug level (will impact performance).")
+	pflag.Bool("log.incomingEventRate", false, "output the rate of incoming events per second")
+	pflag.String("metadata.eventLogTarget", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
+	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
+	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
+	pflag.Int("metadata.eventPollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
 
 	// Hidden flags:
-	pflag.Int("developer.perfProfilePort", 0, "Specify a port where performance profiles will be made available on the localhost.")
-	pflag.CommandLine.MarkHidden("developer.perfProfilePort")
+	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
+	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
 	pflag.Bool("developer.dumpConfig", false, "Dump the full configuration and immediately exit.")
 	pflag.CommandLine.MarkHidden("developer.dumpConfig")
 
@@ -80,9 +81,9 @@ func main() {
 		log.Fatalf("Unable to initialize logger: %s", err)
 	}
 
-	if initialCfg.Developer.PerfProfilePort != 0 {
+	if initialCfg.Developer.PerfProfilingPort != 0 {
 		go func() {
-			http.ListenAndServe(fmt.Sprintf(":%d", initialCfg.Developer.PerfProfilePort), nil)
+			http.ListenAndServe(fmt.Sprintf(":%d", initialCfg.Developer.PerfProfilingPort), nil)
 		}()
 	}
 
@@ -95,7 +96,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	// Use a custom ring buffer to move events between the metadata socket and multiple subscribers:
-	metaEventBuffer := types.NewMultiCursorRingBuffer(initialCfg.Metadata.SysFileEventBufferSize, initialCfg.Metadata.SysFileEventBufferGCFrequency)
+	metaEventBuffer := types.NewMultiCursorRingBuffer(initialCfg.Metadata.EventBufferSize, initialCfg.Metadata.EventBufferGCFrequency)
 
 	// Setup the subscriber manager:
 	sm := subscribermgr.New(logger.Logger, metaEventBuffer, &wg)
@@ -115,14 +116,14 @@ func main() {
 	metaCtx, metaCancel := context.WithCancel(context.Background())
 	defer metaCancel()
 
-	socket, err := eventlog.New(metaCtx, logger.Logger, initialCfg.Metadata.SysFileEventLogTarget, metaEventBuffer)
+	socket, err := eventlog.New(metaCtx, logger.Logger, initialCfg.Metadata.EventLogTarget, metaEventBuffer)
 	if err != nil {
-		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.SysFileEventLogTarget))
+		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.EventLogTarget))
 	}
 	go socket.ListenAndServe(&wg) // Don't move this away from the creation to ensure the socket is cleaned up.
 	wg.Add(1)
 
-	if initialCfg.Developer.PerfLogIncomingEventRate {
+	if initialCfg.Log.IncomingEventRate {
 		go socket.Sample() // We don't care about adding this to the wg. It'll just stop when the meta service is cancelled.
 	}
 

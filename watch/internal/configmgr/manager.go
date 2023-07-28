@@ -170,7 +170,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup")
 		}
 		// TODO (BF-48): Allow logging configuration to be changed dynamically.
-		if newConfig.Logging != cm.currentConfig.Logging {
+		if newConfig.Log != cm.currentConfig.Log {
 			return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup")
 		}
 	}

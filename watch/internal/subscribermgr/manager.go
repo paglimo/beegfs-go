@@ -77,7 +77,7 @@ func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
 
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
-		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, newConfig.Metadata.SysFileEventPollFrequency))
+		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, newConfig.Metadata.EventPollFrequency))
 		sm.metaEventBuffer.AddCursor(s.Id) // TODO: We may want to do this as part of newHandler().
 	}
 

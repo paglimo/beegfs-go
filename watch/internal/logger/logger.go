@@ -38,15 +38,15 @@ func (lm *Logger) updateConfiguration(newConfig configmgr.AppConfig) error {
 	var config zap.Config
 	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
 
-	if newConfig.Logging.LogDebug {
+	if newConfig.Log.Debug {
 		config = zap.NewDevelopmentConfig()
 	} else {
 		config = zap.NewProductionConfig()
 	}
 
 	// TODO (BF-47): Better support multiple log types.
-	if newConfig.Logging.LogType == configmgr.LogFile {
-		logFile, err := os.OpenFile(newConfig.Logging.LogStdFile, os.O_RDWR|os.O_CREATE, 0755)
+	if newConfig.Log.Type == configmgr.LogFile {
+		logFile, err := os.OpenFile(newConfig.Log.File, os.O_RDWR|os.O_CREATE, 0755)
 		if err != nil {
 			return fmt.Errorf("unable to create log file: %s", err)
 		}

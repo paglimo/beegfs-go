@@ -1,14 +1,15 @@
 
-[logging] # Logging configuration cannot be dynamically updated after the application is started.
-logType = 'stdout'
-logStdFile = '/var/log/bee-watch.log'
-logDebug = false
+[log] # Logging configuration cannot be dynamically updated after the application is started.
+type = 'stdout'
+file = '/var/log/bee-watch.log'
+debug = false
+incomingEventRate = false
 
 [metadata] # Metadata configuration cannot be dynamically updated after the application is started.
-sysFileEventLogTarget = '/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog'
-sysFileEventBufferSize = 10000000
-sysFileEventBufferGCFrequency = 100000
-sysFileEventPollFrequency = 1
+eventLogTarget = '/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog'
+eventBufferSize = 10000000
+eventBufferGCFrequency = 100000
+eventPollFrequency = 1
 
 [[subscriber]] # Subscribers may be updated after the application has started.
 type = 'grpc'
@@ -27,5 +28,4 @@ port = '2'
 allow_insecure = false
 
 [developer] # Developer configuration cannot be dynamically updated after the application has started.
-perfLogIncomingEventRate = false
-perfProfilePort = 0
+perfProfilingPort = 0
