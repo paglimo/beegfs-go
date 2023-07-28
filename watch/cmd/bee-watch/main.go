@@ -23,20 +23,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-
-// socketPath = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
-// logFile        = flag.String("logFile", "", "log to a file instead of stdout")
-// logDebug       = flag.Bool("logDebug", false, "enable logging at the debug level")
-// enableSampling = flag.Bool("enableSampling", false, "output events per second")
-// enablePProf    = flag.Int("enablePProf", 0, "specify a port where performance profiles will be made available on the localhost")
-// If we're targeting 500,000 EPS, then a buffer of 300,000,000 allows us to take up to 600s to drain offline events.
-// Worst case we're looking at ~10KB per event. So if we allow up to 1M events memory should be around 1GB of memory utilization.
-// metaBufferSize        = flag.Int("metaBufferSize", 10000000, "how many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected")
-// metaBufferGCFrequency = flag.Int("metaBufferGCFrequency", 100000, "after how many new events should unused buffer space be reclaimed automatically")
-// metaBufferPollFrequency = flag.Int("metaBufferPollFrequency", 1, "how often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle)")
-)
-
 func main() {
 
 	pflag.String("cfgFile", "/etc/beegfs/bee-watch.conf", "The path to the BeeWatch configuration file.")
@@ -48,13 +34,14 @@ func main() {
 	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
 	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
 	pflag.Int("metadata.eventPollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
-
+	pflag.StringArray("subscribers", nil, "Specify one or more subscribers in the format: --subscriber=\"id=1,name='subscriber1',type='grpc'\" --subscriber=\"id=2,name='subscriber2',type='grpc'\"")
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
 	pflag.Bool("developer.dumpConfig", false, "Dump the full configuration and immediately exit.")
 	pflag.CommandLine.MarkHidden("developer.dumpConfig")
 
+	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 		pflag.PrintDefaults()

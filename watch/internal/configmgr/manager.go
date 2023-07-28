@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path"
 	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -15,6 +16,10 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+)
+
+const (
+	envVariablePrefix = "BEEWATCH"
 )
 
 // ConfigManager is used to determine the initial configuration from flags and/or a config file.
@@ -128,33 +133,68 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 
 	// Viper's precedence order means flags have the highest priority.
 	// This means any configuration set using a flag is immutable.
-	// We also get
+	// We also get all of our defaults based on the flag setup.
 	err := viper.BindPFlags(cm.initialFlags)
 	if err != nil {
 		return fmt.Errorf("unable to parse command line flags: %s", err)
 	}
 
+	// Allow specifying subscribers using flags.
+	// We do this by transforming the flags into TOML format.
+	// Then later on we can just use viper.Unmarshal to get the corresponding Golang structs.
+	// This avoid having to write a custom unmarshaller.
+	// Note the flag we use to specify subscribers cannot be the same as what is in the TOML file (subscriber).
+	subscribersFromFlags := viper.GetStringSlice("subscribers")
+	if len(subscribersFromFlags) > 0 {
+		tomlString := parseSubscribersFromFlags(subscribersFromFlags)
+		viper.SetConfigType("toml")
+
+		if err := viper.ReadConfig(strings.NewReader(tomlString)); err != nil {
+			return fmt.Errorf("unable to parse subscribers from command line flags: %s", err)
+		}
+	}
+
 	// BeeWatch will support configuration using environment variables prefixed
-	// with BEEWATCH_<VARIABLE>. These will be revaluated if
+	// with envVariablePrefix_<VARIABLE>. These will be revaluated if
 	// UpdateConfiguration() reruns, meaning they can be used to update the
 	// configuration dynamically.
-	viper.SetEnvPrefix("BEEWATCH")
+	viper.SetEnvPrefix(envVariablePrefix)
 	viper.AutomaticEnv()
+
+	// TODO: Allow setting subscribers using environment variables.
 
 	// Important we do this last as a cfgFile could be set as an environment variable.
 	// We'll allow configuring BeeWatch entirely without a config file.
 	if viper.GetString("cfgFile") != "" {
+		// First we read the config file into a separate Viper instance.
+		// We mainly do this so we can check subscribers are only being set in one place.
+		// Otherwise we'd have to define complicated precedence rules for merging subscribers.
+		vFile := viper.New()
+		vFile.SetConfigFile(viper.GetString("cfgFile"))
+
+		if err := vFile.ReadInConfig(); err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+				return fmt.Errorf("configuration file at '%s' was not found (does it exist? are permissions set correctly?)", viper.GetString("cfgFile"))
+			}
+			return fmt.Errorf("an unknown error occurred reading config file '%s' (do we have permissions to read it?): %s", viper.GetString("cfgFile"), err)
+		}
+		subscribersFromFile := vFile.GetStringSlice("subscriber")
+
+		if len(subscribersFromFile) > 0 && len(subscribersFromFlags) > 0 {
+			return fmt.Errorf("subscribers cannot be set using both flags and a configuration file")
+		}
+		// If all our checks pass we'll actually use the config file for our global Viper instance.
 		viper.SetConfigFile(viper.GetString("cfgFile"))
 	}
 
-	err = viper.ReadInConfig()
-	if err != nil {
-		return fmt.Errorf("unable to read config from file: %s (does the file exist?)", err)
+	// Merge the configuration set via flags and environment variables with the cfgFile.
+	if err := viper.MergeInConfig(); err != nil {
+		return fmt.Errorf("an unknown error occurred merging configuration sources: %s", err)
 	}
 
 	var newConfig AppConfig
 	if err := viper.Unmarshal(&newConfig); err != nil {
-		return fmt.Errorf("unable to parse configuration from file: %s (is the configuration valid?)", err)
+		return fmt.Errorf("unable to parse configuration: %s \n\n(is the configuration valid?)", err)
 	}
 
 	if err = validateConfig(newConfig); err != nil {
@@ -192,4 +232,14 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 
 	cm.currentConfig = &newConfig
 	return nil
+}
+
+func parseSubscribersFromFlags(subscriberFlags []string) string {
+	var subscribers []string
+	for _, s := range subscriberFlags {
+		subscriber := strings.ReplaceAll(s, ",", "\n")
+		subscribers = append(subscribers, "[[subscriber]]\n"+subscriber)
+	}
+
+	return strings.Join(subscribers, "\n")
 }
