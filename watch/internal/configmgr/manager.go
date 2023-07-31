@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	envVariablePrefix = "BEEWATCH"
+	envVariablePrefix = "BEEWATCH_"
 )
 
 // ConfigManager is used to determine the initial configuration from flags and/or a config file.
@@ -115,7 +115,7 @@ func (cm *ConfigManager) AddListener(listener ConfigListener) {
 }
 
 // UpdateConfiguration combines the following configuration sources. The
-// precedence order is determined by Viper: (1) command line flags, (2)
+// following precedence order is respected (1) command line flags, (2)
 // environmental variables, (3) a configuration file, (4) default values
 // (specified as part of the pflag definitions in main.go).
 //
@@ -131,69 +131,119 @@ func (cm *ConfigManager) AddListener(listener ConfigListener) {
 // aggregated and returned to the caller for handling.
 func (cm *ConfigManager) UpdateConfiguration() error {
 
+	// We don't want to use Viper to actually persist the configuration.
+	// We mainly use Viper to simplify merging the configuration together,
+	// following a predictable precedence order.
+	v := viper.New()
+	v.SetConfigType("toml")
+
 	// Viper's precedence order means flags have the highest priority.
 	// This means any configuration set using a flag is immutable.
 	// We also get all of our defaults based on the flag setup.
-	err := viper.BindPFlags(cm.initialFlags)
+	err := v.BindPFlags(cm.initialFlags)
 	if err != nil {
 		return fmt.Errorf("unable to parse command line flags: %s", err)
 	}
 
-	// Allow specifying subscribers using flags.
-	// We do this by transforming the flags into TOML format.
-	// Then later on we can just use viper.Unmarshal to get the corresponding Golang structs.
-	// This avoid having to write a custom unmarshaller.
-	// Note the flag we use to specify subscribers cannot be the same as what is in the TOML file (subscriber).
-	subscribersFromFlags := viper.GetStringSlice("subscribers")
+	// Allow specifying subscribers using a --subscribers flag. We do this by
+	// transforming the flags into TOML format. Then later on we can just use
+	// viper.Unmarshal to get the corresponding Golang structs. This avoids
+	// having to write a custom unmarshaller. Note the flag we use to specify
+	// subscribers cannot be the same as what is in the TOML file (subscriber).
+	// This is because we need a way to allow users to specify multiple
+	// subscribers in a single string, that is different from the actual slice
+	// of subscribers that is unmarshalled from the final configuration.
+	subscribersFromFlags := v.GetString("subscribers")
 	if len(subscribersFromFlags) > 0 {
-		tomlString := parseSubscribersFromFlags(subscribersFromFlags)
-		viper.SetConfigType("toml")
+		tomlString := parseTOMLSubscribersFromString(subscribersFromFlags)
 
-		if err := viper.ReadConfig(strings.NewReader(tomlString)); err != nil {
-			return fmt.Errorf("unable to parse subscribers from command line flags: %s", err)
+		if err := v.ReadConfig(strings.NewReader(tomlString)); err != nil {
+			return fmt.Errorf("unable to parse subscribers from command line flags: %s\nAre all flag values enclosed in \"double\" quotes (--flag=\"value\")? \nAre all strings within flag values contained in 'single' quotes (--flag=\"key='value'\"?)", err)
 		}
 	}
 
-	// BeeWatch will support configuration using environment variables prefixed
-	// with envVariablePrefix_<VARIABLE>. These will be revaluated if
-	// UpdateConfiguration() reruns, meaning they can be used to update the
-	// configuration dynamically.
-	viper.SetEnvPrefix(envVariablePrefix)
-	viper.AutomaticEnv()
+	// While Viper allows you to override values it reads from a config file
+	// with environment variables, it does not appear to provide a way to just
+	// read in configuration from environment variables.  We don't want to
+	// require use of a config file, so this workaround searches for environment
+	// variables that match our prefix then uses BindEnv to manually link the
+	// desired environment variables that will later be used when we
+	// call viper.Unmarshal(). This approach was adapted from:
+	// https://renehernandez.io/snippets/bind-environment-variables-to-config-struct-with-viper/.
+	// Note an alternative approach would be to use viper.AutomaticEnv() then
+	// Viper.Get() would reevaluate environment variables every time Get() is
+	// called. However we want also ConfigManager to handle all configuration
+	// updates so we can check configuration before it is reapplied. This is
+	// partially why we don't use Viper to persist the configuration and
+	// require going through ConfigMgr instead of using Get() throughout the app.
+	subscribersFromEnv := false
+	for _, envVar := range os.Environ() {
+		pair := strings.SplitN(envVar, "=", 2)
+		key := pair[0]
+		val := pair[1]
 
-	// TODO: Allow setting subscribers using environment variables.
+		if strings.HasPrefix(key, envVariablePrefix) {
+			viperKey := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, envVariablePrefix)), "_", ".")
 
-	// Important we do this last as a cfgFile could be set as an environment variable.
-	// We'll allow configuring BeeWatch entirely without a config file.
-	if viper.GetString("cfgFile") != "" {
+			if viperKey == "subscribers" {
+				// We do not want to allow subscribers to be specified multiple
+				// ways, so we first check if they were also specified using flags.
+				if len(subscribersFromFlags) > 0 {
+					return fmt.Errorf("subscribers cannot be set using both flags and environment variables")
+				}
+				// Use the same approach as we do for flags to get a list of subscribers:
+				subscribersFromEnv = true
+				tomlString := parseTOMLSubscribersFromString(val)
+				if err := v.ReadConfig(strings.NewReader(tomlString)); err != nil {
+					return fmt.Errorf("unable to parse subscribers from environment variable: %s\nIs the value contained in \"double\" quotes?\nAre all strings within the value contained in 'single' quotes? \nExample: \"id=1,name='subscriber',type='grpc'\"", err)
+				}
+			} else if viperKey == "subscriber" {
+				return fmt.Errorf("subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", envVariablePrefix, envVariablePrefix)
+			} else {
+				if err := v.BindEnv(viperKey, strings.ToUpper(key)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Important we do this last as a cfgFile could be set as a flag or
+	// environment variable. We also want to allow configuring BeeWatch entirely
+	// without a config file.
+	if v.GetString("cfgfile") != "" {
 		// First we read the config file into a separate Viper instance.
 		// We mainly do this so we can check subscribers are only being set in one place.
 		// Otherwise we'd have to define complicated precedence rules for merging subscribers.
 		vFile := viper.New()
-		vFile.SetConfigFile(viper.GetString("cfgFile"))
+		vFile.SetConfigFile(v.GetString("cfgfile"))
 
 		if err := vFile.ReadInConfig(); err != nil {
 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				return fmt.Errorf("configuration file at '%s' was not found (does it exist? are permissions set correctly?)", viper.GetString("cfgFile"))
+				return fmt.Errorf("configuration file at '%s' was not found (does it exist? are permissions set correctly?)", v.GetString("cfgFile"))
 			}
-			return fmt.Errorf("an unknown error occurred reading config file '%s' (do we have permissions to read it?): %s", viper.GetString("cfgFile"), err)
+			return fmt.Errorf("an unknown error occurred reading config file '%s' (do we have permissions to read it?): %s", v.GetString("cfgFile"), err)
 		}
 		subscribersFromFile := vFile.GetStringSlice("subscriber")
 
-		if len(subscribersFromFile) > 0 && len(subscribersFromFlags) > 0 {
-			return fmt.Errorf("subscribers cannot be set using both flags and a configuration file")
+		if len(subscribersFromFile) > 0 && (len(subscribersFromFlags) > 0 || subscribersFromEnv) {
+			return fmt.Errorf("subscribers cannot be set using a mix of flags, environment variables, and a configuration file (only one is allowed)")
 		}
-		// If all our checks pass we'll actually use the config file for our global Viper instance.
-		viper.SetConfigFile(viper.GetString("cfgFile"))
+		// If all our checks pass we'll actually use the config file for the combined Viper instance.
+		v.SetConfigFile(v.GetString("cfgfile"))
+
+		// Merge the configuration set via flags and environment variables with the cfgFile.
+		if err := v.MergeInConfig(); err != nil {
+			return fmt.Errorf("an unknown error occurred merging configuration sources: %s", err)
+		}
 	}
 
-	// Merge the configuration set via flags and environment variables with the cfgFile.
-	if err := viper.MergeInConfig(); err != nil {
-		return fmt.Errorf("an unknown error occurred merging configuration sources: %s", err)
+	if v.GetBool("developer.dumpconfig") {
+		fmt.Printf("Dumping final merged configuration from Viper: \n\n%s\n\n", v.AllSettings())
 	}
 
+	// Get everything out of our temporary Viper store and unmarshall it into a new AppConfig.
 	var newConfig AppConfig
-	if err := viper.Unmarshal(&newConfig); err != nil {
+	if err := v.Unmarshal(&newConfig); err != nil {
 		return fmt.Errorf("unable to parse configuration: %s \n\n(is the configuration valid?)", err)
 	}
 
@@ -234,12 +284,12 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 	return nil
 }
 
-func parseSubscribersFromFlags(subscriberFlags []string) string {
-	var subscribers []string
-	for _, s := range subscriberFlags {
+func parseTOMLSubscribersFromString(subscribers string) string {
+	var tomlSubscribers []string
+	for _, s := range strings.Split(subscribers, ";") {
 		subscriber := strings.ReplaceAll(s, ",", "\n")
-		subscribers = append(subscribers, "[[subscriber]]\n"+subscriber)
+		tomlSubscribers = append(tomlSubscribers, "[[subscriber]]\n"+subscriber)
 	}
 
-	return strings.Join(subscribers, "\n")
+	return strings.Join(tomlSubscribers, "\n")
 }

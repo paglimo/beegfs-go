@@ -7,17 +7,20 @@ import (
 // BaseConfig defines the configuration options that could be set on any type of subscriber.
 // It embeds each type of subscriber so they can be initialized based on the selected "Type".
 type BaseConfig struct {
-	Type       string `toml:"type"`
-	ID         int    `toml:"id"`
-	Name       string `toml:"name"`
-	GrpcConfig        // Configuration options for type gRPC.
+	Type string `mapstructure:"type"`
+	ID   int    `mapstructure:"id"`
+	Name string `mapstructure:"name"`
+	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
+	// Viper to squash the fields of the embedded struct into BaseConfig.
+	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
+	GrpcConfig `mapstructure:",squash"` // Configuration options for type gRPC.
 }
 
 // GrpcConfig defines configuration options that only apply to gRPC subscribers.
 type GrpcConfig struct {
-	Hostname      string `toml:"hostname"`
-	Port          string `toml:"port"`
-	AllowInsecure bool   `toml:"allow_insecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
+	Hostname      string `mapstructure:"hostname"`
+	Port          string `mapstructure:"port"`
+	AllowInsecure bool   `mapstructure:"allowInsecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
 }
 
 // NewSubscribersFromConfig is the standard way for initializing one or more subscribers.

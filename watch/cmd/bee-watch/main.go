@@ -25,7 +25,7 @@ import (
 
 func main() {
 
-	pflag.String("cfgFile", "/etc/beegfs/bee-watch.conf", "The path to the BeeWatch configuration file.")
+	pflag.String("cfgFile", "", "The path to the BeeWatch configuration file.")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
 	pflag.String("log.file", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
 	pflag.Bool("log.debug", false, "Enable logging at the debug level (will impact performance).")
@@ -34,7 +34,11 @@ func main() {
 	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
 	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
 	pflag.Int("metadata.eventPollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
-	pflag.StringArray("subscribers", nil, "Specify one or more subscribers in the format: --subscriber=\"id=1,name='subscriber1',type='grpc'\" --subscriber=\"id=2,name='subscriber2',type='grpc'\"")
+	pflag.String("subscribers", "", `Specify one or more subscribers separated by semicolons.
+	The full list of subscribers should be enclosed in "double quotes".
+	The parameters for each subscriber should be specified as key='value'.
+	Include all required/desired parameters for the particular subscriber type you want to configure.
+	Example: --subscribers="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"`)
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
@@ -58,7 +62,7 @@ func main() {
 	}
 
 	if initialCfg.Developer.DumpConfig {
-		fmt.Println("Dumping configuration and exiting...")
+		fmt.Printf("Dumping AppConfig and exiting...\n\n")
 		fmt.Printf("%+v\n", initialCfg)
 		os.Exit(0)
 	}
