@@ -34,11 +34,11 @@ type Handler struct {
 	log                     *zap.Logger
 	metaEventBuffer         *types.MultiCursorRingBuffer
 	metaBufferPollFrequency int
-	*subscriber.BaseSubscriber
+	*subscriber.Subscriber
 }
 
-func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) *Handler {
-	log = log.With(zap.Int("subscriberID", subscriber.Id), zap.String("subscriberName", subscriber.Name))
+func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) *Handler {
+	log = log.With(zap.Int("subscriberID", subscriber.ID), zap.String("subscriberName", subscriber.Name))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -48,7 +48,7 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber, metaEven
 		log:                     log,
 		metaEventBuffer:         metaEventBuffer,
 		metaBufferPollFrequency: metaBufferPollFrequency,
-		BaseSubscriber:          subscriber,
+		Subscriber:              subscriber,
 	}
 }
 
@@ -57,7 +57,7 @@ func newHandler(log *zap.Logger, subscriber *subscriber.BaseSubscriber, metaEven
 // It is the only place that should update the state of the subscriber.
 // TODO: Consider if we should add a mutex to handle to ensure only one instances can run at a time.
 func (h *Handler) Handle(wg *sync.WaitGroup) {
-
+	wg.Add(1)
 	defer wg.Done()
 
 	for {
@@ -180,7 +180,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 		if ok {
 			// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
 			h.log.Info("subscriber acknowledged last event received before disconnect", zap.Any("sequenceID", response.CompletedSeq))
-			h.metaEventBuffer.AckEvent(h.Id, response.CompletedSeq)
+			h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
 		}
 		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
 	case <-time.After(waitForAckAfterConnect * time.Second):
@@ -189,7 +189,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 
 	// Move the send cursor back to the last acknowledged event.
 	// This may result in duplicate events being sent if the subscriber didn't tell us the last event they received.
-	h.metaEventBuffer.ResetSendCursor(h.Id)
+	h.metaEventBuffer.ResetSendCursor(h.ID)
 
 	go func() {
 		defer close(done)
@@ -206,7 +206,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 					return
 				}
 				//h.log.Debug("received response from subscriber", zap.Any("response", response))
-				h.metaEventBuffer.AckEvent(h.Id, response.CompletedSeq)
+				h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
 
 				// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
 				// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
@@ -246,7 +246,7 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 					// We could alternatively use a conditional variable (sync.Cond) instead of polling.
 					// At this time there doesn't appear to be a significant drawback to this approach.
 					// Mainly because starting to send events in not latency sensitive.
-					event, err := h.metaEventBuffer.GetEvent(h.Id)
+					event, err := h.metaEventBuffer.GetEvent(h.ID)
 					if err != nil {
 						h.log.Error("unable to get the next event in the local buffer", zap.Error(err))
 						break sendEvents

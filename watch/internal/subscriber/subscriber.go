@@ -12,9 +12,9 @@ import (
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 )
 
-// Subscriber defines the methods all subscribers (such as gRPC) are expected to implement.
+// This interface defines the methods all subscriber types (such as gRPC) are expected to implement.
 // These methods are used by subscriber handlers to manage the connection lifecycle.
-type Subscriber interface {
+type Interface interface {
 	// Connect establishes a new connection to a subscriber.
 	// If it returns an error retry should be true if there was a transient issue that can be retried (i.e., subscriber not ready).
 	// Otherwise retry should be false if there is a fatal error connecting to the subscriber (i.e., subscriber is misconfigured).
@@ -64,20 +64,19 @@ func (s *State) SetState(newState state) {
 	s.state = newState
 }
 
-// BaseSubscriber contains common fields used by all subscribers.
-// It should be embedded in all concrete subscriber implementations.
-type BaseSubscriber struct {
-	Id   int
-	Name string
+// Subscriber encapsulates the configuration and functionality implemented by
+// all subscribers. It uses an Interface to abstract implementation details for
+// a particular subscriber type to allow a common handler.
+type Subscriber struct {
+	Config
 	State
-	Subscriber
+	Interface
 }
 
-// ComparableBaseSubscriber is a "comparable" view of the BaseSubscriber struct used for testing.
-// When BaseSubscriber is updated it should also be updated with any fields that are a comparable type.
-// Notably the Subscriber field is omitted and each Subscriber should implement its own comparable type.
-type ComparableBaseSubscriber struct {
-	Id   int
-	Name string
+// ComparableSubscriber is a "comparable" view of the Subscriber struct used for testing.
+// When Subscriber is updated it should also be updated with any fields that are a comparable type.
+// Notably the interface is omitted and each Subscriber should implement its own comparable type.
+type ComparableSubscriber struct {
+	Config
 	State
 }

@@ -23,7 +23,7 @@ type AppConfig struct {
 		EventBufferGCFrequency int    `mapstructure:"eventBufferGCFrequency"`
 		EventPollFrequency     int    `mapstructure:"eventPollFrequency"`
 	}
-	Subscribers []subscriber.BaseConfig `mapstructure:"subscriber"`
+	Subscribers []subscriber.Config `mapstructure:"subscriber"`
 	Developer   struct {
 		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
 		DumpConfig        bool `mapstructure:"dumpConfig"`

@@ -5,11 +5,11 @@ import (
 	"reflect"
 )
 
-// ComparableSubscriber is a type constraint.
+// ComparableSubscriberT is a type constraint.
 // It declares all types that can be returned by newComparableSubscriber().
 // If additional subscriber types are added, they should be included here.
-type ComparableSubscriber interface {
-	ComparableBaseSubscriber | ComparableGRPCSubscriber
+type ComparableSubscriberT interface {
+	ComparableSubscriber | ComparableGRPCSubscriber
 }
 
 // newComparableSubscriber is to be used ONLY for testing (notably TestNewSubscribersFromJson).
@@ -17,7 +17,7 @@ type ComparableSubscriber interface {
 // * copyFromSubscriber should be an initialized struct representing the actual subscriber type (for example `&BaseSubscriber{}`).
 // * toComparableType should be the desired comparable subscriber type to return (for example `&ComparableBaseSubscriber{}`).
 // It returns an initialized toComparableType based on the provided copyFromSubscriber.
-func newComparableSubscriber[T ComparableSubscriber](copyFromSubscriber Subscriber, toComparableType *T) *T {
+func newComparableSubscriber[T ComparableSubscriberT](copyFromSubscriber Interface, toComparableType *T) *T {
 
 	src := reflect.ValueOf(copyFromSubscriber).Elem()
 	dest := reflect.ValueOf(toComparableType).Elem()

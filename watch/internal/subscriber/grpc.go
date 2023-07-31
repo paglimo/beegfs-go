@@ -24,7 +24,7 @@ const (
 // subscribers should acknowledge the sequence ID of the last received event.
 // Otherwise duplicate events may be retransmitted to avoid dropped events.
 type GRPCSubscriber struct {
-	GrpcConfig
+	*GrpcConfig
 	conn       *grpc.ClientConn
 	client     pb.SubscriberClient
 	stream     pb.Subscriber_ReceiveEventsClient
@@ -33,27 +33,21 @@ type GRPCSubscriber struct {
 	recvMutex *sync.Mutex
 }
 
-var _ Subscriber = &GRPCSubscriber{} // Verify type satisfies interface.
+var _ Interface = &GRPCSubscriber{} // Verify type satisfies interface.
 
-func newGRPCSubscriber(hostname string, port string, allowInsecure bool) *GRPCSubscriber {
+func newGRPCSubscriber(config *GrpcConfig) *GRPCSubscriber {
 	var mutex sync.Mutex
 
 	return &GRPCSubscriber{
-		GrpcConfig: GrpcConfig{
-			Hostname:      hostname,
-			Port:          port,
-			AllowInsecure: allowInsecure,
-		},
-		recvMutex: &mutex,
+		GrpcConfig: config,
+		recvMutex:  &mutex,
 	}
 }
 
 // This is a "comparable" view of the GRPCSubscriber struct used for testing.
 // When GRPCSubscriber is updated it should also be updated with any fields that are a comparable type.
 type ComparableGRPCSubscriber struct {
-	Hostname      string
-	Port          string
-	AllowInsecure bool
+	GrpcConfig
 }
 
 func (s *GRPCSubscriber) Connect() (retry bool, err error) {

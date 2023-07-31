@@ -66,8 +66,7 @@ func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
 
 	for _, h := range sm.handlers {
 		h.Stop()
-		sm.metaEventBuffer.RemoveCursor(h.Id)
-		sm.wg.Done()
+		sm.metaEventBuffer.RemoveCursor(h.ID)
 	}
 
 	newSubscribers, err := subscriber.NewSubscribersFromConfig(newConfig.Subscribers)
@@ -78,12 +77,11 @@ func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
 		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, newConfig.Metadata.EventPollFrequency))
-		sm.metaEventBuffer.AddCursor(s.Id) // TODO: We may want to do this as part of newHandler().
+		sm.metaEventBuffer.AddCursor(s.ID) // TODO: We may want to do this as part of newHandler().
 	}
 
 	sm.handlers = newHandlers
 	for _, h := range sm.handlers {
-		sm.wg.Add(1)
 		go h.Handle(sm.wg)
 	}
 

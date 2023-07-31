@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var testConfig = []BaseConfig{
+var testConfig = []Config{
 	{
 		Type: "grpc",
 		ID:   1,
@@ -40,28 +40,44 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 	// is compared to the parsed output from the above testConfig.
 	// In other words the Nth entry in testConfig should line up with the Nth entry below.
 
-	expectedSubscribers := []*BaseSubscriber{
+	expectedSubscribers := []*Subscriber{
 		{
-			Id:   1,
-			Name: "bee-remote",
-			State: State{
-				state: DISCONNECTED,
-			},
-			Subscriber: &GRPCSubscriber{
+			Config: Config{
+				ID:   1,
+				Name: "bee-remote",
+				Type: "grpc",
 				GrpcConfig: GrpcConfig{
 					Hostname:      "br-1",
 					Port:          "1234",
 					AllowInsecure: true,
 				},
 			},
-		}, {
-			Id:   2,
-			Name: "beegfs-mon",
 			State: State{
 				state: DISCONNECTED,
 			},
-			Subscriber: &GRPCSubscriber{
+			Interface: &GRPCSubscriber{
+				GrpcConfig: &GrpcConfig{
+					Hostname:      "br-1",
+					Port:          "1234",
+					AllowInsecure: true,
+				},
+			},
+		}, {
+			Config: Config{
+				ID:   2,
+				Name: "beegfs-mon",
+				Type: "grpc",
 				GrpcConfig: GrpcConfig{
+					Hostname:      "bm-1",
+					Port:          "512312",
+					AllowInsecure: false,
+				},
+			},
+			State: State{
+				state: DISCONNECTED,
+			},
+			Interface: &GRPCSubscriber{
+				GrpcConfig: &GrpcConfig{
 					Hostname:      "bm-1",
 					Port:          "512312",
 					AllowInsecure: false,
@@ -74,14 +90,14 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 
 	for i, baseSubscriber := range configuredSubscribers {
 
-		assert.Equal(t, newComparableSubscriber(expectedSubscribers[i], &ComparableBaseSubscriber{}), newComparableSubscriber(baseSubscriber, &ComparableBaseSubscriber{}))
+		assert.Equal(t, newComparableSubscriber(expectedSubscribers[i], &ComparableSubscriber{}), newComparableSubscriber(baseSubscriber, &ComparableSubscriber{}))
 
 		// If support is added for new subscriber types they will need to be added to the type switch.
 		// They will also need to be added to the ComparableSubscriber type constraint before using newComparableSubscriber().
-		switch baseSubscriber.Subscriber.(type) {
+		switch baseSubscriber.Interface.(type) {
 		case *GRPCSubscriber:
-			actualGRPCSubscriber := baseSubscriber.Subscriber.(*GRPCSubscriber)
-			expectedGRPCSubscriber, ok := expectedSubscribers[i].Subscriber.(*GRPCSubscriber)
+			actualGRPCSubscriber := baseSubscriber.Interface.(*GRPCSubscriber)
+			expectedGRPCSubscriber, ok := expectedSubscribers[i].Interface.(*GRPCSubscriber)
 			assert.True(t, ok) // If s is the wrong subscriber type, then the expected subscriber type won't match.
 			// We use the newComparableXSubscriber() functions provided alongside each subscriber implementation
 			// to get a comparable view of the expected and configured subscriber.
