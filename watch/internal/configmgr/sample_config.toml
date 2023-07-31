@@ -12,20 +12,20 @@ eventBufferGCFrequency = 100000
 eventPollFrequency = 1
 
 [[subscriber]] # Subscribers may be updated after the application has started.
-type = 'grpc'
 id = 1
 name = 'test-subscriber'
-hostname = 'localhost'
-port = '50052'
-allowInsecure = true
+type = 'grpc'
+grpcHostname = 'localhost'
+grpcPort = '50052'
+grpcAllowInsecure = true
 
 [[subscriber]]
-type = 'grpc'
 id = 2
-name = 'test2'
-hostname = 'host2'
-port = '2'
-allowInsecure = false
+name = 'test-subscriber2'
+type = 'grpc'
+grpcHostname = 'localhost'
+grpcPort = '50053'
+grpcAllowInsecure = true
 
 [developer] # Developer configuration cannot be dynamically updated after the application has started.
 perfProfilingPort = 0

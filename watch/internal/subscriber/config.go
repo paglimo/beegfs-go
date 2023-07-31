@@ -13,14 +13,16 @@ type BaseConfig struct {
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into BaseConfig.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
+	// Across all embedded structs, the field tags must be unique for proper unmarshalling.
+	// The standard is to prefix field tags with the subscriber type.
 	GrpcConfig `mapstructure:",squash"` // Configuration options for type gRPC.
 }
 
 // GrpcConfig defines configuration options that only apply to gRPC subscribers.
 type GrpcConfig struct {
-	Hostname      string `mapstructure:"hostname"`
-	Port          string `mapstructure:"port"`
-	AllowInsecure bool   `mapstructure:"allowInsecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
+	Hostname      string `mapstructure:"grpcHostname"`
+	Port          string `mapstructure:"grpcPort"`
+	AllowInsecure bool   `mapstructure:"grpcAllowInsecure"` // If this is unset it will default to "false", ensuring insecure connections are not allowed by default.
 }
 
 // NewSubscribersFromConfig is the standard way for initializing one or more subscribers.
