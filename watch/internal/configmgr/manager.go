@@ -149,8 +149,11 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 
 // UpdateConfiguration combines the following configuration sources. The
 // following precedence order is respected (1) command line flags, (2)
-// environmental variables, (3) a configuration file, (4) default values
-// (specified as part of the pflag definitions in main.go).
+// environmental variables, (3) a configuration file, (4) default values.
+// For all configuration except for anything provided as a slice (notably
+// subscribers), defaults are specified as part of the pflag definitions
+// in main.go. For subscribers, defaults are defined as part of the
+// subscriber implementation in the `new<TYPE>subscriber()` method.
 //
 // Before applying the configuration static validation checks will be performed.
 // If any of its validation checks fail, the configuration will not be updated,

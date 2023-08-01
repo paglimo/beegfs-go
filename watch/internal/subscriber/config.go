@@ -25,7 +25,8 @@ type GrpcConfig struct {
 	Port     string `mapstructure:"grpcPort"`
 	// If AllowInsecure is unset it will default to "false", ensuring insecure
 	// connections are not allowed by default.
-	AllowInsecure bool `mapstructure:"grpcAllowInsecure"`
+	AllowInsecure     bool `mapstructure:"grpcAllowInsecure"`
+	DisconnectTimeout int  `mapstructure:"grpcDisconnectTimeout"`
 }
 
 // NewSubscribersFromConfig is the standard way for initializing one or more subscribers.

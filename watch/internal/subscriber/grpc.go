@@ -13,11 +13,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const (
-	// Time we'll wait after closing our end of the connection for the subscriber to disconnect.
-	disconnectTimeout = 30 // TODO: Make the disconnect timeout configurable.
-)
-
 // A GRPCSubscriber implements a gRPC client that sends messages to a subscriber over gRPC.
 // The subscriber must implement EventSubscriberServer defined by the BeeWatch API.
 // As gRPC provides ordering but not deliver guarantees, when first connecting
@@ -37,6 +32,11 @@ var _ Interface = &GRPCSubscriber{} // Verify type satisfies interface.
 
 func newGRPCSubscriber(config GrpcConfig) *GRPCSubscriber {
 	var mutex sync.Mutex
+
+	// Time we'll wait after closing our end of the connection for the subscriber to disconnect.
+	if config.DisconnectTimeout == 0 {
+		config.DisconnectTimeout = 30
+	}
 
 	return &GRPCSubscriber{
 		GrpcConfig: config,
@@ -174,10 +174,10 @@ func (s *GRPCSubscriber) Disconnect() error {
 				// Since subscribers don't have a logger anymore, if we need to log this for debugging figure another way.
 				// s.log.Info("received response from subscriber", zap.Any("response", response))
 				continue responseLoop
-			case <-time.After(time.Duration(disconnectTimeout) * time.Second):
+			case <-time.After(time.Duration(s.DisconnectTimeout) * time.Second):
 				// This indicates the subscriber didn't close the stream we're receiving responses from them in time.
 				// Maybe they're hung or the connection is broken.
-				err := fmt.Errorf("subscriber failed to disconnect within the %ds timeout", disconnectTimeout)
+				err := fmt.Errorf("subscriber failed to disconnect within the %ds timeout", s.DisconnectTimeout)
 				multiErr.Errors = append(multiErr.Errors, err)
 				break responseLoop
 			}

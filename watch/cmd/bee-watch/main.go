@@ -24,8 +24,11 @@ import (
 
 func main() {
 
-	// All application configuration (AppConfig) can be set using flags.
-	// The default values specified here will be used as configuration defaults.
+	// All application configuration (AppConfig) can be set using flags. The
+	// default values specified here will be used as configuration defaults.
+	// Note defaults for configuration specified using a slice is not set here.
+	// Notably subscriber defaults are handled as part of initializing a
+	// particular subscriber type.
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables).")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
 	pflag.String("log.file", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
@@ -78,6 +81,10 @@ Using environment variables:
 	if initialCfg.Developer.DumpConfig {
 		fmt.Printf("Dumping AppConfig and exiting...\n\n")
 		fmt.Printf("%+v\n", initialCfg)
+		fmt.Println(`
+		WARNING: Configuration listed here for individual subscribers may not reflect their final configuration.
+		Individual subscriber types may define their own custom defaults, or automatically override invalid user configuration.
+		`)
 		os.Exit(0)
 	}
 
