@@ -55,52 +55,41 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 		return fmt.Errorf("invalid configuration provided (expected both handler and subscriber configuration)")
 	}
 
-	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
-	// Consider if we want to do this better.
-	// Fow now this is a fairly rudimentary way of updating subscribers while I flush out the rest of the implementation.
-	// We'll just stop all subscribers, make the updates, then restart all subscribers.
-	// Maybe this is "good enough", but we could be more deliberate in how we move from the old->new config.
-	// Current issues include:
-	// * We will always delete the metaEventBuffer cursors which will reset what events were ack'd/sent likely causing dropped events even if we just update a subscriber.
-	// * We will always overwrite the last state of the subscriber, for example if it was unable to disconnect and the state is disconnecting.
-	// It is possible a configuration change is needed to correct the state of the subscriber.
-	//
-	// For example we could do something like:
-	// * Pause Run() before making any changes.
-	// * Evaluate how to get from the oldConfig to the NewConfig:
-	//   * If a subscriber exists in the old config but not the new one, stop it.
-	//   * If a subscriber doesn't exist in the old config but does in the new config start it after adding it.
-	// Note: There is no need to restart changed subscribers as they will automatically pickup
-	// the new configuration (either when a new event comes, or they try to resend an existing event).
-	//
-	// PS: Be careful not to over engineer the final approach.
-
+	// Make sure the new subscriber configuration is valid before we start making changes.
 	newSubscribers, err := subscriber.NewSubscribersFromConfig(subscribersConfig)
 	if err != nil {
 		return err
 	}
 
-	// Don't stop old subscribers until we're sure the new configuration is valid:
-	for _, h := range sm.handlers {
-		h.Stop()
+	toAdd, toRemove, toVerify := evaluateAddedAndRemovedSubscribers(sm.handlers, newSubscribers)
+	for i, h := range sm.handlers {
+		if toRemove[h.ID] {
+			h.Stop()
+			h.mu.Lock() // Lock the handler so we're sure its not still in use before deleting it.
+			// We only want to remove cursors when subscribers are removed.
+			// This ensures we don't drop events while updating subscriber config.
+			sm.metaEventBuffer.RemoveCursor(h.ID)
+			// Remove the handler.
+			sm.handlers = append(sm.handlers[:i], sm.handlers[i+1:]...)
+		} else {
+			// Check if it needs to be modified.
+			if h.Subscriber.Config != toVerify[h.ID].Config {
+				h.Stop()
+				h.mu.Lock() // Lock the handler so we're sure its not still in use before swapping it out.
+				// Swap out the handler. Note is important we don't just swap out the subscriber.
+				// Otherwise we'd have to worry about resetting the context and other state.
+				h = newHandler(sm.log, toVerify[h.ID], sm.metaEventBuffer, handlerConfig)
+				go h.Handle(sm.wg)
+			} else {
+				// Always update the handler config.
+				h.config = handlerConfig
+			}
+		}
 	}
 
-	// We'll always recreate all handlers to ensure the configuration is updated.
-	// However we only want to remove cursors when subscribers are removed.
-	// This ensures we don't drop events while updating subscriber config.
-	// We don't worry about adding cursors here because that happens in the handler.
-	_, toRemove := evaluateAddedAndRemovedSubscribers(sm.handlers, subscribersConfig)
-	for _, id := range toRemove {
-		sm.metaEventBuffer.RemoveCursor(id)
-	}
-
-	var newHandlers []*Handler
-	for _, s := range newSubscribers {
-		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, handlerConfig))
-	}
-
-	sm.handlers = newHandlers
-	for _, h := range sm.handlers {
+	for _, v := range toAdd {
+		h := newHandler(sm.log, v, sm.metaEventBuffer, handlerConfig)
+		sm.handlers = append(sm.handlers, h)
 		go h.Handle(sm.wg)
 	}
 
@@ -110,7 +99,13 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 // evaluateAddedAndRemovedSubscribers takes a slice of current subscriber
 // handlers and a slice of new subscriber configuration. It returns a slice of
 // IDs that need new handlers, and a slice of IDs that no longer need handlers.
-func evaluateAddedAndRemovedSubscribers(current []*Handler, new []subscriber.Config) (toAdd []int, toRemove []int) {
+// It also returns a slice of IDs that weren't added or removed that should be
+// checked for configuration updates.
+func evaluateAddedAndRemovedSubscribers(current []*Handler, new []*subscriber.Subscriber) (toAdd map[int]*subscriber.Subscriber, toRemove map[int]bool, toVerify map[int]*subscriber.Subscriber) {
+
+	toAdd = make(map[int]*subscriber.Subscriber)
+	toRemove = make(map[int]bool)
+	toVerify = make(map[int]*subscriber.Subscriber)
 
 	currentMap := make(map[int]bool)
 	newMap := make(map[int]bool)
@@ -121,18 +116,20 @@ func evaluateAddedAndRemovedSubscribers(current []*Handler, new []subscriber.Con
 
 	for _, n := range new {
 		if !currentMap[n.ID] {
-			toAdd = append(toAdd, n.ID)
+			toAdd[n.ID] = n
+		} else {
+			toVerify[n.ID] = n
 		}
 		newMap[n.ID] = true
 	}
 
 	for _, c := range current {
 		if !newMap[c.ID] {
-			toRemove = append(toRemove, c.ID)
+			toRemove[c.ID] = true
 		}
 	}
 
-	return toAdd, toRemove
+	return toAdd, toRemove, toVerify
 }
 
 // Manage handles shutting down all subscribers when the app is shutting down.

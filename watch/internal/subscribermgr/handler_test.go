@@ -50,9 +50,25 @@ func TestEvaluateChangedSubscribers(t *testing.T) {
 			},
 		},
 	}
-	newSubscribers := []subscriber.Config{{ID: 1}, {ID: 3}}
+	// newSubscribers := []*subscriber.Subscriber{{ID: 1}, {ID: 3}}
+	newSubscribers := []*subscriber.Subscriber{
+		{
+			Config: subscriber.Config{
+				ID: 1,
+			},
+		},
+		{
+			Config: subscriber.Config{
+				ID: 3,
+			},
+		},
+	}
 
-	toAdd, toRemove := evaluateAddedAndRemovedSubscribers(currentHandlers, newSubscribers)
-	assert.Equal(t, []int{3}, toAdd)
-	assert.Equal(t, []int{2}, toRemove)
+	toAdd, toRemove, toVerify := evaluateAddedAndRemovedSubscribers(currentHandlers, newSubscribers)
+	assert.Contains(t, toAdd, 3)
+	assert.Contains(t, toRemove, 2)
+	assert.Contains(t, toVerify, 1)
+	assert.Len(t, toAdd, 1)
+	assert.Len(t, toRemove, 1)
+	assert.Len(t, toVerify, 1)
 }

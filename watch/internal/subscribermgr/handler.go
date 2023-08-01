@@ -24,6 +24,11 @@ type Handler struct {
 	metaEventBuffer *types.MultiCursorRingBuffer
 	config          HandlerConfig
 	*subscriber.Subscriber
+	// The mutex serves two purposes: (1) guarantee only one handler runs at a
+	// time. (2) guarantee when dynamic configuration updates happen the old
+	// version has finished shutting down before we swap out the handler or
+	// delete it.
+	mu sync.Mutex
 }
 
 type HandlerConfig struct {
@@ -53,10 +58,11 @@ func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuf
 // Handles the connection with a particular Subscriber.
 // It determines the next state a subscriber should transition to in response to external and internal factors.
 // It is the only place that should update the state of the subscriber.
-// TODO: Consider if we should add a mutex to handle to ensure only one instances can run at a time.
 func (h *Handler) Handle(wg *sync.WaitGroup) {
 	wg.Add(1)
 	defer wg.Done()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	for {
 		select {
