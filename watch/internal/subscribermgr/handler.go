@@ -37,6 +37,9 @@ func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuf
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Add cursor is idempotent so always ensure there is a cursor for this subscriber.
+	metaEventBuffer.AddCursor(subscriber.ID)
+
 	return &Handler{
 		ctx:             ctx,
 		cancel:          cancel,

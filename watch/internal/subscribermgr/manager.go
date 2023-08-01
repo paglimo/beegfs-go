@@ -75,20 +75,28 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 	//
 	// PS: Be careful not to over engineer the final approach.
 
-	for _, h := range sm.handlers {
-		h.Stop()
-		sm.metaEventBuffer.RemoveCursor(h.ID)
-	}
-
 	newSubscribers, err := subscriber.NewSubscribersFromConfig(subscribersConfig)
 	if err != nil {
 		return err
 	}
 
+	// Don't stop old subscribers until we're sure the new configuration is valid:
+	for _, h := range sm.handlers {
+		h.Stop()
+	}
+
+	// We'll always recreate all handlers to ensure the configuration is updated.
+	// However we only want to remove cursors when subscribers are removed.
+	// This ensures we don't drop events while updating subscriber config.
+	// We don't worry about adding cursors here because that happens in the handler.
+	_, toRemove := evaluateAddedAndRemovedSubscribers(sm.handlers, subscribersConfig)
+	for _, id := range toRemove {
+		sm.metaEventBuffer.RemoveCursor(id)
+	}
+
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
 		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, handlerConfig))
-		sm.metaEventBuffer.AddCursor(s.ID) // TODO: We may want to do this as part of newHandler().
 	}
 
 	sm.handlers = newHandlers
@@ -97,6 +105,34 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 	}
 
 	return nil
+}
+
+// evaluateAddedAndRemovedSubscribers takes a slice of current subscriber
+// handlers and a slice of new subscriber configuration. It returns a slice of
+// IDs that need new handlers, and a slice of IDs that no longer need handlers.
+func evaluateAddedAndRemovedSubscribers(current []*Handler, new []subscriber.Config) (toAdd []int, toRemove []int) {
+
+	currentMap := make(map[int]bool)
+	newMap := make(map[int]bool)
+
+	for _, c := range current {
+		currentMap[c.ID] = true
+	}
+
+	for _, n := range new {
+		if !currentMap[n.ID] {
+			toAdd = append(toAdd, n.ID)
+		}
+		newMap[n.ID] = true
+	}
+
+	for _, c := range current {
+		if !newMap[c.ID] {
+			toRemove = append(toRemove, c.ID)
+		}
+	}
+
+	return toAdd, toRemove
 }
 
 // Manage handles shutting down all subscribers when the app is shutting down.

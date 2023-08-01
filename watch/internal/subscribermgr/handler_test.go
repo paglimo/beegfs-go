@@ -31,3 +31,28 @@ func TestNewHandler(t *testing.T) {
 		assert.NotNil(t, handler.cancel)
 	})
 }
+
+func TestEvaluateChangedSubscribers(t *testing.T) {
+
+	currentHandlers := []*Handler{
+		{
+			Subscriber: &subscriber.Subscriber{
+				Config: subscriber.Config{
+					ID: 1,
+				},
+			},
+		},
+		{
+			Subscriber: &subscriber.Subscriber{
+				Config: subscriber.Config{
+					ID: 2,
+				},
+			},
+		},
+	}
+	newSubscribers := []subscriber.Config{{ID: 1}, {ID: 3}}
+
+	toAdd, toRemove := evaluateAddedAndRemovedSubscribers(currentHandlers, newSubscribers)
+	assert.Equal(t, []int{3}, toAdd)
+	assert.Equal(t, []int{2}, toRemove)
+}
