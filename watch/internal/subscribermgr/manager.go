@@ -9,11 +9,11 @@ package subscribermgr
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"reflect"
 	"sync"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
@@ -37,12 +37,23 @@ func New(log *zap.Logger, metaEventBuffer *types.MultiCursorRingBuffer, wg *sync
 	}
 }
 
-// UpdateConfiguration take a slice containing the configuration for one or more subscribers.
-// It also takes a pointer to the metadata event buffer and how frequently handlers should poll this buffer for new events to send to subscribers.
-// This is the external mechanism external functions should call to dynamically add/update/remove subscribers.
-// This configuration should contain all subscribers including any changes to existing ones.
-// Any subscribers found in the old configuration but not in the new will be removed.
-func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
+// UpdateConfiguration is intended to be used with ConfigMgr. It accepts a
+// variadic parameter that must contain the desired handler configuration and a
+// slice of subscribers to configure. This configuration should contain all
+// subscribers including any changes to existing ones. Any subscribers found in
+// the old configuration but not in the new will be removed.
+func (sm *Manager) UpdateConfiguration(configs ...any) error {
+
+	if len(configs) != 2 {
+		return fmt.Errorf("invalid configuration provided (expected only handler and subscriber configuration)")
+	}
+
+	handlerConfig, ok1 := configs[0].(HandlerConfig)
+	subscribersConfig, ok2 := configs[1].([]subscriber.Config)
+
+	if !ok1 || !ok2 {
+		return fmt.Errorf("invalid configuration provided (expected both handler and subscriber configuration)")
+	}
 
 	// TODO: https://linear.app/thinkparq/issue/BF-46/allow-configuration-updates-without-restarting-the-app
 	// Consider if we want to do this better.
@@ -69,14 +80,14 @@ func (sm *Manager) UpdateConfiguration(newConfig configmgr.AppConfig) error {
 		sm.metaEventBuffer.RemoveCursor(h.ID)
 	}
 
-	newSubscribers, err := subscriber.NewSubscribersFromConfig(newConfig.Subscribers)
+	newSubscribers, err := subscriber.NewSubscribersFromConfig(subscribersConfig)
 	if err != nil {
 		return err
 	}
 
 	var newHandlers []*Handler
 	for _, s := range newSubscribers {
-		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, newConfig.Metadata.EventPollFrequency))
+		newHandlers = append(newHandlers, newHandler(sm.log, s, sm.metaEventBuffer, handlerConfig))
 		sm.metaEventBuffer.AddCursor(s.ID) // TODO: We may want to do this as part of newHandler().
 	}
 

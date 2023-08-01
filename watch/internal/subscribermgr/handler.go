@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
@@ -23,11 +22,17 @@ type Handler struct {
 	cancel          context.CancelFunc
 	log             *zap.Logger
 	metaEventBuffer *types.MultiCursorRingBuffer
-	config          configmgr.AppConfig
+	config          HandlerConfig
 	*subscriber.Subscriber
 }
 
-func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, config configmgr.AppConfig) *Handler {
+type HandlerConfig struct {
+	MaxReconnectBackOff            int `mapstructure:"maxReconnectBackOff"`
+	MaxWaitForResponseAfterConnect int `mapstructure:"maxWaitForResponseAfterConnect"`
+	PollFrequency                  int `mapstructure:"pollFrequency"`
+}
+
+func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, config HandlerConfig) *Handler {
 	log = log.With(zap.Int("subscriberID", subscriber.ID), zap.String("subscriberName", subscriber.Name))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,8 +148,8 @@ func (h *Handler) connectLoop() bool {
 
 				// We'll retry to connect with an exponential back off. We'll add some jitter to avoid load spikes.
 				reconnectBackOff *= 2 + rand.Float64()
-				if reconnectBackOff > float64(h.config.Handler.MaxReconnectBackOff) {
-					reconnectBackOff = float64(h.config.Handler.MaxReconnectBackOff) - rand.Float64()
+				if reconnectBackOff > float64(h.config.MaxReconnectBackOff) {
+					reconnectBackOff = float64(h.config.MaxReconnectBackOff) - rand.Float64()
 				}
 
 				h.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
@@ -173,7 +178,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 			h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
 		}
 		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
-	case <-time.After(time.Duration(h.config.Handler.MaxWaitForResponseAfterConnect) * time.Second):
+	case <-time.After(time.Duration(h.config.MaxWaitForResponseAfterConnect) * time.Second):
 		h.log.Info("subscriber did not acknowledge last event received before disconnect, resending events from the last known acknowledged event")
 	}
 
@@ -229,7 +234,7 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 			case <-ctx.Done():
 				h.log.Debug("stopping sending events because the handler is shutting down")
 				return
-			case <-time.After(time.Duration(h.config.Handler.PollFrequency) * time.Second):
+			case <-time.After(time.Duration(h.config.PollFrequency) * time.Second):
 				// Poll on a configurable period for new events to be added to the buffer.
 			sendEvents:
 				for {

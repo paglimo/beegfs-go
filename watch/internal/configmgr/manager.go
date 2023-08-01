@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -31,20 +32,6 @@ type ConfigManager struct {
 	currentConfig    *AppConfig
 	updateSignal     chan os.Signal
 	updateInProgress *sync.RWMutex
-}
-
-// Components that support dynamic configuration updates can be added as a
-// listener if they implement the ConfigListener interface.
-type ConfigListener interface {
-	// UpdateConfiguration is run to provide the latest AppConfig to a
-	// component. If the component is unable to update the configuration it
-	// should return a meaningful error to help diagnose and correct the
-	// configuration then wait for new configuration to be provided. The
-	// component SHOULD NOT rollback to the previous version of the
-	// configuration. The component SHOULD avoid data loss, for example if a bad
-	// list of subscribers was provided, don't delete all subscribers and drop
-	// events.
-	UpdateConfiguration(AppConfig) error
 }
 
 // New attempts to read the provided configFile and parse the configuration.
@@ -71,6 +58,58 @@ func New(flags *pflag.FlagSet) (*ConfigManager, AppConfig, error) {
 	signal.Notify(cfgMgr.updateSignal, syscall.SIGHUP)
 
 	return cfgMgr, *cfgMgr.currentConfig, nil
+}
+
+// Components that support dynamic configuration updates can be added as a
+// listener if they implement the ConfigListener interface AND the configuration
+// they require is specified in UpdateListeners().
+type ConfigListener interface {
+	// UpdateConfiguration is run to provide the latest AppConfig to a
+	// component. If the component is unable to update the configuration it
+	// should return a meaningful error to help diagnose and correct the
+	// configuration then wait for new configuration to be provided. The
+	// component SHOULD NOT rollback to the previous version of the
+	// configuration. The component SHOULD avoid data loss, for example if a bad
+	// list of subscribers was provided, don't delete all subscribers and drop
+	// events.
+	UpdateConfiguration(...any) error
+}
+
+// Use AddListener() to add components to ConfigManager that support dynamic
+// configuration updates AFTER they're initialized. IMPORTANT: In addition to
+// implementing the ConfigListener interface, the switch in the
+// UpdateListeners() function must be extended to indicate what configuration
+// the new component requires. Best practice is to provide each component no
+// more configuration than it actually requires. Ideally each component only
+// requires the configuration defined in its own package.
+func (cm *ConfigManager) AddListener(listener ConfigListener) {
+	cm.listeners = append(cm.listeners, listener)
+}
+
+// UpdateConfiguration updates any components whose configuration can be set
+// dynamically. If anything goes wrong the component is expected to handle the
+// issue gracefully. At the end we'll return a summary of any errors, but we
+// won't rollback the configuration.
+func (cm *ConfigManager) UpdateListeners() error {
+	var multiErr types.MultiError
+	for _, mgr := range cm.listeners {
+		var err error
+		switch v := mgr.(type) {
+		case *subscribermgr.Manager:
+			err = mgr.UpdateConfiguration(cm.currentConfig.Handler, cm.currentConfig.Subscribers)
+		default:
+			// Developers must explicitly specify the configuration each component requires.
+			err = fmt.Errorf("unknown configuration listener %s will not be updated (this indicates a bug and a report should be filed)", v)
+		}
+		if err != nil {
+			multiErr.Errors = append(multiErr.Errors, err)
+		}
+	}
+
+	if len(multiErr.Errors) > 0 {
+		return &multiErr
+	}
+	return nil
 }
 
 // Manage listens for an update signal (SIGHUP) and attempts to dynamically
@@ -106,12 +145,6 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 			continue
 		}
 	}
-}
-
-// Any components that support dynamic configuration updates should be added as
-// listeners once they're initialized.
-func (cm *ConfigManager) AddListener(listener ConfigListener) {
-	cm.listeners = append(cm.listeners, listener)
 }
 
 // UpdateConfiguration combines the following configuration sources. The
@@ -265,23 +298,8 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		}
 	}
 
-	// Update any components whose configuration can be set dynamically.
-	// If anything goes wrong the component is expected to handle the issue gracefully.
-	// We'll just return the error, but we won't rollback the configuration.
-	var multiErr types.MultiError
-	for _, mgr := range cm.listeners {
-		err := mgr.UpdateConfiguration(newConfig)
-		if err != nil {
-			multiErr.Errors = append(multiErr.Errors, err)
-		}
-	}
-
-	if len(multiErr.Errors) > 0 {
-		return &multiErr
-	}
-
 	cm.currentConfig = &newConfig
-	return nil
+	return cm.UpdateListeners()
 }
 
 func parseTOMLSubscribersFromString(subscribers string) string {

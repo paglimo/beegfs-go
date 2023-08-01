@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
+	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 )
 
@@ -17,11 +18,7 @@ type AppConfig struct {
 		Debug             bool              `mapstructure:"debug"`
 		IncomingEventRate bool              `mapstructure:"incomingEventRate"`
 	}
-	Handler struct {
-		MaxReconnectBackOff            int `mapstructure:"maxReconnectBackOff"`
-		MaxWaitForResponseAfterConnect int `mapstructure:"maxWaitForResponseAfterConnect"`
-		PollFrequency                  int `mapstructure:"pollFrequency"`
-	}
+	Handler  subscribermgr.HandlerConfig `mapstructure:"handler"` // TODO: is  `mapstructure:",squash"` required?
 	Metadata struct {
 		EventLogTarget         string `mapstructure:"eventLogTarget"`
 		EventBufferSize        int    `mapstructure:"eventBufferSize"`
