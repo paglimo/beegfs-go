@@ -20,10 +20,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-const (
-	mockDBFilename = "scratch"
-)
-
 var (
 	logFile                  = flag.String("logFile", "", "log to a file instead of stdout")
 	logDebug                 = flag.Bool("logDebug", false, "enable logging at the debug level")
@@ -31,6 +27,7 @@ var (
 	enablePProf              = flag.Int("enablePProf", 0, "specify a port where performance profiles will be made available on the localhost")
 	eventSubscriberInterface = flag.String("eventSubscriberInterface", "localhost:50052", "Where this subscriber will listen for events from BeeWatch nodes.")
 	ackFrequency             = flag.Duration("ackFrequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
+	mockDBFilename           = flag.String("mockDBFilename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
 	db                       = &MockDB{}
 )
 
@@ -221,7 +218,7 @@ func (db *MockDB) GetSeqID() uint64 {
 func (db *MockDB) Run(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	file, err := os.OpenFile(mockDBFilename, os.O_RDWR|os.O_CREATE, 0755)
+	file, err := os.OpenFile(*mockDBFilename, os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
 		db.log.Fatal("unable to open file", zap.Error(err))
@@ -250,7 +247,7 @@ func (db *MockDB) Run(wg *sync.WaitGroup) {
 			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSeq", db.lastMissedSeq))
 		}
 	} else {
-		db.log.Info("resetting sequence IDs (file not found or empty)", zap.Any("mockDBFilename", mockDBFilename))
+		db.log.Info("resetting sequence IDs (file not found or empty)", zap.Any("mockDBFilename", *mockDBFilename))
 		db.lastSeqID, db.lastDroppedSeq, db.lastMissedSeq = 0, 0, 0
 	}
 
@@ -294,7 +291,7 @@ readEvents:
 
 	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSequence", db.lastMissedSeq))
 
-	file, err = os.OpenFile(mockDBFilename, os.O_RDWR|os.O_TRUNC, 0755)
+	file, err = os.OpenFile(*mockDBFilename, os.O_RDWR|os.O_TRUNC, 0755)
 	if err != nil {
 		db.log.Error("unable to open file to write out sequence ID", zap.Error(err))
 	}
