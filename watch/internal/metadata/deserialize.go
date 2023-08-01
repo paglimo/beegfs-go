@@ -1,4 +1,4 @@
-package eventlog
+package metadata
 
 import (
 	"encoding/binary"

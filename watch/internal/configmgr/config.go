@@ -4,23 +4,20 @@ import (
 	"fmt"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/logger"
+	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 )
 
 // AppConfig defines all configuration supported by all application components.
-// Note when updating/refactoring AppConfig these changes need to be manually
-// applied to the pflags defined in main.go.
+// IMPORTANT: When updating/refactoring AppConfig these changes need to be
+// manually applied to the pflags defined in main.go.
 type AppConfig struct {
-	Log      logger.Config               `mapstructure:"log"`
-	Handler  subscribermgr.HandlerConfig `mapstructure:"handler"`
-	Metadata struct {
-		EventLogTarget         string `mapstructure:"eventLogTarget"`
-		EventBufferSize        int    `mapstructure:"eventBufferSize"`
-		EventBufferGCFrequency int    `mapstructure:"eventBufferGCFrequency"`
-	}
-	Subscribers []subscriber.Config `mapstructure:"subscriber"`
+	Log         logger.Config               `mapstructure:"log"`
+	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
+	Metadata    metadata.Config             `mapstructure:"metadata"`
+	Subscribers []subscriber.Config         `mapstructure:"subscriber"`
 	Developer   struct {
 		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
 		DumpConfig        bool `mapstructure:"dumpConfig"`

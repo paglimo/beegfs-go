@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	envVariablePrefix = "BEEWATCH_"
+	ConfigEnvVariablePrefix = "BEEWATCH_"
 )
 
 // ConfigManager is used to determine the initial configuration from flags and/or a config file.
@@ -215,8 +215,8 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		key := pair[0]
 		val := pair[1]
 
-		if strings.HasPrefix(key, envVariablePrefix) {
-			viperKey := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, envVariablePrefix)), "_", ".")
+		if strings.HasPrefix(key, ConfigEnvVariablePrefix) {
+			viperKey := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, ConfigEnvVariablePrefix)), "_", ".")
 
 			if viperKey == "subscribers" {
 				// We do not want to allow subscribers to be specified multiple
@@ -231,7 +231,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 					return fmt.Errorf("unable to parse subscribers from environment variable: %s\nIs the value contained in \"double\" quotes?\nAre all strings within the value contained in 'single' quotes? \nExample: \"id=1,name='subscriber',type='grpc'\"", err)
 				}
 			} else if viperKey == "subscriber" {
-				return fmt.Errorf("subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", envVariablePrefix, envVariablePrefix)
+				return fmt.Errorf("subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", ConfigEnvVariablePrefix, ConfigEnvVariablePrefix)
 			} else {
 				if err := v.BindEnv(viperKey, strings.ToUpper(key)); err != nil {
 					return err

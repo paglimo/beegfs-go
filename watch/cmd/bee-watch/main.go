@@ -16,16 +16,17 @@ import (
 	"time"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
-	"git.beegfs.io/beeflex/bee-watch/internal/eventlog"
 	"git.beegfs.io/beeflex/bee-watch/internal/logger"
+	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
-	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 
 func main() {
 
-	pflag.String("cfgFile", "", "The path to the BeeWatch configuration file.")
+	// All application configuration (AppConfig) can be set using flags.
+	// The default values specified here will be used as configuration defaults.
+	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables).")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
 	pflag.String("log.file", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
 	pflag.Bool("log.debug", false, "Enable logging at the debug level (will impact performance).")
@@ -51,7 +52,18 @@ func main() {
 	pflag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 		pflag.PrintDefaults()
-		fmt.Fprint(os.Stderr, "WARNING: Options specified as flags cannot be dynamically updated after the application has started.")
+		helpText := `
+Further info:
+	Except for subscribers, configuration may be set using a mix of flags, environment variables, and values from a TOML configuration file. 
+	Configuration will be merged using the following precedence order (highest->lowest): (1) flags (2) environment variables (3) configuration file (4) defaults.
+	Subscribers can only be specified using one of these options, and when set using environment variables or a configuration file, can be updated dynamically after the application starts without by sending a hangup signal (SIGHUP).
+Using environment variables:
+	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with underscores (_).
+	Examples: 
+	export %sLOG_DEBUG=true
+	export %sSUBSCRIBERS="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"
+`
+		fmt.Fprintf(os.Stderr, helpText, configmgr.ConfigEnvVariablePrefix, configmgr.ConfigEnvVariablePrefix, configmgr.ConfigEnvVariablePrefix)
 		os.Exit(0)
 	}
 
@@ -88,11 +100,18 @@ func main() {
 	// verifying individual subscribers are disconnected:
 	var wg sync.WaitGroup
 
-	// Use a custom ring buffer to move events between the metadata socket and multiple subscribers:
-	metaEventBuffer := types.NewMultiCursorRingBuffer(initialCfg.Metadata.EventBufferSize, initialCfg.Metadata.EventBufferGCFrequency)
+	// Setup the Metadata manager:
+	metaCtx, metaCancel := context.WithCancel(context.Background())
+	defer metaCancel()
+
+	metaMgr, metaCleanup, err := metadata.New(metaCtx, logger.Logger, initialCfg.Metadata)
+	if err != nil {
+		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.EventLogTarget))
+	}
+	defer metaCleanup()
 
 	// Setup the subscriber manager:
-	sm := subscribermgr.New(logger.Logger, metaEventBuffer, &wg)
+	sm := subscribermgr.New(logger.Logger, metaMgr.EventBuffer, &wg)
 
 	// Using a different context for subscribers is important so we can coordinate shutdown.
 	// Notably we want to wait to disconnect until the buffer is empty.
@@ -102,22 +121,13 @@ func main() {
 	wg.Add(1)
 	cfgMgr.AddListener(sm)
 
-	// Create a unix domain socket and listen for incoming connections from the metadata service.
-	// The metadata service gets its own context so we can disconnect it first when shutting down.
 	// We do this last so we don't start reading events from the metadata server until we're sure everything is ready.
 	// If for some reason the subscriber configuration is bad it can be updated without restarting the app and potentially dropping events.
-	metaCtx, metaCancel := context.WithCancel(context.Background())
-	defer metaCancel()
-
-	socket, err := eventlog.New(metaCtx, logger.Logger, initialCfg.Metadata.EventLogTarget, metaEventBuffer)
-	if err != nil {
-		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.EventLogTarget))
-	}
-	go socket.ListenAndServe(&wg) // Don't move this away from the creation to ensure the socket is cleaned up.
+	go metaMgr.Manage(&wg)
 	wg.Add(1)
 
 	if initialCfg.Log.IncomingEventRate {
-		go socket.Sample() // We don't care about adding this to the wg. It'll just stop when the meta service is cancelled.
+		go metaMgr.Sample() // We don't care about adding this to the wg. It'll just stop when the meta service is cancelled.
 	}
 
 	// Start accepting dynamic configuration updates:
@@ -139,7 +149,7 @@ shutdownLoop:
 			break shutdownLoop
 		case <-time.After(1 * time.Second):
 			// Otherwise wait for subscribers to send all events and the buffer to be empty:
-			if metaEventBuffer.AllEventsAcknowledged() {
+			if metaMgr.EventBuffer.AllEventsAcknowledged() {
 				subscribersCancel()
 				break shutdownLoop
 			}
