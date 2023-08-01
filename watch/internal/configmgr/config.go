@@ -3,6 +3,7 @@ package configmgr
 import (
 	"fmt"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/logger"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
@@ -12,13 +13,8 @@ import (
 // Note when updating/refactoring AppConfig these changes need to be manually
 // applied to the pflags defined in main.go.
 type AppConfig struct {
-	Log struct {
-		Type              SupportedLogTypes `mapstructure:"type"`
-		File              string            `mapstructure:"file"`
-		Debug             bool              `mapstructure:"debug"`
-		IncomingEventRate bool              `mapstructure:"incomingEventRate"`
-	}
-	Handler  subscribermgr.HandlerConfig `mapstructure:"handler"` // TODO: is  `mapstructure:",squash"` required?
+	Log      logger.Config               `mapstructure:"log"`
+	Handler  subscribermgr.HandlerConfig `mapstructure:"handler"`
 	Metadata struct {
 		EventLogTarget         string `mapstructure:"eventLogTarget"`
 		EventBufferSize        int    `mapstructure:"eventBufferSize"`
@@ -31,36 +27,23 @@ type AppConfig struct {
 	}
 }
 
-type SupportedLogTypes string
-
-const (
-	StdOut  SupportedLogTypes = "stdout"
-	LogFile SupportedLogTypes = "logfile"
-)
-
-// All SupportedLogTypes should also be added to this slice.
-// It is used for printing help text, for example if an invalid type is specified.
-var supportedLogTypes = []SupportedLogTypes{
-	StdOut,
-	LogFile,
-}
-
 // validateConfig checks we received sane configuration values. Any issues are
 // returned as a MultiError specifying the problematic values. Note it only
 // performs static checks, and will not (for example) catch if a file doesn't
 // exist or we don't have permissions to access it.
 func validateConfig(config AppConfig) error {
 
+	// TODO: Consider moving validation checks into the respective packages where the config is defined.
 	var multiErr types.MultiError
 
 	switch config.Log.Type {
-	case LogFile:
+	case logger.LogFile:
 		if config.Log.File == "" {
 			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("logType is set to 'logfile' but no log file path (log.file) was specified"))
 		}
-	case StdOut:
+	case logger.StdOut:
 	default:
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("provided LogType is invalid: %s (valid types: %s)", config.Log.Type, supportedLogTypes))
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("provided LogType is invalid: %s (valid types: %s)", config.Log.Type, logger.SupportedLogTypes))
 	}
 
 	if config.Metadata.EventLogTarget == "" {

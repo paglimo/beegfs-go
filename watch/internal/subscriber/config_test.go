@@ -56,7 +56,7 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 				state: DISCONNECTED,
 			},
 			Interface: &GRPCSubscriber{
-				GrpcConfig: &GrpcConfig{
+				GrpcConfig: GrpcConfig{
 					Hostname:      "br-1",
 					Port:          "1234",
 					AllowInsecure: true,
@@ -77,7 +77,7 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 				state: DISCONNECTED,
 			},
 			Interface: &GRPCSubscriber{
-				GrpcConfig: &GrpcConfig{
+				GrpcConfig: GrpcConfig{
 					Hostname:      "bm-1",
 					Port:          "512312",
 					AllowInsecure: false,

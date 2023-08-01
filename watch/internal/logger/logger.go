@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"go.uber.org/zap"
 )
 
@@ -19,8 +18,29 @@ type Logger struct {
 	configLock sync.RWMutex
 }
 
+type Config struct {
+	Type              supportedLogTypes `mapstructure:"type"`
+	File              string            `mapstructure:"file"`
+	Debug             bool              `mapstructure:"debug"`
+	IncomingEventRate bool              `mapstructure:"incomingEventRate"`
+}
+
+type supportedLogTypes string
+
+const (
+	StdOut  supportedLogTypes = "stdout"
+	LogFile supportedLogTypes = "logfile"
+)
+
+// All SupportedLogTypes should also be added to this slice.
+// It is used for printing help text, for example if an invalid type is specified.
+var SupportedLogTypes = []supportedLogTypes{
+	StdOut,
+	LogFile,
+}
+
 // New parses command line logging options and returns an appropriately configured logger.
-func New(newConfig configmgr.AppConfig) (*Logger, error) {
+func New(newConfig Config) (*Logger, error) {
 
 	logMgr := Logger{}
 	logMgr.updateConfiguration(newConfig)
@@ -31,22 +51,22 @@ func New(newConfig configmgr.AppConfig) (*Logger, error) {
 // updateConfiguration sets the Logger's zap.Logger based on the provided
 // AppConfig. Once BF-48 is resolved it can be exported so the logging
 // configuration can be dynamically updated using ConfigMgr.
-func (lm *Logger) updateConfiguration(newConfig configmgr.AppConfig) error {
+func (lm *Logger) updateConfiguration(newConfig Config) error {
 	lm.configLock.Lock()
 	defer lm.configLock.Unlock()
 
 	var config zap.Config
 	config.InitialFields = map[string]interface{}{"serviceName": "bee-watch"}
 
-	if newConfig.Log.Debug {
+	if newConfig.Debug {
 		config = zap.NewDevelopmentConfig()
 	} else {
 		config = zap.NewProductionConfig()
 	}
 
 	// TODO (BF-47): Better support multiple log types.
-	if newConfig.Log.Type == configmgr.LogFile {
-		logFile, err := os.OpenFile(newConfig.Log.File, os.O_RDWR|os.O_CREATE, 0755)
+	if newConfig.Type == LogFile {
+		logFile, err := os.OpenFile(newConfig.File, os.O_RDWR|os.O_CREATE, 0755)
 		if err != nil {
 			return fmt.Errorf("unable to create log file: %s", err)
 		}

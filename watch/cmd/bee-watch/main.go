@@ -69,7 +69,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	logger, err := logger.New(initialCfg)
+	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
 		log.Fatalf("Unable to initialize logger: %s", err)
 	}
