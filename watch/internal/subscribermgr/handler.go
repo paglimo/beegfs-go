@@ -6,20 +6,10 @@ import (
 	"sync"
 	"time"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
-)
-
-const (
-	// TODO: Make this configurable.
-	// If we cannot connect to a subscriber we'll try to reconnect with an exponential backoff.
-	// This is the maximum time in seconds between reconnect attempts to avoid increasing the backoff forever.
-	maxReconnectBackoff = 60
-	// When a subscriber first connects, if supported they may acknowledge the sequence ID of the last event received.
-	// This will prevent sending duplicate events should the connection have been disrupted unexpectedly.
-	// waitForAckAfterConnect is the number of seconds to wait for the initial before just sending events from the last acknowledged event.
-	waitForAckAfterConnect = 2
 )
 
 // A Handler manages a the lifecycle of a connection to a single subscriber.
@@ -29,26 +19,26 @@ const (
 // It also listens for responses from the subscriber and acknowledges events so buffer space can be freed.
 // When the application is shutting down it handles gracefully disconnecting subscribers.
 type Handler struct {
-	ctx                     context.Context
-	cancel                  context.CancelFunc
-	log                     *zap.Logger
-	metaEventBuffer         *types.MultiCursorRingBuffer
-	metaBufferPollFrequency int
+	ctx             context.Context
+	cancel          context.CancelFunc
+	log             *zap.Logger
+	metaEventBuffer *types.MultiCursorRingBuffer
+	config          configmgr.AppConfig
 	*subscriber.Subscriber
 }
 
-func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, metaBufferPollFrequency int) *Handler {
+func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, config configmgr.AppConfig) *Handler {
 	log = log.With(zap.Int("subscriberID", subscriber.ID), zap.String("subscriberName", subscriber.Name))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Handler{
-		ctx:                     ctx,
-		cancel:                  cancel,
-		log:                     log,
-		metaEventBuffer:         metaEventBuffer,
-		metaBufferPollFrequency: metaBufferPollFrequency,
-		Subscriber:              subscriber,
+		ctx:             ctx,
+		cancel:          cancel,
+		log:             log,
+		metaEventBuffer: metaEventBuffer,
+		config:          config,
+		Subscriber:      subscriber,
 	}
 }
 
@@ -153,8 +143,8 @@ func (h *Handler) connectLoop() bool {
 
 				// We'll retry to connect with an exponential back off. We'll add some jitter to avoid load spikes.
 				reconnectBackOff *= 2 + rand.Float64()
-				if reconnectBackOff > maxReconnectBackoff {
-					reconnectBackOff = maxReconnectBackoff - rand.Float64()
+				if reconnectBackOff > float64(h.config.Handler.MaxReconnectBackOff) {
+					reconnectBackOff = float64(h.config.Handler.MaxReconnectBackOff) - rand.Float64()
 				}
 
 				h.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
@@ -183,7 +173,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 			h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
 		}
 		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
-	case <-time.After(waitForAckAfterConnect * time.Second):
+	case <-time.After(time.Duration(h.config.Handler.MaxWaitForResponseAfterConnect) * time.Second):
 		h.log.Info("subscriber did not acknowledge last event received before disconnect, resending events from the last known acknowledged event")
 	}
 
@@ -239,7 +229,7 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 			case <-ctx.Done():
 				h.log.Debug("stopping sending events because the handler is shutting down")
 				return
-			case <-time.After(time.Duration(h.metaBufferPollFrequency) * time.Second):
+			case <-time.After(time.Duration(h.config.Handler.PollFrequency) * time.Second):
 				// Poll on a configurable period for new events to be added to the buffer.
 			sendEvents:
 				for {

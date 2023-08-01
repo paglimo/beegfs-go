@@ -67,7 +67,7 @@ func newSubscriberFromConfig(config Config) (*Subscriber, error) {
 		// Subscriber is actually holding a GRPCSubscriber value. If we don't do
 		// this we'll get a panic because BaseSubscriber doesn't actually
 		// implement these methods.
-		subscriber.Interface = newGRPCSubscriber(&subscriber.GrpcConfig)
+		subscriber.Interface = newGRPCSubscriber(subscriber.GrpcConfig)
 		return subscriber, nil
 	default:
 		return nil, fmt.Errorf("unknown subscriber type: %s", config.Type)

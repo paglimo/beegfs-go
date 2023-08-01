@@ -33,7 +33,9 @@ func main() {
 	pflag.String("metadata.eventLogTarget", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
 	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
 	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
-	pflag.Int("metadata.eventPollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
+	pflag.Int("handler.maxReconnectBackOff", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
+	pflag.Int("handler.waitForAckAfterConnect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
+	pflag.Int("handler.pollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
 	pflag.String("subscribers", "", `Specify one or more subscribers separated by semicolons.
 	The full list of subscribers should be enclosed in "double quotes".
 	The parameters for each subscriber should be specified as key='value'.

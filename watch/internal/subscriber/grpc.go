@@ -24,7 +24,7 @@ const (
 // subscribers should acknowledge the sequence ID of the last received event.
 // Otherwise duplicate events may be retransmitted to avoid dropped events.
 type GRPCSubscriber struct {
-	*GrpcConfig
+	GrpcConfig
 	conn       *grpc.ClientConn
 	client     pb.SubscriberClient
 	stream     pb.Subscriber_ReceiveEventsClient
@@ -35,7 +35,7 @@ type GRPCSubscriber struct {
 
 var _ Interface = &GRPCSubscriber{} // Verify type satisfies interface.
 
-func newGRPCSubscriber(config *GrpcConfig) *GRPCSubscriber {
+func newGRPCSubscriber(config GrpcConfig) *GRPCSubscriber {
 	var mutex sync.Mutex
 
 	return &GRPCSubscriber{

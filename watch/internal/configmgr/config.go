@@ -17,11 +17,15 @@ type AppConfig struct {
 		Debug             bool              `mapstructure:"debug"`
 		IncomingEventRate bool              `mapstructure:"incomingEventRate"`
 	}
+	Handler struct {
+		MaxReconnectBackOff            int `mapstructure:"maxReconnectBackOff"`
+		MaxWaitForResponseAfterConnect int `mapstructure:"maxWaitForResponseAfterConnect"`
+		PollFrequency                  int `mapstructure:"pollFrequency"`
+	}
 	Metadata struct {
 		EventLogTarget         string `mapstructure:"eventLogTarget"`
 		EventBufferSize        int    `mapstructure:"eventBufferSize"`
 		EventBufferGCFrequency int    `mapstructure:"eventBufferGCFrequency"`
-		EventPollFrequency     int    `mapstructure:"eventPollFrequency"`
 	}
 	Subscribers []subscriber.Config `mapstructure:"subscriber"`
 	Developer   struct {

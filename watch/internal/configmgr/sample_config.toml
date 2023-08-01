@@ -9,7 +9,11 @@ incomingEventRate = false
 eventLogTarget = '/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog'
 eventBufferSize = 10000000
 eventBufferGCFrequency = 100000
-eventPollFrequency = 1
+
+[handler]
+maxReconnectBackOff = 60
+maxWaitForResponseAfterConnect = 2
+pollFrequency = 1
 
 [[subscriber]] # Subscribers may be updated after the application has started.
 id = 1
