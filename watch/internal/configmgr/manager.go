@@ -290,14 +290,14 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 	// After initial startup some of the configuration is immutable:
 	if cm.currentConfig != nil {
 		if newConfig.Developer != cm.currentConfig.Developer {
-			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup")
+			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Developer, newConfig.Developer)
 		}
 		if newConfig.Metadata != cm.currentConfig.Metadata {
-			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup")
+			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Metadata, newConfig.Metadata)
 		}
 		// TODO (BF-48): Allow logging configuration to be changed dynamically.
 		if newConfig.Log != cm.currentConfig.Log {
-			return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup")
+			return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Log, newConfig.Log)
 		}
 	}
 

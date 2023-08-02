@@ -62,8 +62,10 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 	}
 
 	toAdd, toRemove, toVerify := evaluateAddedAndRemovedSubscribers(sm.handlers, newSubscribers)
+	noUpdates := true
 	for i, h := range sm.handlers {
 		if toRemove[h.ID] {
+			sm.log.Info("removing subscriber", zap.Int("id", h.ID))
 			h.Stop()
 			h.mu.Lock() // Lock the handler so we're sure its not still in use before deleting it.
 			// We only want to remove cursors when subscribers are removed.
@@ -72,25 +74,34 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 			// Remove the handler.
 			sm.handlers = append(sm.handlers[:i], sm.handlers[i+1:]...)
 		} else {
-			// Check if it needs to be modified.
-			if h.Subscriber.Config != toVerify[h.ID].Config {
+			// Check if the subscriber or handler configuration was modified.
+			// With the current handler configuration it is likely we could swap
+			// out the configuration without restarting the handler. However
+			// we don't know what could get added in the future so we'll always
+			// stop the handler to be safe.
+			if h.Subscriber.Config != toVerify[h.ID].Config || h.config != handlerConfig {
+				noUpdates = false
+				sm.log.Info("updating subscriber configuration", zap.Int("id", h.ID))
 				h.Stop()
 				h.mu.Lock() // Lock the handler so we're sure its not still in use before swapping it out.
+				// We don't need to unlock the mutex because it won't exist after we perform the swap.
 				// Swap out the handler. Note is important we don't just swap out the subscriber.
 				// Otherwise we'd have to worry about resetting the context and other state.
-				h = newHandler(sm.log, toVerify[h.ID], sm.metaEventBuffer, handlerConfig)
-				go h.Handle(sm.wg)
-			} else {
-				// Always update the handler config.
-				h.config = handlerConfig
+				sm.handlers[i] = newHandler(sm.log, toVerify[h.ID], sm.metaEventBuffer, handlerConfig)
+				go sm.handlers[i].Handle(sm.wg)
 			}
 		}
 	}
 
 	for _, v := range toAdd {
+		sm.log.Info("adding subscriber", zap.Int("id", v.ID))
 		h := newHandler(sm.log, v, sm.metaEventBuffer, handlerConfig)
 		sm.handlers = append(sm.handlers, h)
 		go h.Handle(sm.wg)
+	}
+
+	if len(toAdd) == 0 && len(toRemove) == 0 && noUpdates {
+		sm.log.Info("subscriber configuration is already up-to-date")
 	}
 
 	return nil

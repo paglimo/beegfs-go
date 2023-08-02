@@ -31,7 +31,16 @@ type = 'grpc'
 grpcHostname = 'localhost'
 grpcPort = '50053'
 grpcAllowInsecure = true
-grpcDisconnectTimeout = 30 # Time we'll wait after closing our end of the connection for the subscriber to disconnect.
+grpcDisconnectTimeout = 30
+
+[[subscriber]]
+id = 3
+name = 'test-subscriber3'
+type = 'grpc'
+grpcHostname = 'localhost'
+grpcPort = '50054'
+grpcAllowInsecure = true
+grpcDisconnectTimeout = 30
 
 [developer] # Developer configuration cannot be dynamically updated after the application has started.
 perfProfilingPort = 0
