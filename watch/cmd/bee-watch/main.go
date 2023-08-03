@@ -143,8 +143,7 @@ Using environment variables:
 
 	<-sigs // Block here and wait for a signal to shutdown.
 	logger.Info("shutdown signal received, no longer accepting events from the metadata service and waiting for outstanding events to be sent to subscribers before exiting (send another SIGINT or SIGTERM to shutdown immediately)")
-	metaCancel()   // When shutting down first stop adding events to the metadata buffer.
-	configCancel() // Stop accepting configuration updates.
+	metaCancel() // When shutting down first stop adding events to the metadata buffer.
 
 shutdownLoop:
 	for {
@@ -163,6 +162,7 @@ shutdownLoop:
 		}
 	}
 
+	configCancel() // Stop accepting configuration updates.
 	// Wait for subscribers to disconnect and all components to stop.
 	// We will wait here indefinitely even if we get another signal so we can try and cleanup resources.
 	// SIGKILL would be needed at this point if something gets blocked shutting down.

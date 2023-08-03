@@ -94,9 +94,13 @@ func (b *MultiCursorRingBuffer) RemoveCursor(subscriberID int) {
 	delete(b.cursors, subscriberID)
 }
 
-// AllEventsAcknowledged verifies the ackCursor for all subscribers points at the end of the buffer.
-// It should NOT be used while events are being added to the buffer otherwise it will return unpredictable results.
-// Its intended use is determining when all subscribers have acknowledged all outstanding events to coordinate shutdown.
+// AllEventsAcknowledged verifies the ackCursor for all subscribers points at
+// the end of the buffer. It should NOT be used while events are being added to
+// the buffer otherwise it will return unpredictable results. Its intended use
+// is determining when all subscribers have acknowledged all outstanding events
+// to coordinate shutdown. It is also safe to use when the list of subscribers
+// is being changed, for example if a misbehaving subscriber was removed while
+// were in the process of shutting down.
 func (b *MultiCursorRingBuffer) AllEventsAcknowledged() bool {
 	b.cursorsMutex.RLock()
 	defer b.cursorsMutex.RUnlock()

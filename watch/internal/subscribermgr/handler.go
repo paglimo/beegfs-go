@@ -247,23 +247,29 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 				// Poll on a configurable period for new events to be added to the buffer.
 			sendEvents:
 				for {
-					// We could alternatively use a conditional variable (sync.Cond) instead of polling.
-					// At this time there doesn't appear to be a significant drawback to this approach.
-					// Mainly because starting to send events in not latency sensitive.
-					event, err := h.metaEventBuffer.GetEvent(h.ID)
-					if err != nil {
-						h.log.Error("unable to get the next event in the local buffer", zap.Error(err))
-						break sendEvents
-					}
-
-					// Continue sending events until there are no more events to send:
-					if event != nil {
-						if err := h.Send(event); err != nil {
-							h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
-							return
+					select {
+					case <-ctx.Done():
+						h.log.Debug("forcibly stop sending events because the handler is shutting down")
+						return
+					default:
+						// We could alternatively use a conditional variable (sync.Cond) instead of polling.
+						// At this time there doesn't appear to be a significant drawback to this approach.
+						// Mainly because starting to send events in not latency sensitive.
+						event, err := h.metaEventBuffer.GetEvent(h.ID)
+						if err != nil {
+							h.log.Error("unable to get the next event in the local buffer", zap.Error(err))
+							break sendEvents
 						}
-					} else {
-						break sendEvents
+
+						// Continue sending events until there are no more events to send:
+						if event != nil {
+							if err := h.Send(event); err != nil {
+								h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
+								return
+							}
+						} else {
+							break sendEvents
+						}
 					}
 				}
 			}
