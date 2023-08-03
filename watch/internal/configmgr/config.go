@@ -36,11 +36,16 @@ func validateConfig(config AppConfig) error {
 	switch config.Log.Type {
 	case logger.LogFile:
 		if config.Log.File == "" {
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("logType is set to 'logfile' but no log file path (log.file) was specified"))
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("log.type is set to 'logfile' but no log.file was specified"))
 		}
 	case logger.StdOut:
+	case logger.Syslog:
 	default:
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("provided LogType is invalid: %s (valid types: %s)", config.Log.Type, logger.SupportedLogTypes))
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("provided log.type is invalid: %s (valid types: %s)", config.Log.Type, logger.SupportedLogTypes))
+	}
+
+	if !(config.Log.Level == 1 || config.Log.Level == 3 || config.Log.Level == 5) {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the provided log.level is invalid (must be 1, 3, or 5)"))
 	}
 
 	if config.Metadata.EventLogTarget == "" {

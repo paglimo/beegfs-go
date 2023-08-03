@@ -161,7 +161,7 @@ func (h *Handler) connectLoop() bool {
 					reconnectBackOff = float64(h.config.MaxReconnectBackOff) - rand.Float64()
 				}
 
-				h.log.Error("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
+				h.log.Warn("unable to connect to subscriber (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
 				continue
 			}
 

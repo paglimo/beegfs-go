@@ -30,10 +30,13 @@ func main() {
 	// Notably subscriber defaults are handled as part of initializing a
 	// particular subscriber type.
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables).")
-	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'journal', 'logfile').")
-	pflag.String("log.file", "/var/log/bee-watch.log", "The path to the desired log file when logType is 'logfile'.")
-	pflag.Bool("log.debug", false, "Enable logging at the debug level (will impact performance).")
-	pflag.Bool("log.incomingEventRate", false, "output the rate of incoming events per second")
+	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
+	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file'.")
+	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
+	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
+	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
+	pflag.Bool("log.incomingEventRate", false, "Output the rate of incoming events per second.")
+	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
 	pflag.String("metadata.eventLogTarget", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
 	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
 	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
@@ -92,6 +95,7 @@ Using environment variables:
 	if err != nil {
 		log.Fatalf("Unable to initialize logger: %s", err)
 	}
+	defer logger.Sync() // Flush any final messages before exiting.
 
 	if initialCfg.Developer.PerfProfilingPort != 0 {
 		go func() {

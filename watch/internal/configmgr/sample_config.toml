@@ -1,9 +1,12 @@
 
 [log] # Logging configuration cannot be dynamically updated after the application is started.
-type = 'stdout'
-file = '/var/log/bee-watch.log'
-debug = false
+type = 'logfile'
+file = '/var/log/beewatch/beewatch.log'
+level = 3
+maxSize = 1000
+numRotatedFiles = 5
 incomingEventRate = false
+developer = false
 
 [metadata] # Metadata configuration cannot be dynamically updated after the application is started.
 eventLogTarget = '/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog'
