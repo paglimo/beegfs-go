@@ -96,6 +96,8 @@ Using environment variables:
 		log.Fatalf("Unable to initialize logger: %s", err)
 	}
 	defer logger.Sync() // Flush any final messages before exiting.
+	logger.Info("<=== Application Initialized ===>")
+	cfgMgr.AddListener(logger)
 
 	if initialCfg.Developer.PerfProfilingPort != 0 {
 		go func() {

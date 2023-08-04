@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"log/syslog"
 	"os"
-	"sync"
+	"path"
+	"reflect"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -18,7 +19,7 @@ import (
 // It primarily exists so we can allowing logging configuration to be updated dynamically in the future (BF-48).
 type Logger struct {
 	*zap.Logger
-	configLock sync.RWMutex
+	level zap.AtomicLevel
 }
 
 type Config struct {
@@ -53,39 +54,16 @@ var SupportedLogTypes = []supportedLogTypes{
 func New(newConfig Config) (*Logger, error) {
 
 	logMgr := Logger{}
-	if err := logMgr.updateConfiguration(newConfig); err != nil {
-		return nil, err
-	}
-
-	return &logMgr, nil
-}
-
-// updateConfiguration sets the Logger's zap.Logger based on the provided
-// AppConfig. Once BF-48 is resolved it can be exported so the logging
-// configuration can be dynamically updated using ConfigMgr.
-func (lm *Logger) updateConfiguration(configs ...any) error {
-
-	if len(configs) != 1 {
-		return fmt.Errorf("invalid configuration provided (expected only logging configuration)")
-	}
-
-	newConfig, ok := configs[0].(Config)
-	if !ok {
-		return fmt.Errorf("invalid configuration provided (expected logging configuration)")
-	}
-
-	lm.configLock.Lock()
-	defer lm.configLock.Unlock()
 
 	// Use the opinionated Zap development configuration.
 	// This notably gives us stack traces at warn and error levels.
 	if newConfig.Developer {
 		l, err := zap.NewDevelopmentConfig().Build()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		lm.Logger = l
-		return nil
+		logMgr.Logger = l
+		return &logMgr, nil
 	}
 
 	// Otherwise build a production config based on the user settings:
@@ -100,17 +78,14 @@ func (lm *Logger) updateConfiguration(configs ...any) error {
 	// accordingly.
 	zapEncoder := zapcore.NewConsoleEncoder(zapConfig)
 
-	// We'll map Zap levels to standard BeeGFS log levels. The use of an atomic
-	// level means we can change this after the application has started.
-	var zapLevel zap.AtomicLevel
-	switch newConfig.Level {
-	case 1:
-		zapLevel = zap.NewAtomicLevelAt(zap.WarnLevel)
-	case 3:
-		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
-	case 5:
-		zapLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
+	// The use of an atomic level means we can update the log level later on.
+	// However we have to keep a reference to the atomic level if we want to
+	// adjust it later (which is why we add it to the logger struct).
+	zapLevel, err := getLevel(newConfig.Level)
+	if err != nil {
+		return nil, err
 	}
+	logMgr.level = zap.NewAtomicLevelAt(zapLevel)
 
 	// zapcore.WriteSyncers are what handle writing the byte slices from the
 	// encoder somewhere. This means we can easily add support for new types of
@@ -124,7 +99,7 @@ func (lm *Logger) updateConfiguration(configs ...any) error {
 		// if we want to rotate log files. Make sure the directory selected for
 		// logging exists and we can write to it.
 		if err := ensureLogsAreWritable(newConfig.File); err != nil {
-			return err
+			return nil, err
 		}
 
 		logDestination = zapcore.AddSync(&lumberjack.Logger{
@@ -139,13 +114,67 @@ func (lm *Logger) updateConfiguration(configs ...any) error {
 		// instances of BeeWatch running on the same server.
 		l, err := NewSyslogWriteSyncer(syslog.LOG_INFO|syslog.LOG_LOCAL0, os.Args[0])
 		if err != nil {
-			return fmt.Errorf("unable to initialize syslog destination: %w", err)
+			return nil, fmt.Errorf("unable to initialize syslog destination: %w", err)
 		}
 		logDestination = l
 	default:
-		return fmt.Errorf("unsupported log type: %s", newConfig.Type)
+		return nil, fmt.Errorf("unsupported log type: %s", newConfig.Type)
 	}
 
-	lm.Logger = zap.New(zapcore.NewCore(zapEncoder, logDestination, zapLevel))
+	logMgr.Logger = zap.New(zapcore.NewCore(zapEncoder, logDestination, logMgr.level))
+	return &logMgr, nil
+
+}
+
+// UpdateConfiguration is used to dynamically update supported aspects of the
+// logger. Currently it only supports dynamically updating the log level.
+func (lm *Logger) UpdateConfiguration(configs ...any) error {
+	if len(configs) != 1 {
+		return fmt.Errorf("invalid configuration provided (expected only logging configuration)")
+	}
+
+	newConfig, ok := configs[0].(Config)
+	if !ok {
+		return fmt.Errorf("invalid configuration provided (expected logging configuration)")
+	}
+
+	// We don't set the component on the logging struct because then it would be
+	// included in every log message. So instead set it up whenever we need to
+	// log from the logging package.
+	log := lm.Logger.With(zap.String("component", path.Base(reflect.TypeOf(Logger{}).PkgPath())))
+
+	newLevel, err := getLevel(newConfig.Level)
+	if err != nil {
+		return err
+	}
+
+	if lm.level.Level() != newLevel {
+		lm.level.SetLevel(newLevel)
+		log.Log(lm.level.Level(), "set log level", zap.Any("logLevel", lm.level.Level()))
+	} else {
+		log.Debug("no change to log level")
+	}
+
 	return nil
+}
+
+// setLevel maps Zap log levels to BeeGFS log levels.
+func getLevel(newLevel int8) (zapcore.Level, error) {
+
+	// We'll map Zap levels to standard BeeGFS log levels. The use of an atomic
+	// level means we can change this after the application has started.
+	//var zapLevel zap.AtomicLevel
+	switch newLevel {
+	case 1:
+		return zapcore.WarnLevel, nil
+	case 3:
+		return zapcore.InfoLevel, nil
+	case 5:
+		return zapcore.DebugLevel, nil
+	default:
+		// If we used zapcore.InvalidLevel we could cause a panic.
+		// So instead return a sane level just in case something decides to
+		// ignore the error and use the level we return anyway.
+		return zapcore.InfoLevel, fmt.Errorf("the provided log.level (%d) is invalid (must be 1, 3, or 5)", newLevel)
+	}
 }

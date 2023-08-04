@@ -12,5 +12,5 @@ func (e *MultiError) Error() string {
 		errs = append(errs, err.Error())
 	}
 
-	return strings.Join(errs, ";")
+	return strings.Join(errs, "; ")
 }

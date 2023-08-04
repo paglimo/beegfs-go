@@ -101,7 +101,7 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 	}
 
 	if len(toAdd) == 0 && len(toRemove) == 0 && noUpdates {
-		sm.log.Info("subscriber configuration is already up-to-date")
+		sm.log.Debug("no change to subscriber configuration")
 	}
 
 	return nil

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/logger"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"github.com/spf13/pflag"
@@ -97,9 +98,11 @@ func (cm *ConfigManager) UpdateListeners() error {
 		switch v := mgr.(type) {
 		case *subscribermgr.Manager:
 			err = mgr.UpdateConfiguration(cm.currentConfig.Handler, cm.currentConfig.Subscribers)
+		case *logger.Logger:
+			err = mgr.UpdateConfiguration(cm.currentConfig.Log)
 		default:
 			// Developers must explicitly specify the configuration each component requires.
-			err = fmt.Errorf("unknown configuration listener %s will not be updated (this indicates a bug and a report should be filed)", v)
+			err = fmt.Errorf("unknown configuration listener %+v will not be updated (this indicates a bug and a report should be filed)", v)
 		}
 		if err != nil {
 			multiErr.Errors = append(multiErr.Errors, err)
@@ -107,6 +110,7 @@ func (cm *ConfigManager) UpdateListeners() error {
 	}
 
 	if len(multiErr.Errors) > 0 {
+		multiErr.Errors = append([]error{fmt.Errorf("WARNING: configuration partially updated")}, multiErr.Errors...)
 		return &multiErr
 	}
 	return nil
@@ -133,7 +137,7 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 		err := cm.UpdateConfiguration()
 		cm.updateInProgress.Unlock()
 		if err != nil {
-			log.Warn("new configuration was rejected because it is invalid", zap.Error(err))
+			log.Warn("one or more errors occurred updating the configuration", zap.Error(err))
 		}
 
 		select {
@@ -141,7 +145,7 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 			log.Info("shutting down because the app is shutting down")
 			return
 		case <-cm.updateSignal:
-			log.Info("configuration update requested")
+			log.Debug("updating configuration")
 			continue
 		}
 	}
@@ -178,7 +182,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 	// We also get all of our defaults based on the flag setup.
 	err := v.BindPFlags(cm.initialFlags)
 	if err != nil {
-		return fmt.Errorf("unable to parse command line flags: %s", err)
+		return fmt.Errorf("rejecting configuration update: unable to parse command line flags: %s", err)
 	}
 
 	// Allow specifying subscribers using a --subscribers flag. We do this by
@@ -194,7 +198,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		tomlString := parseTOMLSubscribersFromString(subscribersFromFlags)
 
 		if err := v.ReadConfig(strings.NewReader(tomlString)); err != nil {
-			return fmt.Errorf("unable to parse subscribers from command line flags: %s\nAre all flag values enclosed in \"double\" quotes (--flag=\"value\")? \nAre all strings within flag values contained in 'single' quotes (--flag=\"key='value'\"?)", err)
+			return fmt.Errorf("rejecting configuration update: unable to parse subscribers from command line flags (check flag values are enclosed in \"double\" quotes (--flag=\"value\") and all strings within flag values contained in 'single' quotes (--flag=\"key='value'\"): %w", err)
 		}
 	}
 
@@ -225,16 +229,16 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 				// We do not want to allow subscribers to be specified multiple
 				// ways, so we first check if they were also specified using flags.
 				if len(subscribersFromFlags) > 0 {
-					return fmt.Errorf("subscribers cannot be set using both flags and environment variables")
+					return fmt.Errorf("rejecting configuration update: subscribers cannot be set using both flags and environment variables")
 				}
 				// Use the same approach as we do for flags to get a list of subscribers:
 				subscribersFromEnv = true
 				tomlString := parseTOMLSubscribersFromString(val)
 				if err := v.ReadConfig(strings.NewReader(tomlString)); err != nil {
-					return fmt.Errorf("unable to parse subscribers from environment variable: %s\nIs the value contained in \"double\" quotes?\nAre all strings within the value contained in 'single' quotes? \nExample: \"id=1,name='subscriber',type='grpc'\"", err)
+					return fmt.Errorf("rejecting configuration update: unable to parse subscribers from environment variable (check the value is contained in \"double\" quotes? and all strings within the value are contained in 'single' quotes like \"id=1,name='subscriber',type='grpc'\"): %w", err)
 				}
 			} else if viperKey == "subscriber" {
-				return fmt.Errorf("subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", ConfigEnvVariablePrefix, ConfigEnvVariablePrefix)
+				return fmt.Errorf("rejecting configuration update: subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", ConfigEnvVariablePrefix, ConfigEnvVariablePrefix)
 			} else {
 				if err := v.BindEnv(viperKey, strings.ToUpper(key)); err != nil {
 					return err
@@ -255,21 +259,21 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 
 		if err := vFile.ReadInConfig(); err != nil {
 			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-				return fmt.Errorf("configuration file at '%s' was not found (does it exist? are permissions set correctly?)", v.GetString("cfgFile"))
+				return fmt.Errorf("rejecting configuration update: configuration file at '%s' was not found (check it exists and permissions are set correctly)", v.GetString("cfgFile"))
 			}
-			return fmt.Errorf("an unknown error occurred reading config file '%s' (do we have permissions to read it?): %s", v.GetString("cfgFile"), err)
+			return fmt.Errorf("rejecting configuration update: an unknown error occurred reading config file '%s' (check permissions): %w", v.GetString("cfgFile"), err)
 		}
 		subscribersFromFile := vFile.GetStringSlice("subscriber")
 
 		if len(subscribersFromFile) > 0 && (len(subscribersFromFlags) > 0 || subscribersFromEnv) {
-			return fmt.Errorf("subscribers cannot be set using a mix of flags, environment variables, and a configuration file (only one is allowed)")
+			return fmt.Errorf("rejecting configuration update: subscribers cannot be set using a mix of flags, environment variables, and a configuration file (only one is allowed)")
 		}
 		// If all our checks pass we'll actually use the config file for the combined Viper instance.
 		v.SetConfigFile(v.GetString("cfgfile"))
 
 		// Merge the configuration set via flags and environment variables with the cfgFile.
 		if err := v.MergeInConfig(); err != nil {
-			return fmt.Errorf("an unknown error occurred merging configuration sources: %s", err)
+			return fmt.Errorf("rejecting configuration update: an unknown error occurred merging configuration sources: %s", err)
 		}
 	}
 
@@ -280,24 +284,37 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 	// Get everything out of our temporary Viper store and unmarshall it into a new AppConfig.
 	var newConfig AppConfig
 	if err := v.Unmarshal(&newConfig); err != nil {
-		return fmt.Errorf("unable to parse configuration: %s \n\n(is the configuration valid?)", err)
+		return fmt.Errorf("rejecting configuration update: unable to parse configuration (check if the configuration valid): %w", err)
 	}
 
 	if err = validateConfig(newConfig); err != nil {
 		return err
 	}
 
-	// After initial startup some of the configuration is immutable:
+	// After initial startup some of the configuration is immutable. By
+	// performing the configuration check here and not as part of
+	// UpdateListeners(), we can reject the entire configuration update so its
+	// not partially applied.
 	if cm.currentConfig != nil {
 		if newConfig.Developer != cm.currentConfig.Developer {
-			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Developer, newConfig.Developer)
+			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Developer, newConfig.Developer)
 		}
 		if newConfig.Metadata != cm.currentConfig.Metadata {
-			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Metadata, newConfig.Metadata)
+			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Metadata, newConfig.Metadata)
 		}
-		// TODO (BF-48): Allow logging configuration to be changed dynamically.
 		if newConfig.Log != cm.currentConfig.Log {
-			return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup (current settings: %+v), (proposed settings: %+v)", cm.currentConfig.Log, newConfig.Log)
+			// Use reflection to iterate over the fields of the logging conflict
+			// struct and ensure only fields we allowed to change do (currently
+			// only the level).
+			newConfigLog := reflect.ValueOf(newConfig.Log)
+			currentConfigLog := reflect.ValueOf(cm.currentConfig.Log)
+
+			for i := 0; i < newConfigLog.NumField(); i++ {
+				fieldName := newConfigLog.Type().Field(i).Name
+				if fieldName != "Level" && newConfigLog.Field(i).Interface() != currentConfigLog.Field(i).Interface() {
+					return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Log, newConfig.Log)
+				}
+			}
 		}
 	}
 
