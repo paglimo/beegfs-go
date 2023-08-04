@@ -29,9 +29,9 @@ func main() {
 	// Note defaults for configuration specified using a slice is not set here.
 	// Notably subscriber defaults are handled as part of initializing a
 	// particular subscriber type.
-	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables).")
+	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
-	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file'.")
+	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file' (if needed the directory and all parent directories will be created).")
 	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
 	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
@@ -62,7 +62,7 @@ func main() {
 Further info:
 	Except for subscribers, configuration may be set using a mix of flags, environment variables, and values from a TOML configuration file. 
 	Configuration will be merged using the following precedence order (highest->lowest): (1) flags (2) environment variables (3) configuration file (4) defaults.
-	Subscribers can only be specified using one of these options, and when set using environment variables or a configuration file, can be updated dynamically after the application starts without by sending a hangup signal (SIGHUP).
+	Subscribers can only be specified using one of these options, and when set using a configuration file, can be updated dynamically after the application starts without by sending a hangup signal (SIGHUP).
 Using environment variables:
 	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with underscores (_).
 	Examples: 
