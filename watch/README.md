@@ -12,6 +12,9 @@ BeeWatch <!-- omit in toc -->
     - [Specify Configuration using a TOML Configuration File](#specify-configuration-using-a-toml-configuration-file)
   - [Configuring Subscribers](#configuring-subscribers)
     - [gRPC](#grpc)
+      - [OPTION 1: Specify the path to a self-signed certificate](#option-1-specify-the-path-to-a-self-signed-certificate)
+      - [OPTION 2: Add subscriber certificate(s) to the system-wide store of trusted certificates on the BeeWatch server](#option-2-add-subscriber-certificates-to-the-system-wide-store-of-trusted-certificates-on-the-beewatch-server)
+      - [OPTION 3: Disable TLS (not recommended)](#option-3-disable-tls-not-recommended)
   - [Updating Configuration (without restarting BeeWatch)](#updating-configuration-without-restarting-beewatch)
 - [Shutting Down BeeWatch](#shutting-down-beewatch)
 - [Advanced](#advanced)
@@ -129,13 +132,45 @@ The `id` option is used to keep track of what events should/have been sent to a 
 
 ### gRPC
 
-To use the gRPC subscriber type specify `type: grpc` then specify the following options:
+To use the gRPC subscriber type specify `type: grpc` then use the following options to configure the subscriber:
 
 * grpcHostname (required): The IP address or hostname of the subscriber. No default.
 * grpcPort (required): What port the subscriber is listening on. No default.
-* grpcAllowInsecure (optional): Disables use of TLS meaning all gGRPC message are sent in clear text. Default: false.
 * grpcDisconnectTimeout (optional): When a local disconnect is requested, how long to wait (in seconds) for the remote subscriber to also shutdown their end of the connection before just closing the connection. If this value is to short then we may not receive acknowledgement of events the subscriber has processed (subscribers should resend the acknowledgement when they reconnect). If this value is to long, then reconfiguration attempts or shutting down BeeWatch may hang for an inconvenient amount of time. Default: 30 (seconds). 
 
+It is recommended to use TLS to authenticate subscribers and encrypt all communication. If subscribers are configured to use a valid certificate signed by a recognized Certificate Authority (CA), or your organization is using its own signing server and adding the necessary certificate(s) to the system running BeeWatch, no additional steps will be required. If this is not the case there are a few options: 
+
+#### OPTION 1: Specify the path to a self-signed certificate
+
+While self-signed certificates are not generally recommended outside development or testing environments, they are a better option than disabling TLS if obtaining a certificate signed by a recognized Certificate Authority is not possible. Ensure the private key is appropriately secured as anyone with access to the key can impersonate the subscriber.
+
+(1) If needed generate a self-signed certificate (replace `localhost` with the hostname of the system running the subscriber and update `-days 365` to reflect how long the certificate should be valid):
+```shell
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes \
+-subj "/CN=localhost" \
+-addext "subjectAltName = DNS:localhost"
+```
+(2) Use this certificate file and key file when starting the gRPC subscriber.
+
+(3) When configuring the subscriber in BeeWatch, specify the path to the self-signed certificate (`cert.pem` in this example) using `grpcSelfSignedCertificatePath=<PATH>`.
+
+NOTE: When the path to a self-signed certificate is specified it takes precedence over all other TLS configuration. Any other local installed certificates and the option to disable TLS will be ignored.
+
+#### OPTION 2: Add subscriber certificate(s) to the system-wide store of trusted certificates on the BeeWatch server
+
+If the root certificate for the Certificate Authority used to sign your certificate is not in the operating system's default list of trusted root certificates or you are using a self-signed certificate, you can add your certificate to the the system's list of trusted certificates. This allows you to start the subscriber without specifying `grpcSelfSignedCertificatePath`. The exact steps will vary based on your environment and Linux distribution, for example on Ubuntu you would use the following commands (note the extension change from .pem to .crt is intentional/required):
+
+```shell
+sudo cp cert.pem /usr/local/share/ca-certificates/cert.crt
+sudo update-ca-certificates
+```
+
+#### OPTION 3: Disable TLS (not recommended)
+
+This option means all gRPC messages including potentially sensitive information about file paths/names inside the file system will be sent in clear text over the network.
+
+(1) When configuring the subscriber set `grpcAllowInsecure=true`. 
+ 
 ## Updating Configuration (without restarting BeeWatch)
 
 Currently the following configuration can be updated after BeeWatch has started without requiring a restart:

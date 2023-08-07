@@ -55,7 +55,22 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+)
+
+// Define our flags and any other global variables needed for the demo to work.
+var (
+	logFile              = flag.String("logFile", "", "log to a file instead of stdout")
+	logDebug             = flag.Bool("logDebug", false, "enable logging at the debug level")
+	logIncomingEventRate = flag.Bool("logIncomingEventRate", false, "output events per second")
+	perfProfilingPort    = flag.Int("perfProfilingPort", 0, "specify a port where performance profiles will be made available on the localhost")
+	hostnamePort         = flag.String("hostnamePort", "localhost:50052", "Where this subscriber will listen for events from BeeWatch nodes.")
+	ackFrequency         = flag.Duration("ackFrequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
+	mockDBFilename       = flag.String("mockDBFilename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
+	tlsCertificate       = flag.String("tlsCert", "../../scratch/cert.pem", "path to a certificate to use for TLS")
+	tlsKey               = flag.String("tlsKey", "../../scratch/key.pem", "path to the private key for the provided tlsCertificate")
+	db                   = &MockDB{}
 )
 
 // Step 1: Create an EventSubscriberServer struct. This must embed the
@@ -157,18 +172,6 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 	}
 }
 
-// Define our flags and any other global variables needed for the demo to work.
-var (
-	logFile              = flag.String("logFile", "", "log to a file instead of stdout")
-	logDebug             = flag.Bool("logDebug", false, "enable logging at the debug level")
-	logIncomingEventRate = flag.Bool("logIncomingEventRate", false, "output events per second")
-	perfProfilingPort    = flag.Int("perfProfilingPort", 0, "specify a port where performance profiles will be made available on the localhost")
-	hostnamePort         = flag.String("hostnamePort", "localhost:50052", "Where this subscriber will listen for events from BeeWatch nodes.")
-	ackFrequency         = flag.Duration("ackFrequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
-	mockDBFilename       = flag.String("mockDBFilename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
-	db                   = &MockDB{}
-)
-
 func main() {
 	// Wire up flags and our logger.
 	flag.Parse()
@@ -208,6 +211,16 @@ func main() {
 	// STEP 4: Define any general options needed for the gRPC server.
 	// Use these options to create a generic gRPC server:
 	var grpcServerOpts []grpc.ServerOption
+	if *tlsCertificate != "" && *tlsKey != "" {
+		creds, err := credentials.NewServerTLSFromFile(*tlsCertificate, *tlsKey)
+		if err != nil {
+			log.Fatal("unable to setup TLS", zap.Error(err))
+		}
+		grpcServerOpts = append(grpcServerOpts, grpc.Creds(creds))
+	} else {
+		log.Warn("not using TLS because -tlsCertificate and/or -tlsKey were not specified")
+	}
+
 	genericGRPCServer := grpc.NewServer(grpcServerOpts...)
 
 	// STEP 5: Initialize a new instance of our EventSubscriberServer. Then

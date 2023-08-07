@@ -2,6 +2,7 @@ package subscriber
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -53,10 +55,27 @@ type ComparableGRPCSubscriber struct {
 func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 
 	var opts []grpc.DialOption
-	if s.AllowInsecure {
+	// We specify the option to use a self-signed certificate first so it take
+	// precedence. We also ensure these options are mutually exclusive, for
+	// example if we allowed a self-signed cert and AllowInsecure to be
+	// specified, a vague `error reading server preface: EOF` will be returned.
+	if s.SelfSignedTLSCertPath != "" {
+		creds, err := credentials.NewClientTLSFromFile(s.SelfSignedTLSCertPath, "")
+		if err != nil {
+			// If something goes wrong setting up TLS there is no point to retrying.
+			return false, err
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else if s.AllowInsecure {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		// By default we'll use the system-wide store of trusted root
+		// certificates on the system running BeeWatch. This requires the
+		// certificate the subscriber is using to have been signed by a trusted
+		// root CA. Or the certificate would have needed to been added manually
+		// as a trusted certificate.
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
 	}
-	// TODO: Handle if TLS should be used.
 
 	s.conn, err = grpc.Dial(s.Hostname+":"+s.Port, opts...)
 	if err != nil {

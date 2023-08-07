@@ -1,5 +1,5 @@
-
-[log] # Logging configuration cannot be dynamically updated after the application is started.
+# This file provides an example of all possible configuration parameters for BeeWatch.
+[log] # Logging configuration cannot be dynamically updated after the application is started except for the log level.
 type = 'logfile'
 file = '/var/log/beewatch/beewatch.log'
 level = 3
@@ -24,8 +24,9 @@ name = 'test-subscriber'
 type = 'grpc'
 grpcHostname = 'localhost'
 grpcPort = '50052'
-grpcAllowInsecure = true
-grpcDisconnectTimeout = 30 # Time we'll wait after closing our end of the connection for the subscriber to disconnect.
+grpcAllowInsecure = false
+grpcDisconnectTimeout = 30     # Time we'll wait after closing our end of the connection for the subscriber to disconnect.
+grpcSelfSignedTLSCertPath = ''
 
 [[subscriber]]
 id = 2
@@ -33,8 +34,9 @@ name = 'test-subscriber2'
 type = 'grpc'
 grpcHostname = 'localhost'
 grpcPort = '50053'
-grpcAllowInsecure = true
+grpcAllowInsecure = false
 grpcDisconnectTimeout = 30
+grpcSelfSignedTLSCertPath = ''
 
 [[subscriber]]
 id = 3
@@ -42,8 +44,9 @@ name = 'test-subscriber3'
 type = 'grpc'
 grpcHostname = 'localhost'
 grpcPort = '50054'
-grpcAllowInsecure = true
+grpcAllowInsecure = false
 grpcDisconnectTimeout = 30
+grpcSelfSignedTLSCertPath = ''
 
 [developer] # Developer configuration cannot be dynamically updated after the application has started.
 perfProfilingPort = 0

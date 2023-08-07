@@ -14,6 +14,7 @@ import (
 // IMPORTANT: When updating/refactoring AppConfig these changes need to be
 // manually applied to the pflags defined in main.go.
 type AppConfig struct {
+	CfgFile     string                      `mapstructure:"cfgFile"`
 	Log         logger.Config               `mapstructure:"log"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
 	Metadata    metadata.Config             `mapstructure:"metadata"`
@@ -50,6 +51,10 @@ func validateConfig(config AppConfig) error {
 
 	if config.Metadata.EventLogTarget == "" {
 		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no 'metadata.eventLogTarget' was specified"))
+	}
+
+	if len(config.Subscribers) == 0 && config.CfgFile == "" {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no subscribers were configured and no subscribers can be added later (no configuration file was specified)"))
 	}
 
 	if len(multiErr.Errors) > 0 {
