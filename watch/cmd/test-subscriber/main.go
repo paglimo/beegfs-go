@@ -1,12 +1,12 @@
 package main
 
-// ===== README FIRST: IMPLEMENTING YOUR OWN GRPC SUBSCRIBER =====
-// This demo implements a working example of how to read from the gRPC based
-// event stream and write the events to a database. This file has comments "Step
-// 1", "Step 2", ... that are intended to walk through defining your own gRPC
-// subscriber that reads events from BeeWatch. These steps are intended to help
-// the reader differentiate between what is actually needed to implement their
-// own gRPC subscriber, and what is used to create a working demo.
+// ===== README FIRST: IMPLEMENTING YOUR OWN GRPC SUBSCRIBER ===== This demo
+// implements a working example of how to read from the gRPC based event stream
+// and write the events to a database. This file has comments "Step 1", "Step
+// 2", ... that are intended to walk through defining your own gRPC subscriber
+// that reads events from BeeWatch. These steps are intended to help the reader
+// differentiate between what is actually needed to implement their own gRPC
+// subscriber, and what is used to create a working demo.
 //
 // Note the steps start at step 0 and setting up your imports before walking
 // through the implementation then actual use in the main function. This seemed
@@ -18,6 +18,10 @@ package main
 // building the server-side of this relationship by implementing a gRPC server
 // that accepts a stream of messages containing file system events from a gRPC
 // client (BeeWatch).
+//
+// See the Advanced section of the project README for more details on how
+// BeeWatch uses gRPC and protocol buffers along with best practices to follow
+// when implementing your own subscriber.
 
 import (
 	"context"

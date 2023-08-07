@@ -16,6 +16,11 @@ BeeWatch <!-- omit in toc -->
 - [Shutting Down BeeWatch](#shutting-down-beewatch)
 - [Advanced](#advanced)
   - [Developing gRPC Subscribers](#developing-grpc-subscribers)
+    - [Implementation Details](#implementation-details)
+    - [Best Practices](#best-practices)
+      - [Avoid dropped events by acknowledging events after they're processed](#avoid-dropped-events-by-acknowledging-events-after-theyre-processed)
+      - [Optimize performance by not acknowledging every event](#optimize-performance-by-not-acknowledging-every-event)
+      - [Avoid duplicate events by acknowledging the last event received when reconnecting](#avoid-duplicate-events-by-acknowledging-the-last-event-received-when-reconnecting)
 
 # About
 
@@ -152,4 +157,48 @@ Currently the clean shutdown is setup so events must be sent to all subscribers 
 
 ## Developing gRPC Subscribers
 
-<!-- TODO -->
+gRPC (gRPC Remote Procedural Calls) is an open source RPC framework developed by Google. It uses Protocol Buffers as its Interface Definition Language (IDL) and the protocol buffer definitions for BeeWatch can be found at: `api/proto/v1/beewatch.proto`. This file along with the Protocol Buffer compiler (protoc) and the gRPC plugin allows client and server code to be automatically generated in various programming languages including Go and C++. Generated code for Go is maintained at `api/proto/v1/` in files ending with `.pb.go`. See the list of [supported languages](https://grpc.io/docs/languages/) for how to get started in the language of your choice.
+
+BeeWatch uses the generated gRPC client code to connect and send messages (file system modification events) to one or more subscribers that implement a gRPC server that implements the interfaces defined by the BeeWatch Protocol Buffers. Note this section is not intended to replace the [Protocol Buffers](https://protobuf.dev/overview/) and [gRPC documentation](https://grpc.io/docs/what-is-grpc/introduction/), but rather provide details on how gRPC is used in the context of BeeWatch, and the expected way subscribers are should consume this functionality to optimize performance and avoid lost or duplicate events. A fully functional example is provided at `cmd/test-subscriber/main.go` with the inline comments providing step-by-step directions for getting started in Go. For those that prefer to learn by example this may be an easier place to start. 
+
+### Implementation Details
+BeeWatch implements a single `Subscriber` [service](https://grpc.io/docs/what-is-grpc/core-concepts/#service-definition) that provides a single `ReceiveEvents` [bidirectional streaming RPC](https://grpc.io/docs/what-is-grpc/core-concepts/#bidirectional-streaming-rpc). Using this RPC BeeWatch (the client) sends one or more `Event` [messages](https://protobuf.dev/programming-guides/proto3/) to gRPC servers (subscribers) that implement the `Subscriber` service and `ReceiveEvents` RPC, and receives back `Response` messages from the server. The `Event` messages carry all the information from BeeGFS file system modification event [messages](https://doc.beegfs.io/latest/advanced_topics/filesystem_modification_events.html#messages) and the `Response` message carries the sequence ID of the latest event the subscriber has processed.
+
+We use a bidirectional streaming RPC for a few reasons: 
+
+(1) Performance is greatly optimized over a unary RPC as we can reuse the same underlying TCP connection to send multiple events and responses.
+
+(2) Once established, bidirectional streams use independent streams, meaning clients and servers can read and write messages in any order. This allows the client to initiate a connection then wait for the server to send a message (for example a response indicating the last completed event), then use that information to determine what message it should send first (for example the expected next event in the sequence for this subscriber).
+
+When a gRPC subscriber is properly implemented, BeeWatch provides the following guarantees: 
+
+* As long as buffer space is available on the BeeWatch server, events will not be dropped due to a network issue or the subscriber disconnecting due to a planned/unplanned reboot.
+* Events will only be sent once (no duplicate events).
+
+### Best Practices 
+
+To properly implement a gRPC subscriber and take advantage of the capabilities provided by gRPC and bidirectional streams subscribers should adhere to the following best practices. 
+
+#### Avoid dropped events by acknowledging events after they're processed
+
+We cannot solely rely on gRPC to avoid dropped events when the connection is disrupted unexpectedly, especially if the disruption was due to a server-side shutdown/panic. This is inevitable with any network protocol,  while the client may receive acknowledgement once the message is received into the server's network buffer, there is no way to guarantee the message made it to the application and the application had a chance to do something meaningful with it (like save it to stable storage) before the crash. To fully prevent this we must provide a mechanism at the application level to acknowledge events.
+
+To this end subscribers should use `stream.Send()` to send `Responses` acknowledging the `completed_seq` of the last event they have processed. In this context, processed mean the subscriber has handled the event, perhaps saving it to a database or taking some action, and there is no chance it will need BeeWatch to resend the event. Because BeeWatch uses a bidirectional stream, generally subscribers are expected to use one thread to read new events and another thread to send acknowledgements so events can be received/processed at a different rate than they are acknowledged.
+
+While retaining events for some period of time after they are sent to a subscriber is critical to avoid dropped events, there is a finite number of events (as defined by `--metadata.eventBufferSize`) BeeWatch will keep in its buffer before old events are dropped to make way for new ones. Thus it is important once subscribers handle an event they acknowledge the event sequence ID back to BeeWatch so the corresponding buffers can be freed. Internally BeeWatch performs garbage collection periodically (determined by `--metadata.eventBufferGCFrequency`), freeing up in bulk multiple events once they are acknowledged by all subscribers. If subscribers fail to send acknowledgement (due to misconfiguration/implementation or being disconnected), once the BeeWatch buffer is full, we no longer do bulk garbage collection and fallback to deleting individual events as new events are received from the Metadata service. While this minimizes the number of events dropped due to a buffer overflow, it will incur a severe performance penalty, thus subscribers should not rely on events eventually being dropped when the buffer overflows in lieu of properly acknowledging events.
+
+TL;DR - Don't think sending acknowledgements is optional.
+
+#### Optimize performance by not acknowledging every event
+
+While eventually failing to send acknowledgements will impact performance, if BeeWatch required subscribers to send a response acknowledging each event we would add quite a bit of overhead just sending back "control" messages. This would especially impact performance if BeeWatch required subscribers to acknowledge an event before the next one is sent. 
+
+To optimize performance BeeWatch does not recommend acknowledging each event, nor does it require acknowledging an event before the next event is sent. Instead subscribers should acknowledge events on a fixed time based interval, generally every second allows for reasonable performance while avoiding buffer overflows. Note subscribers should not acknowledge events based on number of events received, as there may be extended periods where no events are sent causing events to be trapped in the buffer until enough new events are received to trigger a response. Acknowledgements are expected to be sent in order, meaning if sequences 1, 2, and 3 were sent and 3 is acknowledged, then 1 and 2 are implicitly acknowledged and BeeWatch can remove all three events from its buffers.
+
+TL;DR - Don't acknowledge every event, keep a rolling counter and acknowledge events every second.
+
+#### Avoid duplicate events by acknowledging the last event received when reconnecting
+
+BeeWatch keeps track of the last event sent and the last event acknowledged for each subscriber. Events are not removed from the buffer until they are acknowledged. When a subscriber disconnects it is possible some of the events that were sent were not actually received/processed by the subscriber. While we could simply start resending from the last acknowledged event, this means we could send the same event multiple times, which some subscribers may not expect. To prevent this when a subscriber connects/reconnects, BeeWatch waits for a brief period (based on `--handler.waitForAckAfterConnect`) for the subscriber to acknowledge the last event it received, which allows it to send the next event in the sequence. If the subscriber does not send this acknowledgement without period set by `--handler.waitForAckAfterConnect`, then BeeWatch starts sending events from the last acknowledged event.
+
+TL;DR - After reconnecting, immediately acknowledge the sequence ID of the last event you received.
