@@ -3,8 +3,8 @@ package types
 import (
 	"testing"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"github.com/stretchr/testify/assert"
+	pb "github.com/thinkparq/bee-protos/beewatch"
 )
 
 func TestNewEventBuffer(t *testing.T) {

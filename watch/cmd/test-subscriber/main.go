@@ -38,20 +38,11 @@ import (
 	"syscall"
 	"time"
 
-	// Step 0: The BeeWatch API must be imported into your project. Because this
-	// sample project exists inside the same codebase as BeeWatch the import in
-	// this file works. If you were working on an external project, the simplest
-	// way to get started is to add a "requires" directive to your go.mod file
-	// (replacing '../bee-watch/' with the absolute or relative path where you
-	// have the BeeWatch project cloned):
-	//
-	// `replace git.beegfs.io/beeflex/bee-watch => ../bee-watch/`
-	//
-	// IMPORTANT: This is a temporary approach meant for initial prototyping and
-	// testing ONLY! A more sustainable approach will be required long-term, for
-	// example by actually publishing the module on GitHub or by using GOPRIVATE.
-	// https://www.digitalocean.com/community/tutorials/how-to-use-a-private-go-module-in-your-own-project
-	bw "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	// Step 0: Import the precompiled BeeWatch Protocol Buffers and gRPC Service
+	// Definitions. Refer to the documentation at
+	// https://github.com/ThinkParQ/bee-protos#quick-start for how to get
+	// started.
+	bw "github.com/thinkparq/bee-protos/beewatch"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

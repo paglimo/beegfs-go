@@ -3,7 +3,7 @@ package types
 import (
 	"sync"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	pb "github.com/thinkparq/bee-protos/beewatch"
 )
 
 type EventRingBuffer struct {

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	pb "github.com/thinkparq/bee-protos/beewatch"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

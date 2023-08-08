@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	pb "git.beegfs.io/beeflex/bee-watch/api/proto/v1"
+	pb "github.com/thinkparq/bee-protos/beewatch"
 )
 
 // MultiCursorRingBuffer is an optimized single writer multi-reader data structure.
