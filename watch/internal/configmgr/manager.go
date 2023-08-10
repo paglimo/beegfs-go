@@ -1,4 +1,4 @@
-// Package configmgr contains functionality for handling the application's configuration.
+// Package configmgr contains generic functionality for managing application configuration.
 package configmgr
 
 import (
@@ -12,78 +12,143 @@ import (
 	"sync"
 	"syscall"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/logger"
-	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
-const (
-	ConfigEnvVariablePrefix = "BEEWATCH_"
-)
-
-// ConfigManager is used to determine the initial configuration from flags and/or a config file.
-// It also allows dynamically updating configuration for select application components.
-// This works by updating the config file then sending the app a SIGHUP.
-type ConfigManager struct {
-	initialFlags     *pflag.FlagSet
-	listeners        []ConfigListener
-	currentConfig    *AppConfig
-	updateSignal     chan os.Signal
-	updateInProgress *sync.RWMutex
+// Configurable defines an interface for managing application configurations.
+// Implementing this interface allows the configuration for different
+// applications to be managed using common configuration manager implementation
+// for generic tasks like loading and updating configuration from multiple
+// sources.
+type Configurable interface {
+	// NewEmptyInstance creates a new, zero-valued instance of the same type as
+	// the receiver. It should not share any state with the original instance
+	// and should be ready to be configured with new values. It will be used
+	// with viper.Unmarshal to get the actual configuration used by the
+	// application.
+	NewEmptyInstance() Configurable
+	// UpdateAllowed checks whether the proposed new configuration represented
+	// by the input Configurable is allowed based on the current state.
+	// Implementations should compare the new configuration with the existing
+	// one and return an error if the update is not permitted.
+	UpdateAllowed(Configurable) error
+	// ValidateConfig validates the current configuration to ensure that it
+	// meets all required criteria and constraints. It should return an error if
+	// the configuration is not valid.
+	ValidateConfig() error
 }
 
-// New attempts to read the provided configFile and parse the configuration.
-// It it fails it immediately returns an error so the app doesn't start with bad configuration.
-// If it succeeds it returns an initialized ConfigManager with the provided configuration.
-// It also returns a copy of the initial AppConfig so it can be used to initialize other managers.
-// When the app is ready to accept dynamic configuration updates the Manage() method can be called.
-func New(flags *pflag.FlagSet) (*ConfigManager, AppConfig, error) {
+// ConfigManager provides a generic solution for managing configuration for
+// multiple applications. By implementing a common interface (Configurable),
+// different types of application configuration can be handled in a uniform
+// manner to provide reusability and consistency with how configuration is
+// handled.
+//
+// ConfigManager handles loading configuration from multiple sources (flags,
+// environment variables, and a config file), then validating the configuration.
+// Configuration is initially set when New() is called. If the application
+// should support dynamic configuration updates the application should also call
+// the Manage() method to allow configuration to be updated whenever the
+// application receives a signal hangup (SIGHUP).
+//
+// The latest configuration can be accessed using one-off calls to the Get()
+// method, or by registering one or more Listener. All listeners are
+// automatically notified whenever configuration updates happen.
+type ConfigManager struct {
+	// One or more flags used to configure the application.
+	initialFlags *pflag.FlagSet
+	// This prefix will be used to determine what environment variables
+	// should be used to set this applications configuration.
+	envVarPrefix string
+	// Whenever the configuration is updated, these listeners will be
+	// automatically informed without having to manually call Get().
+	listeners []Listener
+	// currentConfig stores the actual configuration used by the application.
+	// ConfigMgr doesn't know the actual type, but instead is provided a type
+	// that satisfies the Configurable interface so we're able to handle
+	// configuration generically.
+	currentConfig Configurable
+	// ConfigManager uses updateSignal to efficiently listen for OS signals
+	// that indicate the configuration needs to be updated.
+	updateSignal chan os.Signal
+	// updateInProgress is used to lock the configuration while an update is
+	// in progress. Without this spamming SIGHUP requests may result in
+	// unpredictable behavior.
+	updateInProgress *sync.RWMutex
+	// After the initial configuration is set, the rules defined by
+	// UpdateAllowed() will be enforced.
+	initialCfgSet bool
+}
+
+// New creates a new ConfigManager that is setup to generate
+// configuration based on the provided flagset and environment variable prefix.
+// If the flagset includes a cfgFile flag, configuration from that file will
+// also be used. It does not know anything about the actual application
+// configuration, accepting instead the Configurable interface which is used to
+// unmarshal the provided configuration sources into the specific type that
+// represents the applications configuration. If it fails to initialize the
+// configuration it immediately returns an error to prevent the app from
+// starting with bad configuration.
+func New(flags *pflag.FlagSet, envVarPrefix string, config Configurable) (*ConfigManager, error) {
 
 	var mutex sync.RWMutex
 
 	cfgMgr := &ConfigManager{
 		initialFlags:     flags,
-		currentConfig:    nil,
+		envVarPrefix:     envVarPrefix,
+		currentConfig:    config,
 		updateSignal:     make(chan os.Signal, 1),
 		updateInProgress: &mutex,
+		initialCfgSet:    false,
 	}
 
-	err := cfgMgr.UpdateConfiguration()
+	err := cfgMgr.updateConfiguration()
 	if err != nil {
-		return nil, AppConfig{}, err
+		return nil, err
 	}
 
 	signal.Notify(cfgMgr.updateSignal, syscall.SIGHUP)
 
-	return cfgMgr, *cfgMgr.currentConfig, nil
+	return cfgMgr, nil
 }
 
-// Components that support dynamic configuration updates can be added as a
-// listener if they implement the ConfigListener interface AND the configuration
-// they require is specified in UpdateListeners().
-type ConfigListener interface {
-	// UpdateConfiguration is run to provide the latest AppConfig to a
-	// component. If the component is unable to update the configuration it
-	// should return a meaningful error to help diagnose and correct the
-	// configuration then wait for new configuration to be provided. The
-	// component SHOULD NOT rollback to the previous version of the
-	// configuration. The component SHOULD avoid data loss, for example if a bad
+// Components (for example a certain package in the application) that support
+// dynamic configuration updates can be added as a listener if they implement
+// the Listener interface.
+type Listener interface {
+	// UpdateConfiguration is used to provide a Configurable to a listener. We
+	// use "any" here instead of "Configurable" to give applications flexibility
+	// in how they want to handle the configuration. If the listener is unable
+	// to update the configuration it should return a meaningful error to help
+	// diagnose and correct the configuration then wait for new configuration to
+	// be provided. The component SHOULD NOT rollback to the previous version of
+	// the listener. The listener SHOULD avoid data loss, for example if a bad
 	// list of subscribers was provided, don't delete all subscribers and drop
 	// events.
-	UpdateConfiguration(...any) error
+	//
+	// To handle the "any" interface, applications can use either type assertion
+	// to get the full configuration, or choose to implement additional
+	// interfaces their component packages can use to get only the configuration
+	// they care about.
+	//
+	// Generally the latter is recommended so the application can define one
+	// AppConfig struct in a Config package that uses composition to assemble
+	// the entire application configuration from individual component packages
+	// that define their own configuration. This allows easily unmarshalling and
+	// checking of the entire configuration while also promoting encapsulation.
+	// This approach would not work if we required listeners to always work with
+	// the whole AppConfig, because then they would also need to import the
+	// AppConfig from their config package, causing a cyclical import. See the
+	// logging package for an example of this in action.
+	UpdateConfiguration(any) error
 }
 
 // Use AddListener() to add components to ConfigManager that support dynamic
-// configuration updates AFTER they're initialized. IMPORTANT: In addition to
-// implementing the ConfigListener interface, the switch in the
-// UpdateListeners() function must be extended to indicate what configuration
-// the new component requires. Best practice is to provide each component no
-// more configuration than it actually requires. Ideally each component only
-// requires the configuration defined in its own package.
-func (cm *ConfigManager) AddListener(listener ConfigListener) {
+// configuration updates AFTER they're initialized.
+func (cm *ConfigManager) AddListener(listener Listener) {
 	cm.listeners = append(cm.listeners, listener)
 }
 
@@ -93,17 +158,8 @@ func (cm *ConfigManager) AddListener(listener ConfigListener) {
 // won't rollback the configuration.
 func (cm *ConfigManager) UpdateListeners() error {
 	var multiErr types.MultiError
-	for _, mgr := range cm.listeners {
-		var err error
-		switch v := mgr.(type) {
-		case *subscribermgr.Manager:
-			err = mgr.UpdateConfiguration(cm.currentConfig.Handler, cm.currentConfig.Subscribers)
-		case *logger.Logger:
-			err = mgr.UpdateConfiguration(cm.currentConfig.Log)
-		default:
-			// Developers must explicitly specify the configuration each component requires.
-			err = fmt.Errorf("unknown configuration listener %+v will not be updated (this indicates a bug and a report should be filed)", v)
-		}
+	for _, listener := range cm.listeners {
+		err := listener.UpdateConfiguration(cm.currentConfig)
 		if err != nil {
 			multiErr.Errors = append(multiErr.Errors, err)
 		}
@@ -116,26 +172,26 @@ func (cm *ConfigManager) UpdateListeners() error {
 	return nil
 }
 
+// Get returns the current configuration. The caller can use it with a type
+// assertion to access the actual configuration values.
+func (cm *ConfigManager) Get() Configurable {
+	cm.updateInProgress.RLock()
+	defer cm.updateInProgress.RUnlock()
+	return cm.currentConfig
+}
+
 // Manage listens for an update signal (SIGHUP) and attempts to dynamically
-// update the configuration. It requires a context that should be cancelled when
-// it should terminate. It also requires a logger because the logger cannot be
-// set on the ConfigManager struct since it is also responsible for handling log
-// configuration.
-//
-// Configuration that can be updated dynamically: * Subscribers can be added,
-// removed, and edited. Configuration that can not be updated dynamically: *
-// Anything to do with the metadata socket or events buffer. If a configuration
-// update results in bad configuration, it will warn and refuse to update the
-// config.
+// update the configuration. It is commonly run as a goroutine and accepts a
+// context that should be cancelled when it should shutdown. It also requires a
+// logger because the logger cannot be set on the ConfigManager struct since it
+// is also responsible for handling log configuration.
 func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(ConfigManager{}).PkgPath())))
 
 	for {
 		// When we first start make sure all the managers have the latest configuration.
-		cm.updateInProgress.Lock()
-		err := cm.UpdateConfiguration()
-		cm.updateInProgress.Unlock()
+		err := cm.updateConfiguration()
 		if err != nil {
 			log.Warn("one or more errors occurred updating the configuration", zap.Error(err))
 		}
@@ -151,7 +207,7 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 	}
 }
 
-// UpdateConfiguration combines the following configuration sources. The
+// updateConfiguration combines the following configuration sources. The
 // following precedence order is respected (1) command line flags, (2)
 // environmental variables, (3) a configuration file, (4) default values.
 // For all configuration except for anything provided as a slice (notably
@@ -159,9 +215,13 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 // in main.go. For subscribers, defaults are defined as part of the
 // subscriber implementation in the `new<TYPE>subscriber()` method.
 //
-// Before applying the configuration static validation checks will be performed.
-// If any of its validation checks fail, the configuration will not be updated,
-// and an error will be returned immediately to be handled by the caller.
+// It takes these configuration sources and unmarshals the resulting
+// configuration into the provided Configurable. It then uses the
+// updateAllowed() and validateConfig() implemented on a particular
+// Configurable, to determine if the new configuration is valid. If these checks
+// fail the current configuration set on ConfigMgr will not be updated, and an
+// error returned to be handled by the caller. Otherwise it will set
+// cm.currentConfig equal to the new configuration.
 //
 // If validation succeeds it will attempt to propagate the configuration update
 // to other components of the app that support dynamic configuration updates. It
@@ -169,7 +229,10 @@ func (cm *ConfigManager) Manage(ctx context.Context, log *zap.Logger) {
 // there is an error dynamically updating the configuration for any component,
 // the component is expected to return a meaningful error. Any error(s) will be
 // aggregated and returned to the caller for handling.
-func (cm *ConfigManager) UpdateConfiguration() error {
+func (cm *ConfigManager) updateConfiguration() error {
+
+	cm.updateInProgress.Lock()
+	defer cm.updateInProgress.Unlock()
 
 	// We don't want to use Viper to actually persist the configuration.
 	// We mainly use Viper to simplify merging the configuration together,
@@ -222,8 +285,8 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		key := pair[0]
 		val := pair[1]
 
-		if strings.HasPrefix(key, ConfigEnvVariablePrefix) {
-			viperKey := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, ConfigEnvVariablePrefix)), "_", ".")
+		if strings.HasPrefix(key, cm.envVarPrefix) {
+			viperKey := strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(key, cm.envVarPrefix)), "_", ".")
 
 			if viperKey == "subscribers" {
 				// We do not want to allow subscribers to be specified multiple
@@ -238,7 +301,7 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 					return fmt.Errorf("rejecting configuration update: unable to parse subscribers from environment variable (check the value is contained in \"double\" quotes? and all strings within the value are contained in 'single' quotes like \"id=1,name='subscriber',type='grpc'\"): %w", err)
 				}
 			} else if viperKey == "subscriber" {
-				return fmt.Errorf("rejecting configuration update: subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", ConfigEnvVariablePrefix, ConfigEnvVariablePrefix)
+				return fmt.Errorf("rejecting configuration update: subscribers specified using environment variables should be specified using '%sSUBSCRIBERS=<LIST>' with one or more subscribers separated by a semicolon (the singular form '%sSUBSCRIBER' is not allowed)", cm.envVarPrefix, cm.envVarPrefix)
 			} else {
 				if err := v.BindEnv(viperKey, strings.ToUpper(key)); err != nil {
 					return err
@@ -281,44 +344,34 @@ func (cm *ConfigManager) UpdateConfiguration() error {
 		fmt.Printf("Dumping final merged configuration from Viper: \n\n%s\n\n", v.AllSettings())
 	}
 
-	// Get everything out of our temporary Viper store and unmarshall it into a new AppConfig.
-	var newConfig AppConfig
-	if err := v.Unmarshal(&newConfig); err != nil {
+	// Get everything out of our temporary Viper store and unmarshall it into a
+	// new empty instance of our configurable.
+	newConfig := cm.currentConfig.NewEmptyInstance()
+	if err := v.Unmarshal(newConfig); err != nil {
 		return fmt.Errorf("rejecting configuration update: unable to parse configuration (check if the configuration valid): %w", err)
 	}
 
-	if err = validateConfig(newConfig); err != nil {
+	if err = newConfig.ValidateConfig(); err != nil {
 		return err
 	}
 
-	// After initial startup some of the configuration is immutable. By
+	// After the initial configuration is set, some values are immutable. By
 	// performing the configuration check here and not as part of
-	// UpdateListeners(), we can reject the entire configuration update so its
+	// UpdateListeners(), we can reject the entire configuration update so is
 	// not partially applied.
-	if cm.currentConfig != nil {
-		if newConfig.Developer != cm.currentConfig.Developer {
-			return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Developer, newConfig.Developer)
+	if cm.initialCfgSet {
+		if err := cm.currentConfig.UpdateAllowed(newConfig); err != nil {
+			return err
 		}
-		if newConfig.Metadata != cm.currentConfig.Metadata {
-			return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Metadata, newConfig.Metadata)
-		}
-		if newConfig.Log != cm.currentConfig.Log {
-			// Use reflection to iterate over the fields of the logging conflict
-			// struct and ensure only fields we allowed to change do (currently
-			// only the level).
-			newConfigLog := reflect.ValueOf(newConfig.Log)
-			currentConfigLog := reflect.ValueOf(cm.currentConfig.Log)
-
-			for i := 0; i < newConfigLog.NumField(); i++ {
-				fieldName := newConfigLog.Type().Field(i).Name
-				if fieldName != "Level" && newConfigLog.Field(i).Interface() != currentConfigLog.Field(i).Interface() {
-					return fmt.Errorf("rejecting configuration update: unable to change logging configuration settings after startup (current settings: %+v | proposed settings: %+v)", cm.currentConfig.Log, newConfig.Log)
-				}
-			}
-		}
+	} else {
+		cm.initialCfgSet = true
 	}
 
-	cm.currentConfig = &newConfig
+	// Apply the configuration and attempt to update listeners. At this point if
+	// the listeners reject the configuration we cannot rollback. We rely on the
+	// listeners to handle bad configuration in whatever way is most
+	// appropriate.
+	cm.currentConfig = newConfig
 	return cm.UpdateListeners()
 }
 

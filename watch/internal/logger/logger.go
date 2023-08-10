@@ -10,6 +10,7 @@ import (
 	"path"
 	"reflect"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -21,6 +22,9 @@ type Logger struct {
 	*zap.Logger
 	level zap.AtomicLevel
 }
+
+// Verify all interfaces that depend on Logger are satisfied:
+var _ configmgr.Listener = &Logger{}
 
 type Config struct {
 	Type              supportedLogTypes `mapstructure:"type"`
@@ -55,10 +59,21 @@ func New(newConfig Config) (*Logger, error) {
 
 	logMgr := Logger{}
 
+	// The use of an atomic level means we can update the log level later on.
+	// However we have to keep a reference to the atomic level if we want to
+	// adjust it later (which is why we add it to the logger struct).
+	zapLevel, err := getLevel(newConfig.Level)
+	if err != nil {
+		return nil, err
+	}
+	logMgr.level = zap.NewAtomicLevelAt(zapLevel)
+
 	// Use the opinionated Zap development configuration.
 	// This notably gives us stack traces at warn and error levels.
 	if newConfig.Developer {
-		l, err := zap.NewDevelopmentConfig().Build()
+		cfg := zap.NewDevelopmentConfig()
+		cfg.Level = logMgr.level
+		l, err := cfg.Build()
 		if err != nil {
 			return nil, err
 		}
@@ -77,15 +92,6 @@ func New(newConfig Config) (*Logger, error) {
 	// handle writing to syslog in SyslogWriteSyncer.Write() MUST be updated
 	// accordingly.
 	zapEncoder := zapcore.NewConsoleEncoder(zapConfig)
-
-	// The use of an atomic level means we can update the log level later on.
-	// However we have to keep a reference to the atomic level if we want to
-	// adjust it later (which is why we add it to the logger struct).
-	zapLevel, err := getLevel(newConfig.Level)
-	if err != nil {
-		return nil, err
-	}
-	logMgr.level = zap.NewAtomicLevelAt(zapLevel)
 
 	// zapcore.WriteSyncers are what handle writing the byte slices from the
 	// encoder somewhere. This means we can easily add support for new types of
@@ -126,24 +132,33 @@ func New(newConfig Config) (*Logger, error) {
 
 }
 
-// UpdateConfiguration is used to dynamically update supported aspects of the
-// logger. Currently it only supports dynamically updating the log level.
-func (lm *Logger) UpdateConfiguration(configs ...any) error {
-	if len(configs) != 1 {
-		return fmt.Errorf("invalid configuration provided (expected only logging configuration)")
+// AppConfig must implement this interface so we can extract only the part of
+// the configuration applicable to this component in UpdateConfiguration()
+// without requiring a cyclical import of AppConfig into this component.
+type Configurer interface {
+	GetLoggingConfig() Config
+}
+
+// UpdateConfiguration satisfies the ConfigListener interface and is used to
+// dynamically update supported aspects of the logger. Currently it only
+// supports dynamically updating the log level.
+func (lm *Logger) UpdateConfiguration(newConfig any) error {
+
+	// Use type assertion to verify the newConfig interface variable is of the
+	// correct type so we can use it to get the new configuration.
+	configurer, ok := newConfig.(Configurer)
+	if !ok {
+		return fmt.Errorf("unable to get log configuration from the application configuration (most likely this indicates a bug and a report should be filed)")
 	}
 
-	newConfig, ok := configs[0].(Config)
-	if !ok {
-		return fmt.Errorf("invalid configuration provided (expected logging configuration)")
-	}
+	newLogConfig := configurer.GetLoggingConfig()
 
 	// We don't set the component on the logging struct because then it would be
 	// included in every log message. So instead set it up whenever we need to
 	// log from the logging package.
 	log := lm.Logger.With(zap.String("component", path.Base(reflect.TypeOf(Logger{}).PkgPath())))
 
-	newLevel, err := getLevel(newConfig.Level)
+	newLevel, err := getLevel(newLogConfig.Level)
 	if err != nil {
 		return err
 	}

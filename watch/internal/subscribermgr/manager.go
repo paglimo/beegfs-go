@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sync"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
 	"go.uber.org/zap"
@@ -26,6 +27,9 @@ type Manager struct {
 	wg              *sync.WaitGroup
 }
 
+// Verify all interfaces that depend on Manager are satisfied:
+var _ configmgr.Listener = &Manager{}
+
 func New(log *zap.Logger, metaEventBuffer *types.MultiCursorRingBuffer, wg *sync.WaitGroup) *Manager {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
@@ -37,32 +41,39 @@ func New(log *zap.Logger, metaEventBuffer *types.MultiCursorRingBuffer, wg *sync
 	}
 }
 
-// UpdateConfiguration is intended to be used with ConfigMgr. It accepts a
-// variadic parameter that must contain the desired handler configuration and a
-// slice of subscribers to configure. This configuration should contain all
-// subscribers including any changes to existing ones. Any subscribers found in
-// the old configuration but not in the new will be removed.
-func (sm *Manager) UpdateConfiguration(configs ...any) error {
+// AppConfig must implement this interface so we can extract only the part of
+// the configuration applicable to this component in UpdateConfiguration()
+// without requiring a cyclical import of AppConfig into this component.
+type Configurer interface {
+	GetSMConfig() (HandlerConfig, []subscriber.Config)
+}
 
-	if len(configs) != 2 {
-		return fmt.Errorf("invalid configuration provided (expected only handler and subscriber configuration)")
+// UpdateConfiguration satisfies the ConfigListener interface and is used to
+// dynamically update the handlers and subscribers they manage. The provided
+// configuration should contain all subscribers including any changes to
+// existing ones. Any subscribers found in the old configuration but not in the
+// new will be removed.
+func (sm *Manager) UpdateConfiguration(newConfig any) error {
+
+	// Use type assertion to verify the newConfig interface variable is of the
+	// correct type so we can use it to get the new configuration.
+	configurer, ok := newConfig.(Configurer)
+	if !ok {
+		return fmt.Errorf("unable to get handler and subscriber configuration from the application configuration (most likely this indicates a bug and a report should be filed)")
 	}
-
-	handlerConfig, ok1 := configs[0].(HandlerConfig)
-	subscribersConfig, ok2 := configs[1].([]subscriber.Config)
-
-	if !ok1 || !ok2 {
-		return fmt.Errorf("invalid configuration provided (expected both handler and subscriber configuration)")
-	}
+	newHandlerConfig, newSubscribersConfig := configurer.GetSMConfig()
 
 	// Make sure the new subscriber configuration is valid before we start making changes.
-	newSubscribers, err := subscriber.NewSubscribersFromConfig(subscribersConfig)
+	newSubscribers, err := subscriber.NewSubscribersFromConfig(newSubscribersConfig)
 	if err != nil {
 		return err
 	}
 
 	toAdd, toRemove, toVerify := evaluateAddedAndRemovedSubscribers(sm.handlers, newSubscribers)
 	noUpdates := true
+
+	// We handle removing subscribers by keeping track of only those we want to keep.
+	var handlersToKeep []*Handler
 	for i, h := range sm.handlers {
 		if toRemove[h.ID] {
 			sm.log.Info("removing subscriber", zap.Int("id", h.ID))
@@ -71,15 +82,13 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 			// We only want to remove cursors when subscribers are removed.
 			// This ensures we don't drop events while updating subscriber config.
 			sm.metaEventBuffer.RemoveCursor(h.ID)
-			// Remove the handler.
-			sm.handlers = append(sm.handlers[:i], sm.handlers[i+1:]...)
 		} else {
 			// Check if the subscriber or handler configuration was modified.
 			// With the current handler configuration it is likely we could swap
 			// out the configuration without restarting the handler. However
 			// we don't know what could get added in the future so we'll always
 			// stop the handler to be safe.
-			if h.Subscriber.Config != toVerify[h.ID].Config || h.config != handlerConfig {
+			if h.Subscriber.Config != toVerify[h.ID].Config || h.config != newHandlerConfig {
 				noUpdates = false
 				sm.log.Info("updating subscriber configuration", zap.Int("id", h.ID))
 				h.Stop()
@@ -87,15 +96,18 @@ func (sm *Manager) UpdateConfiguration(configs ...any) error {
 				// We don't need to unlock the mutex because it won't exist after we perform the swap.
 				// Swap out the handler. Note is important we don't just swap out the subscriber.
 				// Otherwise we'd have to worry about resetting the context and other state.
-				sm.handlers[i] = newHandler(sm.log, toVerify[h.ID], sm.metaEventBuffer, handlerConfig)
+				sm.handlers[i] = newHandler(sm.log, toVerify[h.ID], sm.metaEventBuffer, newHandlerConfig)
 				go sm.handlers[i].Handle(sm.wg)
 			}
+			handlersToKeep = append(handlersToKeep, sm.handlers[i])
 		}
 	}
+	// Update handlers with only those we want to keep.
+	sm.handlers = handlersToKeep
 
 	for _, v := range toAdd {
 		sm.log.Info("adding subscriber", zap.Int("id", v.ID))
-		h := newHandler(sm.log, v, sm.metaEventBuffer, handlerConfig)
+		h := newHandler(sm.log, v, sm.metaEventBuffer, newHandlerConfig)
 		sm.handlers = append(sm.handlers, h)
 		go h.Handle(sm.wg)
 	}

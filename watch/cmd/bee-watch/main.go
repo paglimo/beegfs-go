@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"git.beegfs.io/beeflex/bee-watch/internal/config"
 	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/logger"
 	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
@@ -22,11 +23,15 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	envVarPrefix = "BEEWATCH_"
+)
+
 func main() {
 
 	// All application configuration (AppConfig) can be set using flags. The
 	// default values specified here will be used as configuration defaults.
-	// Note defaults for configuration specified using a slice is not set here.
+	// Note defaults for configuration specified using a slice are not set here.
 	// Notably subscriber defaults are handled as part of initializing a
 	// particular subscriber type.
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
@@ -69,16 +74,21 @@ Using environment variables:
 	export %sLOG_DEBUG=true
 	export %sSUBSCRIBERS="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"
 `
-		fmt.Fprintf(os.Stderr, helpText, configmgr.ConfigEnvVariablePrefix, configmgr.ConfigEnvVariablePrefix, configmgr.ConfigEnvVariablePrefix)
+		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix)
 		os.Exit(0)
 	}
 
 	pflag.Parse()
 
 	// We initialize ConfigManager first because all components require the initial config to start up.
-	cfgMgr, initialCfg, err := configmgr.New(pflag.CommandLine)
+	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &config.AppConfig{})
 	if err != nil {
 		log.Fatalf("unable to get initial configuration: %s", err)
+	}
+	c := cfgMgr.Get()
+	initialCfg, ok := c.(*config.AppConfig)
+	if !ok {
+		log.Fatalf("configuration manager returned invalid configuration (expected BeeWatch application configuration)")
 	}
 
 	if initialCfg.Developer.DumpConfig {
