@@ -6,7 +6,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.8.3
-	github.com/thinkparq/bee-protos v0.0.0-20230808174812-5dec7b24d799
+	github.com/thinkparq/bee-protos v0.0.0-20230811210556-4b9f65385b86
 	go.uber.org/zap v1.24.0
 	google.golang.org/grpc v1.57.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

@@ -7,7 +7,7 @@ package types
 import (
 	"sync"
 
-	pb "github.com/thinkparq/bee-protos/beewatch"
+	pb "github.com/thinkparq/bee-protos/beewatch/go"
 )
 
 type EventQueue struct {

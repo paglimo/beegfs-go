@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	pb "github.com/thinkparq/bee-protos/beewatch"
+	pb "github.com/thinkparq/bee-protos/beewatch/go"
 )
 
 // Test case for a MultiCursorRingBuffer.

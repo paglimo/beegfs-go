@@ -42,7 +42,7 @@ import (
 	// Definitions. Refer to the documentation at
 	// https://github.com/ThinkParQ/bee-protos#quick-start for how to get
 	// started.
-	bw "github.com/thinkparq/bee-protos/beewatch"
+	bw "github.com/thinkparq/bee-protos/beewatch/go"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
