@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	pb "github.com/thinkparq/bee-protos/beewatch/go"
+	pb "github.com/thinkparq/protobuf/beewatch/go"
 )
 
 var (

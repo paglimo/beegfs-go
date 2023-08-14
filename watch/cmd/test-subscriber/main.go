@@ -40,9 +40,9 @@ import (
 
 	// Step 0: Import the precompiled BeeWatch Protocol Buffers and gRPC Service
 	// Definitions. Refer to the documentation at
-	// https://github.com/ThinkParQ/bee-protos#quick-start for how to get
+	// https://github.com/ThinkParQ/protobuf/README.md#quick-start for how to get
 	// started.
-	bw "github.com/thinkparq/bee-protos/beewatch/go"
+	bw "github.com/thinkparq/protobuf/beewatch/go"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
