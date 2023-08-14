@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"reflect"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
-	"git.beegfs.io/beeflex/bee-watch/internal/logger"
 	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
-	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	"github.com/thinkparq/gobee/configmgr"
+	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/gobee/types"
 )
 
 // We use ConfigManager to handle configuration updates.

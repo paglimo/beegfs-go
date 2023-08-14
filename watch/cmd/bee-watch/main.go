@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"git.beegfs.io/beeflex/bee-watch/internal/config"
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
-	"git.beegfs.io/beeflex/bee-watch/internal/logger"
 	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
+	"github.com/thinkparq/gobee/configmgr"
+	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
 )
 

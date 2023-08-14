@@ -14,9 +14,9 @@ import (
 	"reflect"
 	"sync"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/configmgr"
 	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
 	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	"github.com/thinkparq/gobee/configmgr"
 	"go.uber.org/zap"
 )
 
