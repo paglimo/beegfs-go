@@ -1,5 +1,5 @@
-# The GO_BUILD_VERSION is the official go version we are building the BeeGFS CSI driver with.
-GO_BUILD_VERSION="go1.20.2"
+# The GO_BUILD_VERSION is the official go version the project is built/tested with.
+GO_BUILD_VERSION="go1.20.6"
 INSTALLED_VERSION=$(go version | { read _ _ ver _; echo ${ver}; } )  || die "determining version of go failed"
 
 if [ "$INSTALLED_VERSION" == "$GO_BUILD_VERSION" ]
@@ -8,4 +8,5 @@ then
   
 else
   echo "WARNING - we expect to build with go version ${GO_BUILD_VERSION} but found go version ${INSTALLED_VERSION}"
+  exit 1
 fi

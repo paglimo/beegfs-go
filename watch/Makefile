@@ -5,10 +5,7 @@ SHELL := /bin/bash
 CMDS = bee-watch
 
 # Build Targets
-all: protos build
-
-check-go-version:
-	./hack/check-go-version.sh
+all: build
 
 .PHONY: build-% build clean
 
@@ -17,31 +14,22 @@ $(CMDS:%=build-%): build-%: check-go-version
 
 build: $(CMDS:%=build-%)
 
-# Generate Go code from protobuf files:
-PROTO_FILES := $(shell find ./. -name '*.proto')
-PROTO_GENERATED_FILES := $(patsubst %.proto, %.pb.go, $(PROTO_FILES))
-
-# TODO: Update this to account for proto files being under both api/ and internal/api.
-
-.PHONY: protos
-
-protos: $(PROTO_GENERATED_FILES)
-
-%.pb.go: %.proto
-	@echo "Compiling $<"
-	protoc -I $(dir $<) --go_out=$(dir $<) --go_opt=paths=source_relative --go-grpc_out=$(dir $<) --go-grpc_opt=paths=source_relative $<
-
 # Test targets: 
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
 # verify all code required to build the project has been properly committed.
 # Commonly this is done by running `make test` in CI, but could also be done locally.
 # If you ran `make test` locally you may want to use `git reset` to revert the changes.
-.PHONY: test test-gofmt test-go-tidy test-go-vendor test-protos test-licenses
-test: test-gofmt test-gofmt test-go-tidy test-go-vendor test-protos test-licenses
+.PHONY: test check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
+test: check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
+
+check-go-version:
+	@echo "Checking Go version..."
+	@./hack/check-go-version.sh
 
 # Verify that the code is formatted using gofmt: 
 # Don't run on the vendor directory to avoid false positives.
 test-gofmt:
+	@echo "Checking 'go fmt' has been run..."
 	@if [ -n "$$(gofmt -l ./ | grep -v vendor)" ]; then \
 		echo "The following files have not been formatted using gofmt:"; \
 		echo -e "\nFix individual files with: \ngofmt -w <file> \n"\
@@ -51,26 +39,23 @@ test-gofmt:
 
 # Verify that go mod tidy has been run.
 test-go-tidy: tidy
+	@echo " Checking 'go mod tidy' has been run..."
 	@if [ -n "$$(git status --porcelain go.mod go.sum)" ]; then \
 		echo "go.mod and/or go.sum are not up to date. Please run 'go mod tidy' and commit the changes."; \
 		exit 1; \
 	fi
 
 test-go-vendor:
+	@echo "Checking 'go mod vendor' has been run..."
 	@if [ -n "$$(git status --porcelain vendor)" ]; then \
         echo "Vendor directory is not up to date. Please run 'go mod vendor' and commit the changes."; \
         exit 1; \
     fi
 
-test-protos: protos
-	@if [ -n "$$(git status --porcelain */pb/*)" ]; then \
-		echo "Protobuf files are not up to date. Please run 'make protos' and commit the changes."; \
-		exit 1; \
-	fi
-
 # For details on what licenses are disallowed see https://github.com/google/go-licenses#check
 test-licenses: 
-	go-licenses check ./cmd/bee-remote/ --ignore git.beegfs.io/beeflex/bee-remote/cmd/bee-remote --ignore git.beegfs.io/beeflex/bee-remote/internal/api/v1 --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown
+	@echo "Checking license compliance..."
+	@go-licenses check ./cmd/bee-watch/ --ignore git.beegfs.io --ignore github.com/thinkparq --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown
 
 # Targets for installation of various prerequsites:
 .PHONY: install-test
@@ -83,4 +68,4 @@ clean :
 	rm -f api/proto/v1/*.go
 
 tidy :
-	go mod tidy
+	@go mod tidy
