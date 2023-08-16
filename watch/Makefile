@@ -5,14 +5,17 @@ SHELL := /bin/bash
 CMDS = bee-watch
 
 # Build Targets
-all: build
+all: build generate-notices
 
-.PHONY: build-% build clean
+.PHONY: build-% build clean generate-notices
 
 $(CMDS:%=build-%): build-%: check-go-version
 	go build -o bin/$* cmd/$*/main.go
 
 build: $(CMDS:%=build-%)
+
+generate-notices:
+	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl
 
 # Test targets: 
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -52,10 +55,19 @@ test-go-vendor:
         exit 1; \
     fi
 
-# For details on what licenses are disallowed see https://github.com/google/go-licenses#check
-test-licenses: 
+# For details on what licenses are disallowed see
+# https://github.com/google/go-licenses#check 
+#
+# IMPORTANT: Any exceptions (using --ignore) such as the one for HCL must be
+# manually added AFTER the NOTICE file has been updated and/or other appropriate
+# steps have been taken based on the license requirements.
+test-licenses: generate-notices
 	@echo "Checking license compliance..."
-	@go-licenses check ./cmd/bee-watch/ --ignore git.beegfs.io --ignore github.com/thinkparq --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown
+	@go-licenses check ./cmd/bee-watch/ --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown
+	@if [ -n "$$(git status --porcelain NOTICE.md)" ]; then \
+        echo "NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi
 
 # Targets for installation of various prerequsites:
 .PHONY: install-test
