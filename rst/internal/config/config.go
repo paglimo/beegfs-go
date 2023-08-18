@@ -5,7 +5,9 @@ import (
 	"reflect"
 
 	"github.com/mitchellh/mapstructure"
+	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/gobee/configmgr"
+	"github.com/thinkparq/gobee/logger"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 )
 
@@ -15,6 +17,8 @@ var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
 	RemoteStorageTargets []*beegfs.RemoteStorageTarget `mapstructure:"remote_storage_target"`
+	Server               server.Config                 `mapstructure:"server"`
+	Log                  logger.Config                 `mapstructure:"log"`
 	Developer            struct {
 		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
 		DumpConfig        bool `mapstructure:"dumpConfig"`
