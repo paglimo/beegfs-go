@@ -10,7 +10,9 @@ all: build generate-notices
 .PHONY: build-% build clean generate-notices
 
 $(CMDS:%=build-%): build-%: check-go-version
-	go build -o bin/$* cmd/$*/main.go
+	$(eval VERSION := $(or $(shell git tag --points-at HEAD),"unknown"))
+	@echo "Building with version: $(VERSION)"
+	go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o bin/$* cmd/$*/main.go
 
 build: $(CMDS:%=build-%)
 

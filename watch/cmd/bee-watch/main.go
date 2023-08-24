@@ -23,6 +23,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// Set by the build process using ldflags.
+var (
+	binaryName = "unknown"
+	version    = "unknown"
+	commit     = "unknown"
+	buildTime  = "unknown"
+)
+
 const (
 	envVarPrefix = "BEEWATCH_"
 )
@@ -34,9 +42,10 @@ func main() {
 	// Note defaults for configuration specified using a slice are not set here.
 	// Notably subscriber defaults are handled as part of initializing a
 	// particular subscriber type.
+	pflag.Bool("version", false, "Print the version then exit.")
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
-	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file' (if needed the directory and all parent directories will be created).")
+	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'logfile' (if needed the directory and all parent directories will be created).")
 	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
 	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
@@ -80,6 +89,11 @@ Using environment variables:
 
 	pflag.Parse()
 
+	if printVersion, _ := pflag.CommandLine.GetBool("version"); printVersion {
+		fmt.Printf("%s %s (commit: %s, built: %s)\n", binaryName, version, commit, buildTime)
+		os.Exit(0)
+	}
+
 	// We initialize ConfigManager first because all components require the initial config to start up.
 	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &config.AppConfig{})
 	if err != nil {
@@ -106,7 +120,9 @@ Using environment variables:
 		log.Fatalf("Unable to initialize logger: %s", err)
 	}
 	defer logger.Sync() // Flush any final messages before exiting.
-	logger.Info("<=== Application Initialized ===>")
+	logger.Info("<=== #### ===>")
+	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version))
+	logger.Debug("build details", zap.String("commit", commit), zap.String("built", buildTime))
 	cfgMgr.AddListener(logger)
 
 	if initialCfg.Developer.PerfProfilingPort != 0 {
