@@ -1,0 +1,221 @@
+# This is a config file for BeeWatch.
+# http://www.beegfs.com
+
+
+# --- [Table of Contents] ---
+#
+# 1) Settings
+# 2) Command Line Arguments
+# 3) Basic Settings Documentation
+# 4) Subscriber Settings Documentation
+
+#
+# --- Section 1.1: [Basic Settings] ---
+#
+
+[log]
+type = 'logfile'
+file = '/var/log/beewatch/beewatch.log'
+level = 3
+maxSize = 1000
+numRotatedFiles = 5
+
+[metadata]
+eventLogTarget = '/var/beegfs_eventlog'
+eventBufferSize = 10000000
+eventBufferGCFrequency = 100000
+
+
+[handler]
+maxReconnectBackOff = 60
+maxWaitForResponseAfterConnect = 2
+pollFrequency = 1
+
+#
+# --- Section 1.2: [Subscriber Settings] ---
+#
+
+# [[subscriber]]
+# id = 1
+# name = 'subscriber-1'
+# type = 'grpc'
+# grpcHostname = 'localhost'
+# grpcPort = '50051'
+# grpcAllowInsecure = false
+# grpcDisconnectTimeout = 30
+# grpcSelfSignedTLSCertPath = ''
+
+# [[subscriber]]
+# id = 2
+# name = 'subscriber2'
+# type = 'grpc'
+# grpcHostname = 'localhost'
+# grpcPort = '50052'
+# grpcAllowInsecure = false
+# grpcDisconnectTimeout = 30
+# grpcSelfSignedTLSCertPath = ''
+
+
+#
+# --- Section 2: [Command Line Arguments] ---
+#
+
+
+# Use the command line argument "cfgFile=/etc/anotherconfig.conf" to specify a
+# different config file for bee-watch. All other options in this file can also
+# be used as command line arguments, or set using environment variables,
+# overriding the corresponding config file values. See `bee-watch --help` for 
+# details on how to configure BeeWatch using flags and/or environment variables.
+
+
+#
+# --- Section 3: [Basic Settings Documentation] ---
+#
+
+# Where indicated, BeeWatch configuration can be updated without restarting
+# BeeWatch by updating this file then running `systemctl reload bee-watch`.
+
+#
+# --- Section 3.1: [Logging Settings] ---
+#
+
+# Logging configuration must be specified under [log]. Except the log level,
+# this configuration cannot be updated after the application is started.
+
+# [type]
+# Defines the logger type. This can either be "syslog" to send log messages to
+# the general system logger, "logfile", or "stdout". If set to logfile logs will
+# be written to the below `file` and rotated based on the provided settings. 
+
+# [file]
+# The path to the desired log file when logType is 'logfile'.
+# As needed the directory and all parent directories will be created.
+
+# [level]
+# Adjust the logging verbosity. Supported levels: 
+# 1=Warning+Error
+# 3=Info+Warning+Error
+# 5=Debug+Info+Warning+Error
+# Note: Levels above 3 might decrease performance.
+
+# [maxSize] 
+# When type is set to 'logfile' this is the maximum size of the file in
+# megabytes before it is rotated.
+
+# [numRotatedFiles] 
+# Maximum number old file(s) to keep when log.maxSize is reached and the log
+# is rotated.
+
+
+#
+# --- Section 3.2: [Metadata Settings] ---
+#
+
+# Configuration for metadata must be specified under [metadata]. This
+# configuration cannot be updated after the application is started.
+
+# [eventLogTarget]
+# The path where the BeeGFS metadata service expected to log events to a unix
+# socket (should match sysFileEventLogTarget in beegfs-meta.conf).
+
+# [eventBufferSize]
+# How many events to keep in memory if the BeeGFS metadata service sends events
+# to BeeWatch faster than they can be sent to subscribers, or a subscriber is
+# temporarily disconnected. Worst case memory usage is approximately (10KB x
+# sysFileEventBufferSize). 
+
+# [eventBufferGCFrequency]
+# After how many new events should unused buffer space be reclaimed
+# automatically. This should be set taking into consideration the buffer size.
+# More frequent garbage collection will negatively impact performance, whereas
+# less frequent garbage collection risks running out of memory and dropping
+# events. 
+
+
+#
+# --- Section 3.3: [Handler Settings] ---
+#
+
+# Configuration for subscriber handlers must be specified under [handler]. This
+# configuration applies to all subscribers and may be updated after the
+# application has started.
+
+# [maxReconnectBackoff]
+# When a connection cannot be made to a subscriber subscriber reconnection
+# attempts will be made with an exponential back off. This is the maximum time
+# in seconds between reconnection attempts to avoid increasing the back off
+# timer forever.
+
+# [waitForAckAfterConnect] 
+# When a subscriber connects/reconnects wait this long for the subscriber to
+# acknowledge the sequence ID of the last event it received successfully. This
+# prevents sending duplicate events if the connection was disrupted
+# unexpectedly. 
+
+# [pollFrequency]
+# How often subscribers should poll the metadata buffer for new events (causes
+# more CPU utilization when idle)
+
+#
+# --- Section 4.1: [Basic Subscriber Settings] ---
+#
+
+# Configuration for each subscriber must be specified under a new [[subscriber]]
+# header. Configuration options in this setting should be specified for each
+# [[subscriber]] they apply to. Subscribers may be added, removed, and updated
+# after the application has started.
+
+# [id]
+# The `id` option is used to keep track of what events should/have been sent to
+# a particular subscriber. This means all other subscriber configuration
+# (including the type) can be changed without losing events intended for a
+# particular subscriber as long as the ID remains the same. 
+
+# [name] 
+# The `name` option no special significance and is intended to help users
+# identify this subscriber in logs and configuration files.
+
+# [type] 
+# The `type` option is used to specify what protocol should be used to
+# communicate with this subscriber. Additional options will be needed based on
+# the provided type. Support types: 'grpc'.
+
+
+#
+# --- Section 4.2: [gRPC Subscriber Settings] ---
+#
+
+# The configuration options in this section must be specified under each
+# [[subscriber]] when the subscriber's type is set to 'grpc'.
+
+# [grpcHostname]
+# The IP address or hostname of the subscriber. No default.
+
+# [grpcPort]
+# What port the subscriber is listening on. No default.
+
+# [grpcDisconnectTimeout] 
+# When a local disconnect is requested, how long to wait (in seconds) for the
+# remote subscriber to also shutdown their end of the connection before just
+# closing the connection. If this value is to short then we may not receive
+# acknowledgement of events the subscriber has processed (subscribers should
+# resend the acknowledgement when they reconnect). If this value is to long,
+# then reconfiguration attempts or shutting down BeeWatch may hang for an
+# inconvenient amount of time. Default: 30 (seconds).
+
+# Using TLS to encrypt events sent to subscribers: Because file system
+# modification events can carry potentially sensitive information, it is
+# recommended to use TLS to authenticate subscribers and encrypt all
+# communication. If subscribers are configured to use a valid certificate signed
+# by a recognized Certificate Authority (CA), or your organization is using its
+# own signing server and adding the necessary certificate(s) to the system
+# running BeeWatch, no additional steps will be required. If this is not the
+# case there are a few options: 
+
+# [grpcSelfSignedCertificatePath]
+# Specify the path to a self-signed certificate.
+
+# [grpcAllowInsecure] 
+# Set to true to send all gRPC messages including potentially sensitive
+# information about file paths/names inside the file system will be sent in
+# clear text over the network.
