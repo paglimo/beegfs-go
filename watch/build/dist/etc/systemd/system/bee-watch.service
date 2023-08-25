@@ -1,14 +1,13 @@
 [Unit]
-Description=BeeWatch forwards file system modification events to subscribers.
+Description=BeeGFS File System Modification Event Watcher
 Documentation=http://www.beegfs.com/content/documentation/
 After=basic.target
 Wants=basic.target
 
 [Service]
 Type=simple
-ExecStart=/opt/beegfs/sbin/bee-watch cfgFile=/etc/beegfs/bee-watch.toml
+ExecStart=/opt/beegfs/sbin/bee-watch --cfgFile=/etc/beegfs/bee-watch.toml
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
 
 # When we shutdown we first disconnect the metadata socket then try to send all
 # outstanding events in the buffer to subscribers before shutting down. On busy

@@ -180,7 +180,7 @@ Currently the following configuration can be updated after BeeWatch has started 
 
 The primary intent is to allow subscribers to be added, removed, and updated without impacting other subscribers or dropping events. Allowing the log level to be updated on-the-fly simplifies troubleshooting issues without requiring a full restart, which may not be possible, or may loose state that makes issues difficult to reproduce. 
 
-Only configuration set using a configuration file can be updated without a restart. Because flags and environment variables cannot be updated once the application has started (and they have the highest precedence), their configuration is immutable. To update the configuration first make the appropriate changes to the configuration file then send the BeeWatch process a signal hang up (SIGUP). For example by running `kill -HUP <PID>` where PID is the process ID from `pgrep`. 
+Only configuration set using a configuration file can be updated without a restart. Because flags and environment variables cannot be updated once the application has started (and they have the highest precedence), their configuration is immutable. To update the configuration first make the appropriate changes to the configuration file then send the BeeWatch process a signal hang up (SIGUP). For example by running `kill -HUP <PID>` where PID is the process ID from `pgrep`. If BeeWatch was started using systemd then you can run `systemctl reload bee-watch`.
 
 # Shutting Down BeeWatch 
 

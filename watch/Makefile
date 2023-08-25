@@ -4,20 +4,37 @@ SHELL := /bin/bash
 # List of commands to build:
 CMDS = bee-watch
 
+# Variables that can be overridden: 
+BUILD_DIR ?= build/dist/opt/beegfs/sbin
+
 # Build Targets
 all: build generate-notices
 
 .PHONY: build-% build clean generate-notices
 
+# Use the same strategy as BeeGFS to generate a $VERSION for the binary and
+# package. The version will look like "1.0.0" if were on a commit tagged
+# "1.0.0". Otherwise it will generate a version like "1.0.0-3-g<COMMIT HASH>"
+# where "3" is the number of commits ahead of tag 1.0.0 and the <COMMIT HASH> is
+# the first ten characters of the commit hash.
 $(CMDS:%=build-%): build-%: check-go-version
-	$(eval VERSION := $(or $(shell git tag --points-at HEAD),"unknown"))
-	@echo "Building with version: $(VERSION)"
-	go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o bin/$* cmd/$*/main.go
+	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10))
+	@echo "Building $* version $(VERSION)"
+	go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
 
 build: $(CMDS:%=build-%)
 
 generate-notices:
 	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl
+
+.PHONY: package-deb
+package-deb: build
+	@[ '$(PACKAGE_DIR)' ] || { echo "Please specify the PACKAGE_DIR (this directory must not already exist)." >&2; false; }
+	@! [ -d '$(PACKAGE_DIR)' ] || { echo "Cannot use $(PACKAGE_DIR) as PACKAGE_DIR (already exists). Please remove or choose a new directory for PACKAGE_DIR." >&2; false; }
+	@echo "Building Debian packages for version $(VERSION)"
+	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/dist/DEBIAN/control.template > build/dist/DEBIAN/control
+	@mkdir packages/
+	@dpkg-deb --build build/dist/ packages/bee-watch.deb
 
 # Test targets: 
 # Test targets may make change to the local repository (e.g. running go mod tidy) to

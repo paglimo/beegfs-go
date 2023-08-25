@@ -15,7 +15,7 @@
 
 [log]
 type = 'logfile'
-file = '/var/log/beewatch/beewatch.log'
+file = '/var/log/beegfs/bee-watch.log'
 level = 3
 maxSize = 1000
 numRotatedFiles = 5
@@ -25,11 +25,11 @@ eventLogTarget = '/var/beegfs_eventlog'
 eventBufferSize = 10000000
 eventBufferGCFrequency = 100000
 
-
 [handler]
 maxReconnectBackOff = 60
 maxWaitForResponseAfterConnect = 2
 pollFrequency = 1
+
 
 #
 # --- Section 1.2: [Subscriber Settings] ---
@@ -60,7 +60,6 @@ pollFrequency = 1
 # --- Section 2: [Command Line Arguments] ---
 #
 
-
 # Use the command line argument "cfgFile=/etc/anotherconfig.conf" to specify a
 # different config file for bee-watch. All other options in this file can also
 # be used as command line arguments, or set using environment variables,
@@ -74,6 +73,7 @@ pollFrequency = 1
 
 # Where indicated, BeeWatch configuration can be updated without restarting
 # BeeWatch by updating this file then running `systemctl reload bee-watch`.
+
 
 #
 # --- Section 3.1: [Logging Settings] ---
@@ -155,6 +155,7 @@ pollFrequency = 1
 # [pollFrequency]
 # How often subscribers should poll the metadata buffer for new events (causes
 # more CPU utilization when idle)
+
 
 #
 # --- Section 4.1: [Basic Subscriber Settings] ---
