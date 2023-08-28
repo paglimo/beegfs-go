@@ -6,6 +6,12 @@ CMDS = bee-watch
 
 # Variables that can be overridden: 
 BUILD_DIR ?= build/dist/opt/beegfs/sbin
+PACKAGE_DIR ?= packages/
+PACKAGE_DEB_OUT ?= $(PACKAGE_DIR)deb
+PACKAGE_RPM_OUT ?= $(PACKAGE_DIR)rpm
+PACKAGE_DEB_BUILD ?= $(PACKAGE_DIR)debbuild
+PACKAGE_RPM_BUILD ?= $(PACKAGE_DIR)rpmbuild
+
 
 # Build Targets
 all: build generate-notices
@@ -20,21 +26,39 @@ all: build generate-notices
 $(CMDS:%=build-%): build-%: check-go-version
 	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10))
 	@echo "Building $* version $(VERSION)"
-	go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
+	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
 
 build: $(CMDS:%=build-%)
 
 generate-notices:
 	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl
 
-.PHONY: package-deb
+.PHONY: package-deb 
 package-deb: build
-	@[ '$(PACKAGE_DIR)' ] || { echo "Please specify the PACKAGE_DIR (this directory must not already exist)." >&2; false; }
-	@! [ -d '$(PACKAGE_DIR)' ] || { echo "Cannot use $(PACKAGE_DIR) as PACKAGE_DIR (already exists). Please remove or choose a new directory for PACKAGE_DIR." >&2; false; }
+	@! [ -d '$(PACKAGE_DEB_BUILD)' ] || { echo "Cannot use $(PACKAGE_DEB_BUILD) as the PACKAGE_DEB_BUILD directory (already exists). Please run `make clean` or choose a new directory for PACKAGE_DIR." >&2; false; }
 	@echo "Building Debian packages for version $(VERSION)"
-	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/dist/DEBIAN/control.template > build/dist/DEBIAN/control
-	@mkdir packages/
-	@dpkg-deb --build build/dist/ packages/bee-watch.deb
+	@mkdir -p $(PACKAGE_DEB_BUILD)/DEBIAN
+	@cp -r build/dist/* $(PACKAGE_DEB_BUILD)
+	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/DEBIAN/control.template > $(PACKAGE_DEB_BUILD)/DEBIAN/control
+	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/DEBIAN/changelog.template >  $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
+	@sed -i -e 's/DATE_PLACEHOLDER/$(shell date -R)/' $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
+	@mkdir -p $(PACKAGE_DEB_OUT)
+	@dpkg-deb --build $(PACKAGE_DEB_BUILD)/ $(PACKAGE_DEB_OUT)
+	@rm -rf $(PACKAGE_DEB_BUILD)
+
+# RPMs don't allow hypens, replace with an underscore the same way we do for BeeGFS.
+# We don't use an epoch as this typically only applies if we need to override an older versioning scheme.
+.PHONY: package-rpm
+package-rpm: build
+	@! [ -d '$(PACKAGE_RPM_BUILD)' ] || { echo "Cannot use $(PACKAGE_RPM_BUILD) as the PACKAGE_RPM_BUILD directory (already exists). Please run `make clean` or choose a new directory for PACKAGE_DIR." >&2; false; }
+	$(eval BEEGFS_VERSION_RPM := $(subst -,_,$(VERSION)))
+	@echo "Building RPM packages for version $(BEEGFS_VERSION_RPM)"
+	@mkdir -p $(PACKAGE_RPM_BUILD)/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+	@tar czvf $(PACKAGE_RPM_BUILD)/SOURCES/beewatch.tar.gz --exclude DEBIAN -C build/ dist/
+	@sed 's/VERSION_PLACEHOLDER/$(BEEGFS_VERSION_RPM)/' build/beewatch.spec.template > $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec
+	@sed -i -e 's/DATE_PLACEHOLDER/$(shell date "+%a %b %d %Y")/' $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec
+	@rpmbuild --clean -bb $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec --define '_topdir $(abspath $(PACKAGE_RPM_BUILD))' --define "_rpmdir $(abspath $(PACKAGE_RPM_OUT))"
+	@rm -rf $(PACKAGE_RPM_BUILD)
 
 # Test targets: 
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -94,9 +118,10 @@ install-test:
 	go install github.com/google/go-licenses@latest
 
 # Helper targets:
-clean :
+clean:
 	rm -f bin/*
-	rm -f api/proto/v1/*.go
+	rm -f build/dist/opt/beegfs/sbin/*
+	rm -rf $(PACKAGE_DIR)
 
 tidy :
 	@go mod tidy
