@@ -21,7 +21,7 @@ maxSize = 1000
 numRotatedFiles = 5
 
 [metadata]
-eventLogTarget = '/var/beegfs_eventlog'
+eventLogTarget = '/run/beegfs/eventlog'
 eventBufferSize = 10000000
 eventBufferGCFrequency = 100000
 

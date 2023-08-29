@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	socketPath      = flag.String("socket", "/beegfs/meta_01_tgt_0101/socket/beegfs_eventlog", "The path to the BeeGFS event log socket")
+	socketPath      = flag.String("socket", "/run/beegfs/eventlog", "The path to the BeeGFS event log socket")
 	logFile         = flag.String("logFile", "", "log to a file instead of stdout")
 	logDebug        = flag.Bool("logDebug", false, "enable logging at the debug level")
 	frequency       = flag.Duration("frequency", 1*time.Second, "how often an event should be sent to the socket (0 is as fast as possible)")

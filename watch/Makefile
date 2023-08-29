@@ -34,6 +34,10 @@ build: $(CMDS:%=build-%)
 generate-notices:
 	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl
 
+.PHONY: package-docker
+package-docker: build
+	docker build -t bee-watch:$(VERSION) . --build-arg BUILD_DIR=$(BUILD_DIR)
+
 .PHONY: package-deb 
 package-deb: build
 	@! [ -d '$(PACKAGE_DEB_BUILD)' ] || { echo "Cannot use $(PACKAGE_DEB_BUILD) as the PACKAGE_DEB_BUILD directory (already exists). Please run `make clean` or choose a new directory for PACKAGE_DIR." >&2; false; }
