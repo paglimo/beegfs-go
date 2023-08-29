@@ -1,0 +1,114 @@
+name: "Build, Test, and Publish"
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    branches:
+      - "main"
+
+env:
+  # Container image registry to publish images to:
+  REGISTRY: ghcr.io
+  # Where to push an image that will be retained (for master builds or releases) without a specific tag:
+  IMAGE_NAME: ghcr.io/thinkparq/bee-watch
+  # Where to push an image for testing (including the operator) without a specific tag:
+  TEST_IMAGE_NAME: ghcr.io/thinkparq/test-bee-watch
+  GOPRIVATE: github.com/thinkparq/*
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          # By default the checkout will do a shallow clone. With how we
+          # generate versions we specify "0" to get the full commit history
+          # because the last version tag may be any N of commits back.    
+          fetch-depth: "0"   
+      # The build tests include a "go mod tidy" step, which requires access to
+      # all Go modules used during the project's build process. This presents a
+      # challenge when our project depends on private Go modules from other
+      # repositories within our organization. Currently the GITHUB_TOKEN
+      # generated for GitHub Actions workflows has permissions limited to the
+      # current repository, meaning it cannot access other private
+      # repositories—even within the same organization.
+      #
+      # To address this limitation, iamjoemccormick has generated a fine-grained
+      # Personal Access Token (PAT) with read access to the necessary
+      # repositories. This PAT is securely stored as a secret on this repository
+      # and used to provide GitHub Actions with the required access. Note: Care
+      # has been taken to limit the PAT's permissions to the bare minimum needed
+      # for this workflow.
+      #
+      # We then setup HTTP authentication for Git:
+      # https://go.dev/doc/faq#git_https which is used by "go get" to clone
+      # repositories.
+      - name: Setup .netrc for private Go modules
+        run: |
+          echo "machine github.com login x-access-token password ${{ secrets.PROJECT_FLEX_CI_TOKEN }}" > $HOME/.netrc
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.20.6
+      # Dependencies are cached by default: https://github.com/actions/setup-go#v4
+      # This can be explicitly disabled if it ever causes problems.      
+
+      - name: Install tools required for the build and packaging process
+        run: |
+          make install-tools   
+
+      - name: Run all tests
+        run: |
+          make test
+
+      - name: Create Debian package
+        run: |
+          make package-deb
+          deb_pkg_name=$(ls packages/deb)
+          echo "DEB_PKG_NAME=$deb_pkg_name" >> $GITHUB_ENV
+
+      - name: Save Debian package as an artifact (${{ env.DEB_PKG_NAME }})
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.DEB_PKG_NAME }}
+          path: packages/deb/${{ env.DEB_PKG_NAME }}
+
+      - name: Create RPM package]
+        run: |
+          make package-rpm
+          rpm_pkg_name=$(ls packages/rpm)
+          echo "RPM_PKG_NAME=$rpm_pkg_name" >> $GITHUB_ENV
+
+      - name: Save RPM package as an artifact (${{ env.RPM_PKG_NAME }})
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.RPM_PKG_NAME }}
+          path: packages/deb/${{ env.RPM_PKG_NAME }}
+
+      # - name: Create Container Image
+      #   run: |
+      #     make package-docker IMAGE_NAME=${{ env.TEST_IMAGE_NAME }}
+
+      # - name: Log into the GitHub Container Registry
+      #   uses: docker/login-action@v2
+      #   with:
+      #     registry: ${{ env.REGISTRY }}
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+
+      # # Push the image for reuse in subsequent steps, jobs, workflows or for testing.
+      # - name: Tag and push the the container image as a test package
+      #   run: |
+      #     image_name=$(docker images | grep ${{ env.TEST_IMAGE_NAME }} | awk '{print $1":"$2}')
+      #     docker push $image_name
+

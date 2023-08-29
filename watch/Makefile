@@ -6,12 +6,12 @@ CMDS = bee-watch
 
 # Variables that can be overridden: 
 BUILD_DIR ?= build/dist/opt/beegfs/sbin
+IMAGE_NAME ?= ghcr.io/thinkparq/bee-watch
 PACKAGE_DIR ?= packages/
 PACKAGE_DEB_OUT ?= $(PACKAGE_DIR)deb
 PACKAGE_RPM_OUT ?= $(PACKAGE_DIR)rpm
 PACKAGE_DEB_BUILD ?= $(PACKAGE_DIR)debbuild
 PACKAGE_RPM_BUILD ?= $(PACKAGE_DIR)rpmbuild
-
 
 # Build Targets
 all: build generate-notices
@@ -36,7 +36,7 @@ generate-notices:
 
 .PHONY: package-docker
 package-docker: build
-	docker build -t bee-watch:$(VERSION) . --build-arg BUILD_DIR=$(BUILD_DIR)
+	docker build -t $(IMAGE_NAME):$(VERSION) . --build-arg BUILD_DIR=$(BUILD_DIR)
 
 .PHONY: package-deb 
 package-deb: build
@@ -119,9 +119,10 @@ test-licenses: generate-notices
     fi
 
 # Targets for installation of various prerequsites:
-.PHONY: install-test
-install-test: 
+.PHONY: install-tools
+install-tools: 
 	go install github.com/google/go-licenses@latest
+	sudo apt install rpm
 
 # Helper targets:
 clean:

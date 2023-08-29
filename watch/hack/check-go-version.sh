@@ -1,4 +1,5 @@
 # The GO_BUILD_VERSION is the official go version the project is built/tested with.
+# When updating be sure to also change any .github/workflows/ that install a specific Go version.
 GO_BUILD_VERSION="go1.20.6"
 INSTALLED_VERSION=$(go version | { read _ _ ver _; echo ${ver}; } )  || die "determining version of go failed"
 
