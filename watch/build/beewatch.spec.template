@@ -34,7 +34,7 @@ install -m 755 opt/beegfs/sbin/bee-watch $RPM_BUILD_ROOT/opt/beegfs/sbin/
 
 # Files and directory structure included in the final RPM:
 %files
-%attr(0744, root, root) /opt/beegfs/sbin/bee-watch
+%attr(0755, root, root) /opt/beegfs/sbin/bee-watch
 %attr(0644, root, root) /etc/beegfs/bee-watch.toml
 %attr(0644, root, root) /etc/systemd/system/bee-watch.service
 

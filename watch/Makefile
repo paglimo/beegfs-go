@@ -27,6 +27,7 @@ $(CMDS:%=build-%): build-%: check-go-version
 	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10))
 	@echo "Building $* version $(VERSION)"
 	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
+	chmod 755 $(BUILD_DIR)/$*
 
 build: $(CMDS:%=build-%)
 
@@ -43,7 +44,8 @@ package-deb: build
 	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/DEBIAN/changelog.template >  $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
 	@sed -i -e 's/DATE_PLACEHOLDER/$(shell date -R)/' $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
 	@mkdir -p $(PACKAGE_DEB_OUT)
-	@dpkg-deb --build $(PACKAGE_DEB_BUILD)/ $(PACKAGE_DEB_OUT)
+	@fakeroot chown root:root -R $(PACKAGE_DEB_BUILD)
+	@fakeroot dpkg-deb --build $(PACKAGE_DEB_BUILD)/ $(PACKAGE_DEB_OUT)
 	@rm -rf $(PACKAGE_DEB_BUILD)
 
 # RPMs don't allow hypens, replace with an underscore the same way we do for BeeGFS.
