@@ -1,5 +1,6 @@
 BeeWatch <!-- omit in toc -->
 ========
+[![Build, Test, and Publish](https://github.com/ThinkParQ/bee-watch/actions/workflows/build-test-publish.yaml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/build-test-publish.yaml)
 
 # Contents <!-- omit in toc -->
 

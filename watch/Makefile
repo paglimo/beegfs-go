@@ -121,7 +121,7 @@ test-licenses: generate-notices
 # Targets for installation of various prerequsites:
 .PHONY: install-tools
 install-tools: 
-	go install github.com/google/go-licenses@latest
+	go install github.com/google/go-licenses@v1.6.0
 	sudo apt install rpm
 
 # Helper targets:
