@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/types"
+	"github.com/thinkparq/bee-watch/internal/types"
 	"go.uber.org/zap"
 )
 

@@ -1,4 +1,4 @@
-module git.beegfs.io/beeflex/bee-watch
+module github.com/thinkparq/bee-watch
 
 go 1.20
 

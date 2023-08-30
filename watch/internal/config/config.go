@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"reflect"
 
-	"git.beegfs.io/beeflex/bee-watch/internal/metadata"
-	"git.beegfs.io/beeflex/bee-watch/internal/subscriber"
-	"git.beegfs.io/beeflex/bee-watch/internal/subscribermgr"
+	"github.com/thinkparq/bee-watch/internal/metadata"
+	"github.com/thinkparq/bee-watch/internal/subscriber"
+	"github.com/thinkparq/bee-watch/internal/subscribermgr"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/types"
