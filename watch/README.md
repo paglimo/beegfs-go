@@ -5,7 +5,10 @@ BeeWatch <!-- omit in toc -->
 # Contents <!-- omit in toc -->
 
 - [About](#about)
-- [Quick Start (for developers)](#quick-start-for-developers)
+- [Quick Start](#quick-start)
+  - [Using OS Packages](#using-os-packages)
+  - [Using Container Images](#using-container-images)
+  - [For Developers](#for-developers)
 - [Configuring BeeWatch](#configuring-beewatch)
   - [Overview](#overview)
     - [Specify Configuration Using Flags](#specify-configuration-using-flags)
@@ -32,32 +35,123 @@ BeeWatch is a replacement for the [beegfs-event-listener](https://doc.beegfs.io/
 
 BeeWatch is responsible for avoiding lost events due to network or other remote issues, for example if the server a subscriber is on reboots for updates. It does so by buffering each event received from the BeeGFS metadata service in-memory until the event is sent to all subscribers, or its internal event buffer overflows (then the oldest event(s) will be dropped). It is not responsible for avoiding lost events due to the server it runs on rebooting/crashing for any reason, this will instead be handled by future changes to the BeeGFS metadata service to add an on-disk event buffer that will be used to recreate the BeeWatch in-memory buffer after a planned/unplanned restart. When supported by subscribers it can also guarantee a particular event is only ever sent to a subscriber once.
 
-# Quick Start (for developers)
-*This guide presumes you are not working with a prebuilt BeeWatch binary, and instead have cloned the repository locally and already have [Go installed](https://go.dev/doc/install).*
+# Quick Start
 
-For BeeWatch to start the only required option is the path to the Unix socket where the BeeGFS metadata server will log file system modification events (specified in `/etc/beegfs/beegfs-meta.conf` as `sysFileEventLogTarget`). This file doesn't have to exist before BeeWatch is started, and generally BeeWatch should be started before the metadata service is actually sending events to the socket. To start BeeWatch from the `cmd/bee-watch/` directory run:
+## Using OS Packages
 
-`go run main.go --metadata.eventLogTarget=<PATH>`
+The following steps walk through installing and configuring BeeWatch using an Debian or RPM package. By default when installed using a package BeeWatch will use the default configuration file installed at `/etc/beegfs/bee-watch.toml` that will setup BeeWatch to log to a file at `/var/log/beegfs/bee-watch.log` and listen for Metadata events at `/run/beegfs/eventlog`. This section will use the default configuration to initially start BeeWatch, then show how to configure subscribers without restarting BeeWatch:
 
-At this point BeeWatch will begin buffering any events it receives from the metadata service until it reaches the default `--metadata.eventBufferSize`, then the oldest events will start to be dropped. This intentional default behavior keeps as many historical events as possible so subscribers can be added after BeeWatch has started. To allow subscribers to be configured without restarting BeeWatch we need to start it with a configuration file:
+1. On the BeeGFS metadata server where you want to use BeeWatch to forward file system modification events, download the appropriate package for your Linux distribution. Eventually packages will be made available through the BeeGFS package repositories but until then there are two options to use a package: 
+   1. A GitHub actions workflow will automatically build packages for PRs, merges to the main branch, or when a version is tagged. These packages are available for download as an artifact on the [workflow run](https://github.com/ThinkParQ/bee-watch/actions). Note currently artifacts are only retained for 90 days before they are purged based on the ThinkParQ GitHub organization settings.
+   2. Clone the GitHub repository and [build the packages yourself](build/README.md).
 
-1. Stop BeeWatch if it is still running (Ctrl+C). 
-2. Create an empty TOML file, for example: `touch beewatch.toml`
-3. Restart BeeWatch: `go run main.go --metadata.eventLogTarget=<PATH> --cfgFile=beewatch.toml`
-4. Add a subscriber to the `beewatch.toml` file. Note this subscriber doesn't actually have to exist if you just want to experiment with BeeWatch (it will simply log unable to connect):
-  ```toml
-  [[subscriber]]
-  id = 1
-  name = 'test-subscriber'
-  type = 'grpc'
-  grpcHostname = 'localhost'
-  grpcPort = '50052'
-  grpcAllowInsecure = true
-  ```
-5. From a new terminal send BeeWatch hang up signal:
+2. Install the selected package using your package manager. For example on Ubuntu run: `sudo dpkg -i bee-watch_0.0.2_amd64.deb`.
+
+3. Start the BeeWatch service with: `systemctl start bee-watch`.
+
+4. Update the BeeGFS Metadata configuration so `sysFileEventLogTarget` points at the same path as the BeeWatch eventLogTarget setting (by default `/run/beegfs/eventlog`) then start/restart the Metadata service. 
+
+5. In the `/etc/beegfs/bee-watch.toml` file configure one or more subscribers following the inline directions. 
+
+6. Reload the configuration by running `systemctl reload bee-watch`. 
+
+7. Verify the new configuration was applied successfully by looking at the BeeWatch log at `/var/log/beegfs/bee-watch.log`. 
+
+8. If you want to uninstall/cleanup stop BeeWatch with `systemctl stop bee-watch` then use the package manager to remove it. For example on Ubuntu run `sudo dpkg -r bee-watch`. 
+
+## Using Container Images
+
+While there are many ways to run containers, this is the most basic example using `docker run` that can be adapted for container orchestrators like Docker Compose or Kubernetes.
+
+Prerequisites: 
+
+* BeeGFS Metadata service logging events on the base OS at `sysFileEventLogTarget=/run/beegfs/eventlog`.
+* A subscriber listening on the default Docker bridge network at `172.17.0.1:50052`.
+* Docker installed on the same server as the Metadata service.
+* The BeeWatch container image downloaded from the [GitHub container registry](https://github.com/ThinkParQ/bee-watch/pkgs/container/bee-watch) (`docker pull ghcr.io/thinkparq/bee-watch:latest`)or [built manually](build/README.md).
+  * Currently this package is private, so you must first [login to the registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
+
+We'll start with the full `docker run` command then we'll break it down step-by-step:
+
+```shell
+docker run \
+    -v /run/beegfs:/run/beegfs \
+    bee-watch:0.0.1-3-g5bd27fa046 --metadata.eventLogTarget=/run/beegfs/eventlog --subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"
+```
+
+(1) The `-v /run/beegfs:/run/beegfs` bind mounts the /run/beegfs directory on
+the host machine's filesystem into the container. This is what allows the
+containerized BeeWatch service to access the Unix socket where the metadata
+service expects to output events.
+
+(2) The `bee-watch:0.0.1-3-g5bd27fa046` is the name of the container image built
+using `make package-docker` (see `docker images` if you're not sure the name).
+
+(3) The rest of the command are regular arguments passed to BeeWatch. First the
+path to `sysFileEventLogTarget` as
+`--metadata.eventLogTarget=/run/beegfs/eventlog`. Then the subscriber, notably
+providing the IP and host of the subscriber that is listening on the Docker
+bridge network:
+`--subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"`
+
+Here we provided all necessary BeeWatch arguments as flags, but they can also be
+specified using environment variables or a configuration file. For example we
+could have specified the `--metadata.eventLogTarget` as an environment variable: 
+
+ ```shell
+docker run \
+    -v /run/beegfs:/run/beegfs \
+    -e BEEWATCH_METADATA_EVENTLOGTARGET=/run/beegfs/eventlog \
+    bee-watch:0.0.1-3-g5bd27fa046 --subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"
+```
+
+We could also have bind mounted a configuration file into the container, if we
+wanted to dynamically update the subscriber configuration:
+
+ ```shell
+docker run \
+    -v ./build/dist/etc/beegfs:/etc/beegfs \
+    -v /run/beegfs:/run/beegfs \
+    -e BEEWATCH_METADATA_EVENTLOGTARGET=/run/beegfs/eventlog \
+    bee-watch:0.0.1-3-g5bd27fa046 --cfgFile=/etc/beegfs/bee-watch.toml --log.type=stdout
+```
+> The default configuration file sets the log.type to "logfile", but
+typically containers are setup to log to stdout which is why we override it here
+using a flag. Adjust as needed based on your requirements.
+
+The ability to use a mix of flags, environment variables, and a configuration
+file provides flexibility when running BeeWatch in a container.
+
+## For Developers
+
+*This section presumes you are not working with a prebuilt BeeWatch binary, and instead have cloned the repository locally and already have [Go installed](https://go.dev/doc/install).*
+
+For BeeWatch to start it requires:
+
+* The path to the Unix socket where the BeeGFS metadata server will log file system modification events (specified in `/etc/beegfs/beegfs-meta.conf` as `sysFileEventLogTarget`). This file doesn't have to exist before BeeWatch is started, and generally BeeWatch should be started before the metadata service is actually sending events to the socket. 
+* One of the following: 
+  * One or more subscribers configured using command line flags or environment variables. 
+  * The path to a configuration file specified using `--cfgFile`.
+
+To configure and start BeeWatch:
+
+1. Create an empty TOML file: `touch scratch/bee-watch.toml`
+2. Start BeeWatch: `go run cmd/bee-watch/main.go --metadata.eventLogTarget=<PATH> --cfgFile=scratch/bee-watch.toml`
+   1. At this point BeeWatch will begin buffering any events it receives from the metadata service until it reaches the default `--metadata.eventBufferSize`, then the oldest events will start to be dropped. This intentional default behavior keeps as many historical events as possible so subscribers can be added after BeeWatch has started.
+3. Add a subscriber to the `bee-watch.toml` file. Note this subscriber doesn't actually have to exist if you just want to experiment with BeeWatch (it will simply log unable to connect):
+```toml
+[[subscriber]]
+id = 1
+name = 'test-subscriber'
+type = 'grpc'
+grpcHostname = 'localhost'
+grpcPort = '50052'
+grpcAllowInsecure = true
+```
+4. From a new terminal send BeeWatch hang up signal:
    1. Determine the BeeWatch process ID by running `pgrep -a main` and ensuring the only PID returned is for BeeWatch (the easiest way to tell is based on the flags as the executable will look like `/tmp/go-build2521339517/b001/exe/main`).
    2. Run `kill -HUP $(pgrep main)` or run `kill -HUP <PID>` with the appropriate process ID.
-6. In the original terminal you should observe BeeWatch log it is adding a subscriber and start attempting to connect. If the subscriber doesn't exist BeeWatch will continue trying to reconnect with an exponential back off.
+5. In the original terminal you should observe BeeWatch log it is adding a subscriber and start attempting to connect. If the subscriber doesn't exist BeeWatch will continue trying to reconnect with an exponential back off.
 
 # Configuring BeeWatch
 

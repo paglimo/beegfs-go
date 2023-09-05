@@ -132,7 +132,7 @@ func (h *Handler) doDisconnect() bool {
 		h.log.Error("encountered one or more errors disconnecting subscriber (ignoring)", zap.Error(err))
 		return false
 	}
-
+	h.log.Info("disconnected subscriber")
 	return true
 }
 

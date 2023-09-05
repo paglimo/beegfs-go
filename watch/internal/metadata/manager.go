@@ -200,12 +200,43 @@ func (m *Manager) readConnection(conn net.Conn, connMutex *sync.Mutex, cancelCon
 	defer cancelConn()
 
 	for {
+		// TODO: Right now we try to guarantee we won't ever try to disconnect
+		// while we're reading an event from the Metadata service. When
+		// reworking this to support the new file system modification events
+		// network protocol (https://github.com/ThinkParQ/bee-watch/issues/16)
+		// consider taking the opportunity to simplify the approach. For
+		// example, when we start acknowledging events there may be no reason to
+		// take a lock or set a read deadline, we can just kill the connection
+		// in Manage().
+		//
+		// Until then, we lock the connection to prevent the Manager from
+		// closing it while we're in the process of reading/deserializing an
+		// event. We use a read deadline to periodically release the lock when
+		// no events are being read. This prevents read from blocking the
+		// Manager from ever gracefully shutting down the connection. This
+		// approach is intended to prevent dropped events when gracefully
+		// shutting down the app. Based on testing resetting the read deadline
+		// and relocking the mutex between reading each event has a negligible
+		// performance impact on events per second.
 		connMutex.Lock()
+		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 		bytesRead, err := conn.Read(m.buffer)
 		connMutex.Unlock()
 		if err != nil {
+			// Handle if we just exceeded the deadline and gave up the lock temporarily.
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				if bytesRead != 0 {
+					// In theory we don't need to worry about reading a partial
+					// message when setting a read deadline because we're using
+					// the unixpacket type (SOCK_SEQPACKET), so each read
+					// corresponds to a full message. If this ever did happen we
+					// would loose the event.
+					m.log.Error("reading from the metadata socket exceeded the read deadline but still returned a partial message, this should never happen and a bug should be filed", zap.Any("bytesRead", bytesRead))
+				}
+				continue
+			}
 			// Handle if we're gracefully shutting down and the socket was closed.
-			if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
+			if errors.Is(err, net.ErrClosed) {
 				m.log.Debug("disconnected from metadata service")
 				return
 			}
@@ -228,7 +259,7 @@ func (m *Manager) readConnection(conn net.Conn, connMutex *sync.Mutex, cancelCon
 			m.log.Warn("received a packet that is smaller than the expected packet size (ignoring)", zap.Uint32("expected size", event.Size), zap.Int("actual size", bytesRead))
 		}
 
-		// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
+		// TODO: https://github.com/ThinkParQ/bee-watch/issues/15
 		// This is not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
 		// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 		m.seqId++
