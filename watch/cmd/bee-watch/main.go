@@ -80,7 +80,7 @@ Further info:
 Using environment variables:
 	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with underscores (_).
 	Examples: 
-	export %sLOG_DEBUG=true
+	export %sLOG_DEVELOPER=true
 	export %sSUBSCRIBERS="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"
 `
 		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix)
