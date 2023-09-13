@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/bee-remote/internal/config"
+	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
@@ -35,6 +36,7 @@ func main() {
 	pflag.String("server.address", "localhost:9000", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
+	pflag.String("job.dbPath", "/tmp/jobsDB", "Path where the jobs database will be created/maintained.")
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
@@ -101,9 +103,22 @@ Using environment variables:
 
 	go jobServer.ListenAndServe()
 
-	<-sigs // Block and wait for a signal to shutdown.
+	errCh := make(chan error)
+	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
+
+	go jobManager.Manage()
+
+	// Block and wait for either a shutdown signal or unrecoverable error.
+	select {
+	case <-sigs:
+		logger.Info("shutting down on signal")
+	case <-errCh:
+		logger.Error("shutting down on error", zap.Error(err))
+	}
+
 	logger.Info("shutdown signal received")
 	jobServer.Stop()
+	jobManager.Stop()
 
 	logger.Info("shutdown all components, exiting")
 }
