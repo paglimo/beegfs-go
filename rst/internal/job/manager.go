@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	badger "github.com/dgraph-io/badger/v4"
+	"github.com/thinkparq/bee-remote/internal/worker"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	br "github.com/thinkparq/protobuf/beeremote/go"
 	bs "github.com/thinkparq/protobuf/beesync/go"
@@ -34,7 +35,7 @@ func NewManager(log *zap.Logger, config Config, errCh chan<- error) *Manager {
 	return &Manager{log: log, Config: config, errChan: errCh, ctx: ctx, cancel: cancel}
 }
 
-func (m *Manager) Manage() {
+func (m *Manager) Manage(jobSubmissions chan<- worker.JobSubmission, workResponses <-chan *beegfs.WorkResponse) {
 
 	db, err := badger.Open(badger.DefaultOptions(m.DBPath))
 	if err != nil {
@@ -44,15 +45,24 @@ func (m *Manager) Manage() {
 	}
 	defer db.Close()
 
+	// TODO: Evaluate if a bandwidth of 1000 is appropriate.
+	// Probably this should be user configurable.
+	// Ref: https://dgraph.io/docs/badger/get-started/#monotonically-increasing-integers
+	jobSeq, err := db.GetSequence([]byte("key"), 1000)
+	if err != nil {
+		m.log.Error("error setting up job sequence generation", zap.Error(err))
+		m.errChan <- err
+	}
+	defer jobSeq.Release()
+
 	// Create Jobs for testing:
-	entry := beegfs.Entry{Path: "/some/path"}
-	sj := bs.SyncJob{Entry: &entry}
-	jr := br.JobRequest{Name: "test", Priority: 3, Type: &br.JobRequest_Sync{Sync: &sj}}
-	j, _ := New(&jr)
+	sj := bs.SyncJob{}
+	jr := br.JobRequest{Path: "/some/path", Name: "test", Priority: 3, Type: &br.JobRequest_Sync{Sync: &sj}}
+	j, _ := New(jobSeq, &jr)
 	j.Allocate()
 
-	jr2 := br.JobRequest{Name: "test2", Priority: 6, Type: &br.JobRequest_Sync{Sync: &sj}}
-	j2, _ := New(&jr2)
+	jr2 := br.JobRequest{Path: "/some/path", Name: "test2", Priority: 6, Type: &br.JobRequest_Sync{Sync: &sj}}
+	j2, _ := New(jobSeq, &jr2)
 	j2.Allocate()
 
 	jobs := []Job{j, j2}
@@ -60,7 +70,7 @@ func (m *Manager) Manage() {
 	// Encode Jobs to a byte slice so it can be stored in Badger:
 	var jobsBuf bytes.Buffer
 	gob.Register(&SyncJob{})
-	gob.Register(&SyncRequest{})
+	gob.Register(&SyncSegment{})
 
 	enc := gob.NewEncoder(&jobsBuf)
 	if err := enc.Encode(&jobs); err != nil {
@@ -97,11 +107,12 @@ func (m *Manager) Manage() {
 
 	// Verify jobs were properly retrieved:
 	m.log.Info("retrieved job", zap.Any("jobs", retrievedJobs))
-	retrievedJobs[0].Allocate()
-	retrievedJobs[1].Allocate()
+
+	// Test submitting jobs.
+	jobSubmissions <- retrievedJobs[0].Allocate()
+	jobSubmissions <- retrievedJobs[1].Allocate()
 
 	m.errChan <- errors.New("shutdown for testing")
-
 }
 
 func (m *Manager) Stop() {

@@ -11,6 +11,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/config"
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
+	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
@@ -103,10 +104,18 @@ Using environment variables:
 
 	go jobServer.ListenAndServe()
 
+	// Use a channel to allow components to pass errors that should cause a
+	// shutdown back to the main goroutine. Typically this should only be used
+	// for startup failures (for example unable to open the DB). Failures after
+	// components are running should be handled gracefully through mechanisms
+	// like retries.
 	errCh := make(chan error)
-	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
 
-	go jobManager.Manage()
+	workerManager, jobSubmissions, workResponses := worker.NewManager(logger.Logger, errCh)
+	go workerManager.Manage()
+
+	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
+	go jobManager.Manage(jobSubmissions, workResponses)
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
 	select {
@@ -119,6 +128,7 @@ Using environment variables:
 	logger.Info("shutdown signal received")
 	jobServer.Stop()
 	jobManager.Stop()
+	workerManager.Stop()
 
 	logger.Info("shutdown all components, exiting")
 }

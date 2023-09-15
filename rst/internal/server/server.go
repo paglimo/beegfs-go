@@ -30,7 +30,7 @@ type BeeRemoteServer struct {
 	grpcServer *grpc.Server
 }
 
-// New() creates a nwe BeeRemoteServer that can be used with ListenAndServe().
+// New() creates a new BeeRemoteServer that can be used with ListenAndServe().
 func New(log *zap.Logger, config Config) (*BeeRemoteServer, error) {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(BeeRemoteServer{}).PkgPath())))
