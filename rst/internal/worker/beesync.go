@@ -9,16 +9,16 @@ import (
 
 // BeeSyncNode is a concrete implementation of a Worker.
 type BeeSyncNode struct {
-	id       string
-	Hostname string
-	Port     int
+	BeeSyncConfig
 }
 
-// BeeSyncNode satisfies the Worker interface.
-var _ Worker = &BeeSyncNode{}
+// Verify BeeSyncNode satisfies the Interface.
+var _ Interface = &BeeSyncNode{}
 
-func (n *BeeSyncNode) GetID() string {
-	return n.id
+func newBeeSyncNode(config BeeSyncConfig) *BeeSyncNode {
+	return &BeeSyncNode{
+		BeeSyncConfig: config,
+	}
 }
 
 func (n *BeeSyncNode) Connect() error {
@@ -31,8 +31,8 @@ func (n *BeeSyncNode) Send(wr WorkRequest) error {
 	if !ok {
 		return fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
 	}
-	// TODO: Send actually send the request to the node.
-	fmt.Printf("node ID %s handled request ID %s for job ID %s\n", n.GetID(), wr.getRequestID(), wr.getJobID())
+	// TODO: Actually send the request to the node.
+	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), n.Hostname, n.Port)
 	return nil
 }
 
@@ -44,9 +44,12 @@ func (n *BeeSyncNode) Disconnect() error {
 	return nil // TODO
 }
 
+func (n *BeeSyncNode) GetNodeType() NodeType {
+	return BeeSync
+}
+
 // SyncRequests are handled by BeeSync nodes.
 type SyncRequest struct {
-	BaseRequest
 	*bs.SyncRequest
 }
 
@@ -63,4 +66,8 @@ func (r *SyncRequest) getRequestID() string {
 
 func (r *SyncRequest) getStatus() beegfs.RequestStatus {
 	return *r.Metadata.GetStatus()
+}
+
+func (r *SyncRequest) getNodeType() NodeType {
+	return BeeSync
 }

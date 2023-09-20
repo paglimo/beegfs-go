@@ -13,3 +13,23 @@ policies = { localflock = true, remoteflock = false, keepdirstructure = false, k
 azure.account = "azure_account"
 azure.S3.bucket = "azure_bucket"
 azure.S3.region = "azure_region"
+
+[[worker]]
+id = "1"
+name = "beesync-01"
+type = "beesync"
+beeSyncHostname = "localhost"
+beeSyncPort = 9050
+beeSyncAllowInsecure = true
+beeSyncDisconnectTimeout = 30
+beeSyncSelfSignedTLSCertPath = ""
+
+[[worker]]
+id = "2"
+name = "beesync-02"
+type = "beesync"
+beeSyncHostname = "localhost"
+beeSyncPort = 9051
+beeSyncAllowInsecure = true
+beeSyncDisconnectTimeout = 30
+beeSyncSelfSignedTLSCertPath = ""

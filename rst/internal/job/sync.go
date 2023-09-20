@@ -54,13 +54,27 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 				OffsetStop:  10,
 				Method: &bs.Segment_S3_{
 					S3: &bs.Segment_S3{
-						MultipartId: "mpartid",
+						MultipartId: "mpartid-01",
 						PartsStart:  0,
 						PartsStop:   1024,
 					},
 				},
 			},
 		})
+		j.Segments = append(j.Segments, &SyncSegment{
+			segment: bs.Segment{
+				OffsetStart: 10,
+				OffsetStop:  20,
+				Method: &bs.Segment_S3_{
+					S3: &bs.Segment_S3{
+						MultipartId: "mpartid-02",
+						PartsStart:  1024,
+						PartsStop:   2048,
+					},
+				},
+			},
+		})
+
 		fmt.Printf("new allocation for job ID %s, name %s\n", j.Metadata.Id, j.Request.Name)
 	} else {
 		fmt.Printf("already allocated job ID %s, name %s\n", j.Metadata.Id, j.Request.Name)
@@ -72,9 +86,6 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 		fmt.Printf("request: %+v\n", s.segment.GetMethod())
 
 		wr := worker.SyncRequest{
-			BaseRequest: worker.BaseRequest{
-				NodeType: worker.BeeSync,
-			},
 			SyncRequest: &bs.SyncRequest{
 				RequestId: fmt.Sprint(i),
 				Metadata:  j.GetMetadata(),

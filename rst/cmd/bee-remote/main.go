@@ -108,10 +108,12 @@ Using environment variables:
 	// shutdown back to the main goroutine. Typically this should only be used
 	// for startup failures (for example unable to open the DB). Failures after
 	// components are running should be handled gracefully through mechanisms
-	// like retries.
+	// like retries. We don't use a buffered channel so components should not
+	// use this to send errors when they are being setup using their New()
+	// functions otherwise they will block indefinitely.
 	errCh := make(chan error)
 
-	workerManager, jobSubmissions, workResponses := worker.NewManager(logger.Logger, errCh)
+	workerManager, jobSubmissions, workResponses := worker.NewManager(logger.Logger, errCh, initialCfg.Workers)
 	go workerManager.Manage()
 
 	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
@@ -121,7 +123,7 @@ Using environment variables:
 	select {
 	case <-sigs:
 		logger.Info("shutting down on signal")
-	case <-errCh:
+	case err := <-errCh:
 		logger.Error("shutting down on error", zap.Error(err))
 	}
 

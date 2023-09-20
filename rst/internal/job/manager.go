@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
@@ -108,11 +109,26 @@ func (m *Manager) Manage(jobSubmissions chan<- worker.JobSubmission, workRespons
 	// Verify jobs were properly retrieved:
 	m.log.Info("retrieved job", zap.Any("jobs", retrievedJobs))
 
+	// Listen for responses in a separate goroutine.
+	go func() {
+		for i := 0; i < 2; i++ {
+			select {
+			case <-m.ctx.Done():
+				return
+			case r := <-workResponses:
+				m.log.Info("received response", zap.Any("response", r))
+			}
+		}
+	}()
+
 	// Test submitting jobs.
 	jobSubmissions <- retrievedJobs[0].Allocate()
 	jobSubmissions <- retrievedJobs[1].Allocate()
 
-	m.errChan <- errors.New("shutdown for testing")
+	// TODO: For testing wait a bit otherwise we'll exit before responses can be
+	// sent. Don't forget to remove later.
+	<-time.After(time.Duration(3) * time.Second)
+	m.errChan <- errors.New("automatically shutdown after test completion")
 }
 
 func (m *Manager) Stop() {
