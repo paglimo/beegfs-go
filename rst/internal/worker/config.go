@@ -7,8 +7,9 @@ import (
 )
 
 // Config defines the configuration options that could be set on any type of
-// Worker. It embeds the configuration for each type of worker to standardize
-// and simplify unmarshalling configuration and initializing workers.
+// worker node. It embeds the configuration for each type of worker to
+// standardize and simplify unmarshalling configuration and initializing
+// workers.
 type Config struct {
 	ID   string   `mapstructure:"id"`
 	Name string   `mapstructure:"name"`
@@ -21,6 +22,7 @@ type Config struct {
 	BeeSyncConfig `mapstructure:",squash"` // Configuration options for type BeeSync.
 }
 
+// BeeSyncConfig contains configuration options specific to BeeSync worker nodes.
 type BeeSyncConfig struct {
 	Hostname string `mapstructure:"beeSyncHostname"`
 	Port     int    `mapstructure:"beeSyncPort"`
@@ -31,21 +33,21 @@ type BeeSyncConfig struct {
 	SelfSignedTLSCertPath string `mapstructure:"beeSyncSelfSignedTLSCertPath"`
 }
 
-// newWorkersFromConfig is the standard way for initializing workers. It accepts
-// a slice of Worker Config defining the configuration for one or more workers.
-// It returns a slice of all workers that could be successfully initialized. If
-// it was unable to initialize any workers due to bad configuration/fields it
-// also returns an error indicating the invalid workers. It is up to the caller
-// to decide to act on the configuration if an error is returned. For example
-// the caller could choose to move forward with whatever good Workers were
-// returned and log a warning about the misconfigured workers.
-func newWorkersFromConfig(configs []Config) ([]*Worker, error) {
+// newWorkerNodesFromConfig is the standard way for initializing worker nodes.
+// It accepts a slice of Worker Config defining the configuration for one or
+// more worker nodes. It returns a slice of all nodes that could be successfully
+// initialized. If it was unable to initialize any nodes due to bad
+// configuration/fields it also returns an error indicating the invalid nodes.
+// It is up to the caller to decide to act on the configuration if an error is
+// returned. For example the caller could choose to move forward with whatever
+// good Nodes were returned and log a warning about the misconfigured nodes.
+func newWorkerNodesFromConfig(configs []Config) ([]*Node, error) {
 
-	var newWorkers []*Worker
+	var newWorkers []*Node
 	var multiErr types.MultiError
 
 	for _, config := range configs {
-		w, err := newWorkerFromConfig(config)
+		w, err := newWorkerNodeFromConfig(config)
 		if err != nil {
 			multiErr.Errors = append(multiErr.Errors, err)
 			continue
@@ -60,24 +62,27 @@ func newWorkersFromConfig(configs []Config) ([]*Worker, error) {
 	return newWorkers, nil
 }
 
-func newWorkerFromConfig(config Config) (*Worker, error) {
+// newWorkerNodeFromConfig() is intended to be used with newWorkerNodesFromConfig().
+// It accepts a single worker node configuration and returns either an
+// initialized worker node or an error.
+func newWorkerNodeFromConfig(config Config) (*Node, error) {
 
-	worker := &Worker{
+	node := &Node{
 		Config: config,
 		State: State{
 			state: DISCONNECTED,
 		},
 	}
 
-	switch worker.Type {
+	switch node.Type {
 	case BeeSync:
 		// In order to use the connect and disconnect methods from the specific
 		// BeeSync struct, we need to ensure that the interface in the Worker is
 		// actually holding a BeeSync value. If we don't do this we'll get a
 		// panic because the base Worker struct doesn't actually implement these
 		// methods.
-		worker.Interface = newBeeSyncNode(config.BeeSyncConfig)
-		return worker, nil
+		node.Worker = newBeeSyncWorker(config.BeeSyncConfig)
+		return node, nil
 	default:
 		return nil, fmt.Errorf("unknown worker type: %s", config.Type)
 	}

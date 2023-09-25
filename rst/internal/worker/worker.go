@@ -17,8 +17,8 @@ const (
 	BeeSync NodeType = "beesync"
 )
 
-// All worker nodes must implement the Interface interface.
-type Interface interface {
+// All concrete worker node types must implement the Worker interface.
+type Worker interface {
 	Connect() error
 	Send(WorkRequest) error
 	Recv() <-chan *beegfs.WorkResponse
@@ -61,19 +61,21 @@ func (s *State) SetState(newState state) {
 	s.state = newState
 }
 
-// Worker encapsulates the configuration and functionality implemented by
-// all workers. It uses an Interface to abstract implementation details for
-// a particular worker type to allow a common handler.
-type Worker struct {
+// Node encapsulates the configuration and functionality implemented by all
+// types of worker nodes. It uses an Interface to abstract implementation
+// details for a particular worker type to allow a common handler.
+type Node struct {
 	Config
 	State
-	Interface
+	// Worker should be set equal to a concrete type that fulfills the Worker
+	// interface. This is what determines what type of Node we're working with.
+	Worker
 }
 
-// ComparableWorker is a "comparable" view of the Worker struct used for testing.
-// When Worker is updated it should also be updated with any fields that are a comparable type.
-// Notably the interface is omitted and each Worker should implement its own comparable type.
-type ComparableWorker struct {
+// ComparableNode is a "comparable" view of the Node struct used for testing.
+// When Node is updated it should also be updated with any fields that are a comparable type.
+// Notably the interface is omitted and each worker should implement its own comparable type.
+type ComparableNode struct {
 	Config
 	State
 }

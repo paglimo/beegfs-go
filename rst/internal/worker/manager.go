@@ -53,7 +53,7 @@ func NewManager(log *zap.Logger, errCh chan<- error, config []Config) (*Manager,
 	responseChan := make(chan *beegfs.WorkResponse)
 
 	nodePools := make(map[NodeType]*Pool, 0)
-	workers, err := newWorkersFromConfig(config)
+	workers, err := newWorkerNodesFromConfig(config)
 	if err != nil {
 		log.Warn("encountered one or more errors configuring workers", zap.Error(err))
 	}
@@ -62,12 +62,12 @@ func NewManager(log *zap.Logger, errCh chan<- error, config []Config) (*Manager,
 		if _, ok := nodePools[worker.GetNodeType()]; !ok {
 			nodePools[worker.GetNodeType()] = &Pool{
 				nodeType: worker.GetNodeType(),
-				workers:  make([]*Worker, 0),
+				nodes:    make([]*Node, 0),
 				next:     0,
 				mu:       new(sync.Mutex),
 			}
 		}
-		nodePools[worker.GetNodeType()].workers = append(nodePools[worker.GetNodeType()].workers, worker)
+		nodePools[worker.GetNodeType()].nodes = append(nodePools[worker.GetNodeType()].nodes, worker)
 	}
 
 	return &Manager{
@@ -151,10 +151,10 @@ type Pool struct {
 	// What type of workers are in this pool. Pools are generally organized into
 	// a map based on their NodeType.
 	nodeType NodeType
-	// All workers in a particular pool should be the same underlying type,
-	// otherwise when assigning work requests, workers will reject any requests
+	// All nodes in a particular pool should be the same underlying type,
+	// otherwise when assigning work requests, nodes will reject any requests
 	// they do not support.
-	workers []*Worker
+	nodes []*Node
 	// Next is the index of the next worker that should be assigned a request.
 	next int
 	// The mutex should be locked when interacting with the pool.
@@ -167,7 +167,7 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	poolSize := len(p.workers)
+	poolSize := len(p.nodes)
 
 	if poolSize == 0 {
 		return "", fmt.Errorf("unable to assign work request to the %s node pool (no workers in pool)", p.nodeType)
@@ -176,13 +176,15 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 	// Don't retry more times than the number of workers in the pool. It could
 	// be all workers are disconnected.
 	for i := 0; i < poolSize; i++ {
-		if p.workers[p.next].GetState() == CONNECTED {
-			assignedWorker := p.workers[p.next].ID
-			err := p.workers[p.next].Send(wr)
+		if p.nodes[p.next].GetState() == CONNECTED {
+			assignedWorker := p.nodes[p.next].ID
+			err := p.nodes[p.next].Send(wr)
 
-			// TODO: Implement a more advanced mechanism to get the least busy
-			// worker in the pool. For now we'll just assign work requests round
-			// robin so just advance the next cursor wrapping around if needed.
+			// TODO: https://github.com/ThinkParQ/bee-remote/issues/7.
+			//
+			// Implement a more advanced mechanism to get the least busy worker
+			// in the pool. For now we'll just assign work requests round robin
+			// so just advance the next cursor wrapping around if needed.
 			// However this will usually lead to imbalanced utilization as work
 			// requests are expected to take varying times to complete.
 			p.next = (p.next + 1) % poolSize

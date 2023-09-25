@@ -7,44 +7,44 @@ import (
 	bs "github.com/thinkparq/protobuf/beesync/go"
 )
 
-// BeeSyncNode is a concrete implementation of a Worker.
-type BeeSyncNode struct {
+// BeeSyncWorker is a concrete implementation of a worker node.
+type BeeSyncWorker struct {
 	BeeSyncConfig
 }
 
-// Verify BeeSyncNode satisfies the Interface.
-var _ Interface = &BeeSyncNode{}
+// Verify BeeSyncWorker satisfies the Worker interface.
+var _ Worker = &BeeSyncWorker{}
 
-func newBeeSyncNode(config BeeSyncConfig) *BeeSyncNode {
-	return &BeeSyncNode{
+func newBeeSyncWorker(config BeeSyncConfig) *BeeSyncWorker {
+	return &BeeSyncWorker{
 		BeeSyncConfig: config,
 	}
 }
 
-func (n *BeeSyncNode) Connect() error {
+func (w *BeeSyncWorker) Connect() error {
 	return nil // TODO
 }
 
-func (n *BeeSyncNode) Send(wr WorkRequest) error {
+func (w *BeeSyncWorker) Send(wr WorkRequest) error {
 
 	request, ok := wr.(*SyncRequest)
 	if !ok {
 		return fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
 	}
 	// TODO: Actually send the request to the node.
-	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), n.Hostname, n.Port)
+	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), w.Hostname, w.Port)
 	return nil
 }
 
-func (n *BeeSyncNode) Recv() <-chan *beegfs.WorkResponse {
+func (w *BeeSyncWorker) Recv() <-chan *beegfs.WorkResponse {
 	return nil // TODO
 }
 
-func (n *BeeSyncNode) Disconnect() error {
+func (w *BeeSyncWorker) Disconnect() error {
 	return nil // TODO
 }
 
-func (n *BeeSyncNode) GetNodeType() NodeType {
+func (w *BeeSyncWorker) GetNodeType() NodeType {
 	return BeeSync
 }
 
@@ -56,12 +56,12 @@ type SyncRequest struct {
 // SyncRequest satisfies the WorkRequest interface.
 var _ WorkRequest = &SyncRequest{}
 
-func (r *SyncRequest) getJobID() string {
-	return r.Metadata.GetId()
+func (wr *SyncRequest) getJobID() string {
+	return wr.Metadata.GetId()
 }
 
-func (r *SyncRequest) getRequestID() string {
-	return r.GetRequestId()
+func (wr *SyncRequest) getRequestID() string {
+	return wr.GetRequestId()
 }
 
 func (r *SyncRequest) getStatus() beegfs.RequestStatus {
