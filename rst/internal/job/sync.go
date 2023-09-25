@@ -74,10 +74,6 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 				},
 			},
 		})
-
-		fmt.Printf("new allocation for job ID %s, name %s\n", j.Metadata.Id, j.Request.Name)
-	} else {
-		fmt.Printf("already allocated job ID %s, name %s\n", j.Metadata.Id, j.Request.Name)
 	}
 
 	workRequests := make([]worker.WorkRequest, 0)

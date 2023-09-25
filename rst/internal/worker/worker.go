@@ -90,6 +90,8 @@ type WorkRequest interface {
 	getRequestID() string
 	// getStatus() returns the status of the request.
 	getStatus() beegfs.RequestStatus
+	// setStatus() sets the request status and message.
+	setStatus(beegfs.RequestStatus_Status, string)
 	// getNodeType() is implemented by BaseWR.
 	getNodeType() NodeType
 }

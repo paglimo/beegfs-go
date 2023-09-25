@@ -12,7 +12,6 @@ import (
 
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	br "github.com/thinkparq/protobuf/beeremote/go"
 	bs "github.com/thinkparq/protobuf/beesync/go"
 	"go.uber.org/zap"
@@ -36,7 +35,7 @@ func NewManager(log *zap.Logger, config Config, errCh chan<- error) *Manager {
 	return &Manager{log: log, Config: config, errChan: errCh, ctx: ctx, cancel: cancel}
 }
 
-func (m *Manager) Manage(jobSubmissions chan<- worker.JobSubmission, workResponses <-chan *beegfs.WorkResponse) {
+func (m *Manager) Manage(jobSubmissions chan<- worker.JobSubmission, jobResults <-chan worker.JobResult) {
 
 	db, err := badger.Open(badger.DefaultOptions(m.DBPath))
 	if err != nil {
@@ -115,7 +114,7 @@ func (m *Manager) Manage(jobSubmissions chan<- worker.JobSubmission, workRespons
 			select {
 			case <-m.ctx.Done():
 				return
-			case r := <-workResponses:
+			case r := <-jobResults:
 				m.log.Info("received response", zap.Any("response", r))
 			}
 		}

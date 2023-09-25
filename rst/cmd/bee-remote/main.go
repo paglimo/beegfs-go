@@ -113,11 +113,11 @@ Using environment variables:
 	// functions otherwise they will block indefinitely.
 	errCh := make(chan error)
 
-	workerManager, jobSubmissions, workResponses := worker.NewManager(logger.Logger, errCh, initialCfg.Workers)
+	workerManager, jobSubmissions, jobResults := worker.NewManager(logger.Logger, errCh, initialCfg.Workers)
 	go workerManager.Manage()
 
 	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
-	go jobManager.Manage(jobSubmissions, workResponses)
+	go jobManager.Manage(jobSubmissions, jobResults)
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
 	select {

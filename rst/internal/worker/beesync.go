@@ -68,6 +68,16 @@ func (r *SyncRequest) getStatus() beegfs.RequestStatus {
 	return *r.Metadata.GetStatus()
 }
 
+func (r *SyncRequest) setStatus(status beegfs.RequestStatus_Status, message string) {
+
+	newStatus := &beegfs.RequestStatus{
+		Status:  status,
+		Message: message,
+	}
+
+	r.Metadata.Status = newStatus
+}
+
 func (r *SyncRequest) getNodeType() NodeType {
 	return BeeSync
 }
