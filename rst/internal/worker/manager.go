@@ -87,7 +87,6 @@ func NewManager(log *zap.Logger, errCh chan<- error, config []Config) (*Manager,
 		nodePools:      nodePools,
 		jobSubmissions: jobSubmissionsChan,
 		jobResults:     jobResultsChan,
-		workStore:      newWorkStore(),
 		errChan:        errCh,
 	}, jobSubmissionsChan, jobResultsChan
 }
@@ -101,6 +100,20 @@ func (m *Manager) Manage() {
 		return
 	}
 
+	// TODO: Allow the path to the workResults.db to be user configurable.
+	// We initialize the work store in Manage() so we can ensure the DB is
+	// closed properly when shutting down.
+	workStore, closeWorkStore, err := newWorkStore("/tmp/workResults.db")
+	if err != nil {
+		m.errChan <- fmt.Errorf("unable to setup work store: %s", err)
+		return
+	}
+	defer closeWorkStore()
+	m.workStore = workStore
+
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. Use a pool of
+	// goroutines to accept jobSubmissions and receive responses from worker
+	// nodes.
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -108,7 +121,7 @@ func (m *Manager) Manage() {
 			return
 		case js := <-m.jobSubmissions:
 
-			entry, releaseEntry, err := m.workStore.createAndLock(js.JobID)
+			entry, commitAndReleaseEntry, err := m.workStore.createAndLockEntry(js.JobID)
 			if err != nil {
 				// TODO: Consider how we want to handle updates to existing jobs.
 				// Ideally we allow new/updated job submissions to come through the
@@ -205,7 +218,9 @@ func (m *Manager) Manage() {
 				m.log.Info("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.results))
 			}
 			// Release the lock on the workStoreEntry.
-			releaseEntry()
+			if err = commitAndReleaseEntry(); err != nil {
+				m.log.Error("unable to commit work store entry to database", zap.Error(err))
+			}
 		}
 	}
 }
