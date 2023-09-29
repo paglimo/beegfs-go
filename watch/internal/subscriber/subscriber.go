@@ -9,7 +9,7 @@ package subscriber
 import (
 	"sync"
 
-	pb "github.com/thinkparq/protobuf/beewatch/go"
+	pb "github.com/thinkparq/protobuf/go/beewatch"
 )
 
 // This interface defines the methods all subscriber types (such as gRPC) are expected to implement.

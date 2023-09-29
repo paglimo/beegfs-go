@@ -42,7 +42,7 @@ import (
 	// Definitions. Refer to the documentation at
 	// https://github.com/ThinkParQ/protobuf/README.md#quick-start for how to get
 	// started.
-	bw "github.com/thinkparq/protobuf/beewatch/go"
+	bw "github.com/thinkparq/protobuf/go/beewatch"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

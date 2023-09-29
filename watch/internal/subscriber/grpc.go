@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/thinkparq/gobee/types"
-	pb "github.com/thinkparq/protobuf/beewatch/go"
+	pb "github.com/thinkparq/protobuf/go/beewatch"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

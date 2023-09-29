@@ -176,6 +176,8 @@ github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de h1:VNcTN9Wg0yJgdYc
 github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de/go.mod h1:89+IGF8yDedGro5RrvtidruXxAuH5Y3o0+R5QPZ5kxk=
 github.com/thinkparq/protobuf v0.0.0-20230814164658-882baa09951c h1:psY6H8U+B7MbfQS4lgK8+u86gtBKstxo9v7LDr/xH/Y=
 github.com/thinkparq/protobuf v0.0.0-20230814164658-882baa09951c/go.mod h1:CpnItylXIujUqRfjYQ470mEIHtpxslkyHQ4TFRS086I=
+github.com/thinkparq/protobuf v0.0.0-20230929113534-4506879f44b3 h1:Dp+KGXKFOEx3tJzuUI/pU0JHJqUvM/xM1pXKCJJoRTA=
+github.com/thinkparq/protobuf v0.0.0-20230929113534-4506879f44b3/go.mod h1:CpnItylXIujUqRfjYQ470mEIHtpxslkyHQ4TFRS086I=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
