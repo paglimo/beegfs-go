@@ -156,6 +156,9 @@ func evaluateAddedAndRemovedSubscribers(current []*Handler, new []*subscriber.Su
 }
 
 // Manage handles shutting down all subscribers when the app is shutting down.
+// We set things up this way so we can use different contexts for the overall
+// manager versus individual subscribers. This allows us to selectively shutdown
+// all or individual subscribers as needed.
 func (sm *Manager) Manage(ctx context.Context, wg *sync.WaitGroup) {
 
 	defer wg.Done()
