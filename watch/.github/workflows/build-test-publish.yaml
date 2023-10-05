@@ -35,8 +35,8 @@ jobs:
         with:
           # By default the checkout will do a shallow clone. With how we
           # generate versions we specify "0" to get the full commit history
-          # because the last version tag may be any N of commits back.    
-          fetch-depth: "0"   
+          # because the last version tag may be any N of commits back.
+          fetch-depth: "0"
       # The build tests include a "go mod tidy" step, which requires access to
       # all Go modules used during the project's build process. This presents a
       # challenge when our project depends on private Go modules from other
@@ -62,13 +62,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: 1.20.6
+          go-version: 1.20.7
       # Dependencies are cached by default: https://github.com/actions/setup-go#v4
-      # This can be explicitly disabled if it ever causes problems.      
+      # This can be explicitly disabled if it ever causes problems.
 
       - name: Install tools required for the build and packaging process
         run: |
-          make install-tools   
+          make install-tools
 
       - name: Run all tests
         run: |
@@ -126,7 +126,7 @@ jobs:
   publish:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
-    # We only run e2e tests for PRs and we only publish-images when we aren't on a PR. 
+    # We only run e2e tests for PRs and we only publish-images when we aren't on a PR.
     # This means publish-images has to be wired to build-and-unit-test otherwise it will always get skipped.
     needs: [build-test-package]
     if: github.event_name != 'pull_request'
