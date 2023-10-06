@@ -3,6 +3,7 @@ package worker
 import (
 	"sync"
 
+	"github.com/thinkparq/gobee/kvstore"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 )
 
@@ -94,4 +95,33 @@ type WorkRequest interface {
 	setStatus(beegfs.RequestStatus_Status, string)
 	// getNodeType() is implemented by BaseWR.
 	getNodeType() NodeType
+}
+
+// WorkResult carries status and node assignment for a particular WorkRequest.
+// It is setup so it can be copied when needed, either in JobResults or when
+// saving WorkResults to disk. The requests may not necessarily be completed and
+// the statuses of the results will reflect this.
+type WorkResult struct {
+	RequestID string
+	Status    beegfs.RequestStatus_Status
+	Message   string
+	// Assigned to indicates the node running this work request or "" if it is unassigned.
+	AssignedTo string
+}
+
+// getJobResults accepts jobID and a pointer to a kvstore.MSEntry and returns
+// the JobResults expected by JobMgr. It is expected the entry is already locked
+// and won't be deleted while getJobResults is called.
+func getJobResults[T WorkResult](jobID string, entry *kvstore.MSEntry[WorkResult]) JobResult {
+
+	results := make([]WorkResult, len(entry.Value))
+	for _, r := range entry.Value {
+		results = append(results, r)
+	}
+
+	jobResults := JobResult{
+		JobID:       jobID,
+		WorkResults: results,
+	}
+	return jobResults
 }

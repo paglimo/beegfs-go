@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/gobee/types"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	"go.uber.org/zap"
@@ -29,7 +30,7 @@ type Manager struct {
 	jobResults chan<- JobResult
 	// workStore is the store where the entries for jobs with work requests
 	// currently being handled by WorkerMgr are kept.
-	workStore *workStore
+	workStore *kvstore.MapStore[WorkResult]
 	// errChan allows the manager to return an unrecoverable error for upstream
 	// handling. It should typically only be used if an unrecoverable error
 	// occurs when first starting the manager, for example if the database is
@@ -103,7 +104,7 @@ func (m *Manager) Manage() {
 	// TODO: Allow the path to the workResults.db to be user configurable.
 	// We initialize the work store in Manage() so we can ensure the DB is
 	// closed properly when shutting down.
-	workStore, closeWorkStore, err := newWorkStore("/tmp/workResults.db")
+	workStore, closeWorkStore, err := kvstore.NewMapStore[WorkResult]("/tmp/workResults.db")
 	if err != nil {
 		m.errChan <- fmt.Errorf("unable to setup work store: %s", err)
 		return
@@ -121,7 +122,7 @@ func (m *Manager) Manage() {
 			return
 		case js := <-m.jobSubmissions:
 
-			entry, commitAndReleaseEntry, err := m.workStore.createAndLockEntry(js.JobID)
+			entry, commitAndReleaseEntry, err := m.workStore.CreateAndLockEntry(js.JobID)
 			if err != nil {
 				// TODO: Consider how we want to handle updates to existing jobs.
 				// Ideally we allow new/updated job submissions to come through the
@@ -161,7 +162,7 @@ func (m *Manager) Manage() {
 				}
 
 				fullStatus := wr.getStatus()
-				entry.results[wr.getRequestID()] = WorkResult{
+				entry.Value[wr.getRequestID()] = WorkResult{
 					RequestID:  wr.getRequestID(),
 					Status:     fullStatus.Status,
 					Message:    fullStatus.Message,
@@ -190,7 +191,7 @@ func (m *Manager) Manage() {
 				// buffered channel and the size of the channel determines how
 				// many outstanding work requests we'll allow.
 				isFatal := true // Force all errors to be fatal for now.
-				for _, r := range entry.results {
+				for _, r := range entry.Value {
 					if r.Status == beegfs.RequestStatus_FAILED {
 						// If any requests failed just cancel any requests that did started.
 						isFatal = true
@@ -199,7 +200,7 @@ func (m *Manager) Manage() {
 				}
 
 				if isFatal {
-					for _, r := range entry.results {
+					for _, r := range entry.Value {
 						if r.Status == beegfs.RequestStatus_ASSIGNED {
 							// TODO: https://github.com/ThinkParQ/bee-remote/issues/7
 							// Request the WR be cancelled. Probably using a new method
@@ -209,18 +210,29 @@ func (m *Manager) Manage() {
 						}
 					}
 					// If a fatal error happened let JobMgr know immediately.
-					m.jobResults <- getResults(entry)
+					m.jobResults <- getJobResults(js.JobID, entry)
 					m.log.Error("unable to assign job", zap.Any("jobID", js.JobID), zap.Error(err))
 				} else {
-					m.log.Info("unable to assign all requests for job (retrying)", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.results))
+					m.log.Warn("unable to assign all requests for job (retrying)", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.Value))
 				}
 			} else {
-				m.log.Info("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.results))
+				m.log.Debug("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.Value))
 			}
 			// Release the lock on the workStoreEntry.
 			if err = commitAndReleaseEntry(); err != nil {
 				m.log.Error("unable to commit work store entry to database", zap.Error(err))
 			}
+
+			// TODO: Test code, delete before submitting a PR.
+			//
+			// testEntry, TestFunc, err := m.workStore.GetAndLockEntry(js.JobID)
+			// defer TestFunc()
+			// if err != nil {
+			// 	m.log.Error("error", zap.Error(err))
+			// } else {
+			// 	m.log.Info("test", zap.Any("test", testEntry.Value))
+			// }
+
 		}
 	}
 }
