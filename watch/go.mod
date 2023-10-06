@@ -6,7 +6,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.3
 	github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de
-	github.com/thinkparq/protobuf v0.0.0-20230929113534-4506879f44b3
+	github.com/thinkparq/protobuf v0.0.0-20231006060157-5ac69a9b5d11
 	go.uber.org/zap v1.25.0
 	google.golang.org/grpc v1.57.0
 )

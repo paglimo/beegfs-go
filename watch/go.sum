@@ -174,8 +174,8 @@ github.com/subosito/gotenv v1.4.2 h1:X1TuBLAMDFbaTAChgCBLu3DU3UPyELpnF2jjJ2cz/S8
 github.com/subosito/gotenv v1.4.2/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
 github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de h1:VNcTN9Wg0yJgdYcNuJ8hoY/E4AYwnR0b1RJYAynPZbQ=
 github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de/go.mod h1:89+IGF8yDedGro5RrvtidruXxAuH5Y3o0+R5QPZ5kxk=
-github.com/thinkparq/protobuf v0.0.0-20230929113534-4506879f44b3 h1:Dp+KGXKFOEx3tJzuUI/pU0JHJqUvM/xM1pXKCJJoRTA=
-github.com/thinkparq/protobuf v0.0.0-20230929113534-4506879f44b3/go.mod h1:CpnItylXIujUqRfjYQ470mEIHtpxslkyHQ4TFRS086I=
+github.com/thinkparq/protobuf v0.0.0-20231006060157-5ac69a9b5d11 h1:b0iL//zPcRtNcXnaW5+A8J2V4UnHzhU7m/pO6TBgu0o=
+github.com/thinkparq/protobuf v0.0.0-20231006060157-5ac69a9b5d11/go.mod h1:CpnItylXIujUqRfjYQ470mEIHtpxslkyHQ4TFRS086I=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

@@ -71,12 +71,15 @@ package-rpm: build
 # verify all code required to build the project has been properly committed.
 # Commonly this is done by running `make test` in CI, but could also be done locally.
 # If you ran `make test` locally you may want to use `git reset` to revert the changes.
-.PHONY: test check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
-test: check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
+.PHONY: test test-unit check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
+test: check-go-version test-unit test-gofmt test-go-tidy test-go-vendor test-licenses
 
 check-go-version:
 	@echo "Checking Go version..."
 	@./hack/check-go-version.sh
+
+test-unit: 
+	@go test ./...
 
 # Verify that the code is formatted using gofmt: 
 # Don't run on the vendor directory to avoid false positives.

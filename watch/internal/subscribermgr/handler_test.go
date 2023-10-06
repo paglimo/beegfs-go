@@ -21,7 +21,7 @@ func TestNewHandler(t *testing.T) {
 
 	t.Run("verify handler is initialized correctly", func(t *testing.T) {
 		subscriber := &subscriber.Subscriber{}
-		metaEventBuffer := &types.MultiCursorRingBuffer{}
+		metaEventBuffer := types.NewMultiCursorRingBuffer(1024, 128)
 		handler := newHandler(logger, subscriber, metaEventBuffer, handlerConfig)
 		assert.Equal(t, 3, handlerConfig.PollFrequency)
 		assert.NotNil(t, handler.metaEventBuffer)

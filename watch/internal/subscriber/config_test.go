@@ -22,9 +22,10 @@ var testConfig = []Config{
 		ID:   2,
 		Name: "beegfs-mon",
 		GrpcConfig: GrpcConfig{
-			Hostname:      "bm-1",
-			Port:          "512312",
-			AllowInsecure: false,
+			Hostname:          "bm-1",
+			Port:              "512312",
+			AllowInsecure:     false,
+			DisconnectTimeout: 1,
 		},
 	},
 }
@@ -57,9 +58,10 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 			},
 			Interface: &GRPCSubscriber{
 				GrpcConfig: GrpcConfig{
-					Hostname:      "br-1",
-					Port:          "1234",
-					AllowInsecure: true,
+					Hostname:          "br-1",
+					Port:              "1234",
+					AllowInsecure:     true,
+					DisconnectTimeout: 30,
 				},
 			},
 		}, {
@@ -68,9 +70,10 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 				Name: "beegfs-mon",
 				Type: "grpc",
 				GrpcConfig: GrpcConfig{
-					Hostname:      "bm-1",
-					Port:          "512312",
-					AllowInsecure: false,
+					Hostname:          "bm-1",
+					Port:              "512312",
+					AllowInsecure:     false,
+					DisconnectTimeout: 1,
 				},
 			},
 			State: State{
@@ -78,9 +81,10 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 			},
 			Interface: &GRPCSubscriber{
 				GrpcConfig: GrpcConfig{
-					Hostname:      "bm-1",
-					Port:          "512312",
-					AllowInsecure: false,
+					Hostname:          "bm-1",
+					Port:              "512312",
+					AllowInsecure:     false,
+					DisconnectTimeout: 1,
 				},
 			},
 		},
