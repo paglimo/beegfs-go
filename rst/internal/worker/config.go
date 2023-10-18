@@ -1,9 +1,12 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/thinkparq/gobee/types"
+	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	"go.uber.org/zap"
 )
 
 // Config defines the configuration options that could be set on any type of
@@ -11,9 +14,12 @@ import (
 // standardize and simplify unmarshalling configuration and initializing
 // workers.
 type Config struct {
-	ID   string   `mapstructure:"id"`
-	Name string   `mapstructure:"name"`
-	Type NodeType `mapstructure:"type"`
+	ID                             string   `mapstructure:"id"`
+	Name                           string   `mapstructure:"name"`
+	Type                           NodeType `mapstructure:"type"`
+	MaxReconnectBackOff            int      `mapstructure:"maxReconnectBackOff"`
+	MaxWaitForResponseAfterConnect int      `mapstructure:"maxWaitForResponseAfterConnect"`
+	WorkQueueSize                  int      `mapstructure:"workQueueSize"`
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into the worker Config.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
@@ -41,13 +47,13 @@ type BeeSyncConfig struct {
 // It is up to the caller to decide to act on the configuration if an error is
 // returned. For example the caller could choose to move forward with whatever
 // good Nodes were returned and log a warning about the misconfigured nodes.
-func newWorkerNodesFromConfig(configs []Config) ([]*Node, error) {
+func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *beegfs.WorkResponse, configs []Config) ([]*Node, error) {
 
 	var newWorkers []*Node
 	var multiErr types.MultiError
 
 	for _, config := range configs {
-		w, err := newWorkerNodeFromConfig(config)
+		w, err := newWorkerNodeFromConfig(log, workResponses, config)
 		if err != nil {
 			multiErr.Errors = append(multiErr.Errors, err)
 			continue
@@ -65,13 +71,21 @@ func newWorkerNodesFromConfig(configs []Config) ([]*Node, error) {
 // newWorkerNodeFromConfig() is intended to be used with newWorkerNodesFromConfig().
 // It accepts a single worker node configuration and returns either an
 // initialized worker node or an error.
-func newWorkerNodeFromConfig(config Config) (*Node, error) {
+func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *beegfs.WorkResponse, config Config) (*Node, error) {
+
+	log = log.With(zap.String("nodeID", config.ID), zap.String("nodeName", config.Name))
+	ctx, cancel := context.WithCancel(context.Background())
 
 	node := &Node{
 		Config: config,
 		State: State{
 			state: DISCONNECTED,
 		},
+		ctx:           ctx,
+		cancel:        cancel,
+		log:           log,
+		WorkQueue:     make(chan WorkRequest, config.WorkQueueSize),
+		workResponses: workResponses,
 	}
 
 	switch node.Type {
@@ -81,7 +95,7 @@ func newWorkerNodeFromConfig(config Config) (*Node, error) {
 		// actually holding a BeeSync value. If we don't do this we'll get a
 		// panic because the base Worker struct doesn't actually implement these
 		// methods.
-		node.Worker = newBeeSyncWorker(config.BeeSyncConfig)
+		node.worker = newBeeSyncWorker(config.BeeSyncConfig)
 		return node, nil
 	default:
 		return nil, fmt.Errorf("unknown worker type: %s", config.Type)

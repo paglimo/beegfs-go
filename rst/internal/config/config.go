@@ -10,6 +10,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/gobee/types"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 )
 
@@ -22,6 +23,7 @@ type AppConfig struct {
 	Server               server.Config                 `mapstructure:"server"`
 	Log                  logger.Config                 `mapstructure:"log"`
 	Job                  job.Config                    `mapstructure:"job"`
+	WorkerMgr            worker.ManagerConfig          `mapstructure:"workerMgr"`
 	Workers              []worker.Config               `mapstructure:"worker"`
 	Developer            struct {
 		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
@@ -41,7 +43,20 @@ func (c *AppConfig) UpdateAllowed(newConfig configmgr.Configurable) error {
 }
 
 func (c *AppConfig) ValidateConfig() error {
-	// TODO: Implement
+
+	var multiErr types.MultiError
+	if c.Job.DBPath == "" {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.DBPath must be set to a valid path (provided path: '%s')", c.Job.DBPath))
+	}
+	if c.WorkerMgr.DBPath == "" {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("workerMgr.DBPath must be set to a valid path (provided path: '%s')", c.WorkerMgr.DBPath))
+	}
+
+	// TODO: Implement other checks as needed.
+
+	if len(multiErr.Errors) > 0 {
+		return &multiErr
+	}
 	return nil
 }
 

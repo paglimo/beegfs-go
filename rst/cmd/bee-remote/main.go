@@ -37,7 +37,9 @@ func main() {
 	pflag.String("server.address", "localhost:9000", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
-	pflag.String("job.dbPath", "/tmp/jobsDB", "Path where the jobs database will be created/maintained.")
+	pflag.String("job.dbPath", "", "Path where the jobs database will be created/maintained.")
+	pflag.String("workerMgr.dbPath", "", "Path where the worker manager database will be created/maintained.")
+	pflag.Int("workerMgr.dbCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
@@ -113,7 +115,7 @@ Using environment variables:
 	// functions otherwise they will block indefinitely.
 	errCh := make(chan error)
 
-	workerManager, jobSubmissions, jobResults := worker.NewManager(logger.Logger, errCh, initialCfg.Workers)
+	workerManager, jobSubmissions, jobResults := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
 	go workerManager.Manage()
 
 	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)

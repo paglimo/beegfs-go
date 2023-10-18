@@ -21,8 +21,8 @@ func newBeeSyncWorker(config BeeSyncConfig) *BeeSyncWorker {
 	}
 }
 
-func (w *BeeSyncWorker) Connect() error {
-	return nil // TODO
+func (w *BeeSyncWorker) Connect() (bool, error) {
+	return true, nil // TODO
 }
 
 func (w *BeeSyncWorker) Send(wr WorkRequest) error {

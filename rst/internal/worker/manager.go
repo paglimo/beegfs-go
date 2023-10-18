@@ -13,11 +13,19 @@ import (
 	"go.uber.org/zap"
 )
 
+type ManagerConfig struct {
+	DBPath      string `mapstructure:"dbPath"`
+	DBCacheSize int    `mapstructure:"dbCacheSize"`
+}
+
 // The WorkerManager handles mapping WorkRequests to the appropriate node type.
 type Manager struct {
 	log    *zap.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
+	// The wait group is incremented for each node that is being managed.
+	// This is how we ensure all nodes are disconnected before shutting down.
+	nodeWG *sync.WaitGroup
 	// nodePools allows us to define a different pool for each type of worker
 	// node. Currently we only support one Pool per NodeType, however in the
 	// future nodePools could be modified to support multiple Pools for each
@@ -28,14 +36,18 @@ type Manager struct {
 	jobSubmissions <-chan JobSubmission
 	// jobResults is where the results of each job submission will be returned.
 	jobResults chan<- JobResult
-	// workStore is the store where the entries for jobs with work requests
-	// currently being handled by WorkerMgr are kept.
-	workStore *kvstore.MapStore[WorkResult]
+	// workResponses is where individual results from each worker node are sent.
+	workResponses <-chan *beegfs.WorkResponse
+	// jobResultsStore is the store where the entries for jobs with work
+	// requests currently being handled by WorkerMgr are kept. This store keeps
+	// a mapping of JobIDs to to their WorkResult(s) (i.e., a JobResult).
+	jobResultsStore *kvstore.MapStore[WorkResult]
 	// errChan allows the manager to return an unrecoverable error for upstream
 	// handling. It should typically only be used if an unrecoverable error
 	// occurs when first starting the manager, for example if the database is
 	// not accessible.
 	errChan chan<- error
+	config  ManagerConfig
 }
 
 // JobSubmission is used to submit a Job and its associated work requests to be
@@ -56,39 +68,43 @@ type JobResult struct {
 	WorkResults []WorkResult
 }
 
-func NewManager(log *zap.Logger, errCh chan<- error, config []Config) (*Manager, chan<- JobSubmission, <-chan JobResult) {
+func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) (*Manager, chan<- JobSubmission, <-chan JobResult) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	jobSubmissionsChan := make(chan JobSubmission)
 	jobResultsChan := make(chan JobResult)
+	workResponsesChan := make(chan *beegfs.WorkResponse)
 
 	nodePools := make(map[NodeType]*Pool, 0)
-	workers, err := newWorkerNodesFromConfig(config)
+	nodes, err := newWorkerNodesFromConfig(log, workResponsesChan, workerConfigs)
 	if err != nil {
 		log.Warn("encountered one or more errors configuring workers", zap.Error(err))
 	}
 
-	for _, worker := range workers {
-		if _, ok := nodePools[worker.GetNodeType()]; !ok {
-			nodePools[worker.GetNodeType()] = &Pool{
-				nodeType: worker.GetNodeType(),
+	for _, node := range nodes {
+		if _, ok := nodePools[node.worker.GetNodeType()]; !ok {
+			nodePools[node.worker.GetNodeType()] = &Pool{
+				nodeType: node.worker.GetNodeType(),
 				nodes:    make([]*Node, 0),
 				next:     0,
 				mu:       new(sync.Mutex),
 			}
 		}
-		nodePools[worker.GetNodeType()].nodes = append(nodePools[worker.GetNodeType()].nodes, worker)
+		nodePools[node.worker.GetNodeType()].nodes = append(nodePools[node.worker.GetNodeType()].nodes, node)
 	}
 
 	return &Manager{
 		log:            log,
 		ctx:            ctx,
 		cancel:         cancel,
+		nodeWG:         new(sync.WaitGroup),
 		nodePools:      nodePools,
 		jobSubmissions: jobSubmissionsChan,
 		jobResults:     jobResultsChan,
+		workResponses:  workResponsesChan,
 		errChan:        errCh,
+		config:         managerConfig,
 	}, jobSubmissionsChan, jobResultsChan
 }
 
@@ -101,16 +117,20 @@ func (m *Manager) Manage() {
 		return
 	}
 
-	// TODO: Allow the path to the workResults.db to be user configurable.
-	// We initialize the work store in Manage() so we can ensure the DB is
+	// We initialize the jobResultsStore in Manage() so we can ensure the DB is
 	// closed properly when shutting down.
-	workStore, closeWorkStore, err := kvstore.NewMapStore[WorkResult]("/tmp/workResults.db")
+	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[WorkResult](m.config.DBPath, m.config.DBCacheSize)
 	if err != nil {
-		m.errChan <- fmt.Errorf("unable to setup work store: %s", err)
+		m.errChan <- fmt.Errorf("unable to setup jobResultsStore: %s", err)
 		return
 	}
-	defer closeWorkStore()
-	m.workStore = workStore
+	defer closeJobResultsStoreDB()
+	m.jobResultsStore = jobResultsStore
+
+	// Bring all node pools online:
+	for _, pool := range m.nodePools {
+		pool.HandleAll(m.nodeWG)
+	}
 
 	// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. Use a pool of
 	// goroutines to accept jobSubmissions and receive responses from worker
@@ -122,7 +142,7 @@ func (m *Manager) Manage() {
 			return
 		case js := <-m.jobSubmissions:
 
-			entry, commitAndReleaseEntry, err := m.workStore.CreateAndLockEntry(js.JobID)
+			entry, commitAndReleaseEntry, err := m.jobResultsStore.CreateAndLockEntry(js.JobID)
 			if err != nil {
 				// TODO: Consider how we want to handle updates to existing jobs.
 				// Ideally we allow new/updated job submissions to come through the
@@ -142,7 +162,7 @@ func (m *Manager) Manage() {
 
 			// Iterate over the work requests in the job submission and attempt
 			// to schedule them while simultaneously adding them to the
-			// workStoreEntry.
+			// entry from the jobResultStore.
 			for _, wr := range js.WorkRequests {
 				// If an error occurs return it as the message in the work response status.
 				var err error
@@ -183,7 +203,7 @@ func (m *Manager) Manage() {
 				// Note since we don't store the full work requests in the DB
 				// (only the results) we have to retry immediately (perhaps with
 				// a backoff). We can't just store the work request in the
-				// workStore and try again later. This means we need to be
+				// jobResultStore and try again later. This means we need to be
 				// careful not to run ourselves out of memory if some extended
 				// condition prevents scheduling requests because we can't just
 				// keep an infinite backlog of outstanding work requests.
@@ -218,26 +238,55 @@ func (m *Manager) Manage() {
 			} else {
 				m.log.Debug("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", entry.Value))
 			}
-			// Release the lock on the workStoreEntry.
+			// Release the lock on the entry.
 			if err = commitAndReleaseEntry(); err != nil {
-				m.log.Error("unable to commit work store entry to database", zap.Error(err))
+				m.log.Error("unable to commit and release entry", zap.Error(err))
 			}
 
-			// TODO: Test code, delete before submitting a PR.
-			//
-			// testEntry, TestFunc, err := m.workStore.GetAndLockEntry(js.JobID)
-			// defer TestFunc()
-			// if err != nil {
-			// 	m.log.Error("error", zap.Error(err))
-			// } else {
-			// 	m.log.Info("test", zap.Any("test", testEntry.Value))
-			// }
+		// TODO: Test code, delete before submitting a PR.
+		//
+		// testEntry, TestFunc, err := m.workStore.GetAndLockEntry(js.JobID)
+		// defer TestFunc()
+		// if err != nil {
+		// 	m.log.Error("error", zap.Error(err))
+		// } else {
+		// 	m.log.Info("test", zap.Any("test", testEntry.Value))
+		// }
 
+		case workResponse := <-m.workResponses:
+			// Convert the WorkResponse to a WorkResult.
+			workResult := WorkResult{
+				RequestID:  workResponse.RequestId,
+				Status:     workResponse.Status.Status,
+				Message:    workResponse.Status.Message,
+				AssignedTo: "", // Not currently assigned.
+			}
+			workResults, commitAndReleaseEntry, err := m.jobResultsStore.GetAndLockEntry(workResponse.JobId)
+			if err != nil {
+				m.log.Error("unable to retrieve job entry from the jobResultStore to update results (dropping work response)", zap.Error(err), zap.Any("jobID", workResponse.JobId), zap.Any("requestID", workResponse.RequestId))
+				// TODO: How do we want to handle this?
+			}
+			workResults.Value[workResult.RequestID] = workResult
+
+			// TODO: Check if all WRs have reached a terminal state and if so
+			// send to the jobResults channel.
+
+			err = commitAndReleaseEntry()
+			if err != nil {
+				m.log.Error("unable to commit and release entry", zap.Error(err), zap.Any("jobID", workResponse.JobId), zap.Any("requestID", workResponse.RequestId))
+				// TODO: How do we want to handle this?
+			}
 		}
 	}
 }
 
 func (m *Manager) Stop() {
+	// Disconnect all nodes before we stop the Manage() loop.
+	// This ensures we can finish writing work requests/results to the DB.
+	for _, pool := range m.nodePools {
+		pool.StopAll()
+	}
+	// Then stop accepting work requests/results and close the DB.
 	m.cancel()
 }
 
@@ -257,6 +306,18 @@ type Pool struct {
 	mu *sync.Mutex
 }
 
+func (p *Pool) HandleAll(wg *sync.WaitGroup) {
+	for _, node := range p.nodes {
+		go node.Handle(wg)
+	}
+}
+
+func (p *Pool) StopAll() {
+	for _, node := range p.nodes {
+		go node.Stop()
+	}
+}
+
 // assignToLeastBusyWorker assigns the work request to the least busy node in
 // the pool. It returns the ID of the assigned node, or an error.
 func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
@@ -274,7 +335,7 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 	for i := 0; i < poolSize; i++ {
 		if p.nodes[p.next].GetState() == CONNECTED {
 			assignedWorker := p.nodes[p.next].ID
-			err := p.nodes[p.next].Send(wr)
+			p.nodes[p.next].WorkQueue <- wr
 
 			// TODO: https://github.com/ThinkParQ/bee-remote/issues/7.
 			// Implement a more advanced mechanism to get the least busy worker
@@ -282,13 +343,10 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 			// so just advance the next cursor wrapping around if needed.
 			// However this will usually lead to imbalanced utilization as work
 			// requests are expected to take varying times to complete.
+			//
+			// Ideally move to a weighted system that takes into consideration
+			// the size of the work request.
 			p.next = (p.next + 1) % poolSize
-			if err != nil {
-				// TODO: Evaluate the error message and if we should take this
-				// worker out of the pool and potentially retry the send to a
-				// different worker if we're 100% positive it failed.
-				return "", err
-			}
 			return assignedWorker, nil
 		}
 		// If that worker is disconnected try the next.
