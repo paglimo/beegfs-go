@@ -45,11 +45,11 @@ func (c *AppConfig) UpdateAllowed(newConfig configmgr.Configurable) error {
 func (c *AppConfig) ValidateConfig() error {
 
 	var multiErr types.MultiError
-	if c.Job.DBPath == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.DBPath must be set to a valid path (provided path: '%s')", c.Job.DBPath))
+	if c.Job.PathDBPath == "" {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.pathDBPath must be set to a valid path (provided path: '%s')", c.Job.PathDBPath))
 	}
-	if c.WorkerMgr.DBPath == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("workerMgr.DBPath must be set to a valid path (provided path: '%s')", c.WorkerMgr.DBPath))
+	if c.Job.ResultsDBPath == "" {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.jobResultsDBPath must be set to a valid path (provided path: '%s')", c.Job.ResultsDBPath))
 	}
 
 	// TODO: Implement other checks as needed.

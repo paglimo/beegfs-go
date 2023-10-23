@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
+	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	br "github.com/thinkparq/protobuf/beeremote/go"
 	bs "github.com/thinkparq/protobuf/beesync/go"
 	"google.golang.org/protobuf/proto"
@@ -101,7 +102,20 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 
 // GetPath returns the path to the BeeGFS entry this job is running against.
 func (j *SyncJob) GetPath() string {
-	return j.Request.Path
+	return j.Request.GetPath()
+}
+
+// GetID returns the job ID.
+func (j *SyncJob) GetID() string {
+	return j.Metadata.GetId()
+}
+
+func (j *SyncJob) GetStatus() *beegfs.RequestStatus {
+	return j.Metadata.GetStatus()
+}
+
+func (j *SyncJob) SetStatus(status *beegfs.RequestStatus) {
+	j.Metadata.Status = status
 }
 
 // GobEncode encodes the SyncJob into a byte slice for gob serialization. The

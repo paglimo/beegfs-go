@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thinkparq/gobee/kvstore"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	"go.uber.org/zap"
 )
@@ -127,23 +126,6 @@ type WorkResult struct {
 	Message   string
 	// Assigned to indicates the node running this work request or "" if it is unassigned.
 	AssignedTo string
-}
-
-// getJobResults accepts jobID and a pointer to a kvstore.MSEntry and returns
-// the JobResults expected by JobMgr. It is expected the entry is already locked
-// and won't be deleted while getJobResults is called.
-func getJobResults[T WorkResult](jobID string, entry *kvstore.MSEntry[WorkResult]) JobResult {
-
-	results := make([]WorkResult, len(entry.Value))
-	for _, r := range entry.Value {
-		results = append(results, r)
-	}
-
-	jobResults := JobResult{
-		JobID:       jobID,
-		WorkResults: results,
-	}
-	return jobResults
 }
 
 // Handles the connection with a particular worker node. It determines the state

@@ -17,6 +17,14 @@ type Job interface {
 	// GetPath should return the BeeGFS path typically used as the key when
 	// retrieving Jobs from the DB.
 	GetPath() string
+	// GetID should return the job ID generated when the job was created.
+	GetID() string
+	// GetStatus should return the overall status of the job.
+	GetStatus() *beegfs.RequestStatus
+	// SetStatus sets the overall status for the job. This should encompass the
+	// results for individual work requests. For example if some WRs are
+	// finished and others are still running the state would be RUNNING.
+	SetStatus(*beegfs.RequestStatus)
 }
 
 // New is the standard way to generate a Job from a JobRequest.

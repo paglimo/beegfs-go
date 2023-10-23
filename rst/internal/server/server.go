@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 
+	beeremote "github.com/thinkparq/protobuf/beeremote/go"
 	br "github.com/thinkparq/protobuf/beeremote/go"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -27,18 +28,21 @@ type BeeRemoteServer struct {
 	log *zap.Logger
 	wg  *sync.WaitGroup
 	Config
-	grpcServer *grpc.Server
+	grpcServer  *grpc.Server
+	jobRequests chan<- *beeremote.JobRequest
 }
 
 // New() creates a new BeeRemoteServer that can be used with ListenAndServe().
-func New(log *zap.Logger, config Config) (*BeeRemoteServer, error) {
+// It requires a channel where it can send job requests to JobMgr.
+func New(log *zap.Logger, config Config, jobRequests chan<- *beeremote.JobRequest) (*BeeRemoteServer, error) {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(BeeRemoteServer{}).PkgPath())))
 
 	s := BeeRemoteServer{
-		log:    log,
-		Config: config,
-		wg:     new(sync.WaitGroup),
+		log:         log,
+		Config:      config,
+		wg:          new(sync.WaitGroup),
+		jobRequests: jobRequests,
 	}
 
 	var grpcServerOpts []grpc.ServerOption

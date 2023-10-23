@@ -37,9 +37,13 @@ func main() {
 	pflag.String("server.address", "localhost:9000", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
-	pflag.String("job.dbPath", "", "Path where the jobs database will be created/maintained.")
-	pflag.String("workerMgr.dbPath", "", "Path where the worker manager database will be created/maintained.")
-	pflag.Int("workerMgr.dbCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
+	pflag.String("job.pathDBPath", "", "Path where the jobs database will be created/maintained.")
+	pflag.Int("job.pathDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
+	pflag.String("job.resultsDBPath", "", "Path where the job results database will be created/maintained.")
+	pflag.Int("job.resultsDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
+	pflag.String("job.journalPath", "", "Path where the jobs journal will be created/maintained.")
+	pflag.Int("job.requestQueueDepth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
+	pflag.String("job.journalPath", "", "Path where the job journal will be created/maintained. This is used to optimize crash recovery.")
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
@@ -99,13 +103,6 @@ Using environment variables:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
-	jobServer, err := server.New(logger.Logger, initialCfg.Server)
-	if err != nil {
-		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
-	}
-
-	go jobServer.ListenAndServe()
-
 	// Use a channel to allow components to pass errors that should cause a
 	// shutdown back to the main goroutine. Typically this should only be used
 	// for startup failures (for example unable to open the DB). Failures after
@@ -115,11 +112,20 @@ Using environment variables:
 	// functions otherwise they will block indefinitely.
 	errCh := make(chan error)
 
-	workerManager, jobSubmissions, jobResults := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
-	go workerManager.Manage()
+	workerManager, submitJob, workResponses := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
+	err = workerManager.Manage()
+	if err != nil {
+		return
+	}
 
-	jobManager := job.NewManager(logger.Logger, initialCfg.Job, errCh)
-	go jobManager.Manage(jobSubmissions, jobResults)
+	jobManager, jobRequests := job.NewManager(logger.Logger, initialCfg.Job, submitJob, workResponses, errCh)
+	go jobManager.Manage()
+
+	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobRequests)
+	if err != nil {
+		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
+	}
+	go jobServer.ListenAndServe()
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
 	select {
