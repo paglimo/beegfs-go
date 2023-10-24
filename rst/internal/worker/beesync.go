@@ -25,18 +25,42 @@ func (w *BeeSyncWorker) Connect() (bool, error) {
 	return true, nil // TODO
 }
 
-func (w *BeeSyncWorker) Send(wr WorkRequest) error {
+func (w *BeeSyncWorker) SubmitWorkRequest(wr WorkRequest) (*beegfs.WorkResponse, error) {
 
 	request, ok := wr.(*SyncRequest)
 	if !ok {
-		return fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
+		return nil, fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
 	}
 	// TODO: Actually send the request to the node.
 	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), w.Hostname, w.Port)
-	return nil
+	return &beegfs.WorkResponse{
+		JobId:     wr.getJobID(),
+		RequestId: wr.getRequestID(),
+		Status: &beegfs.RequestStatus{
+			Status:  beegfs.RequestStatus_SCHEDULED,
+			Message: "scheduled",
+		},
+	}, nil
 }
 
-func (w *BeeSyncWorker) Recv() <-chan *beegfs.WorkResponse {
+func (w *BeeSyncWorker) UpdateWorkRequest(updateRequest *beegfs.UpdateWorkRequest) (*beegfs.WorkResponse, error) {
+
+	// TODO: Actually send the request to the node.
+
+	if updateRequest.NewState == beegfs.NewState_CANCEL {
+		return &beegfs.WorkResponse{
+			JobId:     updateRequest.JobID,
+			RequestId: updateRequest.RequestID,
+			Status: &beegfs.RequestStatus{
+				Status:  beegfs.RequestStatus_CANCELLED,
+				Message: "cancelled by user",
+			},
+		}, nil
+	}
+	return nil, fmt.Errorf("unsupported new state requested for work request: %s", updateRequest.NewState)
+}
+
+func (w *BeeSyncWorker) NodeStream(updateRequests *beegfs.UpdateWorkRequests) <-chan *beegfs.WorkResponse {
 	return nil // TODO
 }
 

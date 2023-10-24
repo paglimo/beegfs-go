@@ -19,7 +19,6 @@ type Config struct {
 	Type                           NodeType `mapstructure:"type"`
 	MaxReconnectBackOff            int      `mapstructure:"maxReconnectBackOff"`
 	MaxWaitForResponseAfterConnect int      `mapstructure:"maxWaitForResponseAfterConnect"`
-	WorkQueueSize                  int      `mapstructure:"workQueueSize"`
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into the worker Config.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
@@ -84,7 +83,6 @@ func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *beegfs.WorkR
 		ctx:           ctx,
 		cancel:        cancel,
 		log:           log,
-		WorkQueue:     make(chan WorkRequest, config.WorkQueueSize),
 		workResponses: workResponses,
 	}
 

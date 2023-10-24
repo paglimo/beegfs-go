@@ -27,8 +27,8 @@ type Manager struct {
 	// NodeType and the Pool struct extended to include additional selection
 	// criteria.
 	nodePools map[NodeType]*Pool
-	// workResponses is where individual results from each worker node are sent.
-	workResponses <-chan *beegfs.WorkResponse
+	// WorkResponses is where individual results from each worker node are sent.
+	WorkResponses <-chan *beegfs.WorkResponse
 	config        ManagerConfig
 }
 
@@ -44,7 +44,7 @@ type JobSubmission struct {
 	WorkRequests []WorkRequest
 }
 
-func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) (*Manager, func(JobSubmission) []WorkResult, <-chan *beegfs.WorkResponse) {
+func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	workResponsesChan := make(chan *beegfs.WorkResponse)
@@ -60,10 +60,12 @@ func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig
 			nodePools[node.worker.GetNodeType()] = &Pool{
 				nodeType: node.worker.GetNodeType(),
 				nodes:    make([]*Node, 0),
+				nodeMap:  map[string]*Node{},
 				next:     0,
 				mu:       new(sync.Mutex),
 			}
 		}
+		nodePools[node.worker.GetNodeType()].nodeMap[node.ID] = node
 		nodePools[node.worker.GetNodeType()].nodes = append(nodePools[node.worker.GetNodeType()].nodes, node)
 	}
 
@@ -71,11 +73,11 @@ func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig
 		log:           log,
 		nodeWG:        new(sync.WaitGroup),
 		nodePools:     nodePools,
-		workResponses: workResponsesChan,
+		WorkResponses: workResponsesChan,
 		config:        managerConfig,
 	}
 
-	return workerManager, workerManager.SubmitJob, workResponsesChan
+	return workerManager
 }
 
 func (m *Manager) Manage() error {
@@ -99,29 +101,33 @@ func (m *Manager) SubmitJob(js JobSubmission) []WorkResult {
 	// Iterate over the work requests in the job submission and attempt
 	// to schedule them while simultaneously adding them to the work results.
 	for _, wr := range js.WorkRequests {
-		// If an error occurs return it as the message in the work response status.
-		var err error
 		// WorkerID will be empty if an error happens.
 		workerID := ""
+		var workResponse *beegfs.WorkResponse
+		// If an error occurs return it as the message in the work response status.
+		var err error
 
 		pool, ok := m.nodePools[wr.getNodeType()]
 		if !ok {
 			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("%s: %w", wr.getNodeType(), ErrNoPoolsForNodeType))
 			wr.setStatus(beegfs.RequestStatus_FAILED, err.Error())
+			break // No point continuing to try if no pools are available.
 		} else {
-			workerID, err = pool.assignToLeastBusyWorker(wr)
+			workerID, workResponse, err = pool.assignToLeastBusyWorker(wr)
 			if err != nil {
 				multiErr.Errors = append(multiErr.Errors, err)
 				wr.setStatus(beegfs.RequestStatus_UNASSIGNED, err.Error())
+				continue
 			}
 		}
 
-		fullStatus := wr.getStatus()
+		fullStatus := workResponse.GetStatus()
 		workResult := WorkResult{
-			RequestID:  wr.getRequestID(),
-			Status:     fullStatus.Status,
-			Message:    fullStatus.Message,
-			AssignedTo: workerID,
+			RequestID:    wr.getRequestID(),
+			Status:       fullStatus.Status,
+			Message:      fullStatus.Message,
+			AssignedNode: workerID,
+			AssignedPool: wr.getNodeType(),
 		}
 		workResults = append(workResults, workResult)
 	}
@@ -155,13 +161,11 @@ func (m *Manager) SubmitJob(js JobSubmission) []WorkResult {
 			// TODO: Evaluate if we need to handle any other state differently.
 		}
 
+		// If a fatal error occurred request the job be cancelled on all nodes.
 		if isFatal {
 			for _, r := range workResults {
-				if r.Status == beegfs.RequestStatus_ASSIGNED {
-					// TODO: https://github.com/ThinkParQ/bee-remote/issues/7
-					// Request the WR be cancelled. Probably using a new method
-					// on pool that can be used to forward a request directly
-					// to the specified node.
+				if r.Status == beegfs.RequestStatus_SCHEDULED {
+					// TODO: Request the WR be cancelled.
 					continue
 				}
 			}
@@ -169,13 +173,34 @@ func (m *Manager) SubmitJob(js JobSubmission) []WorkResult {
 			m.log.Error("unable to assign job", zap.Any("jobID", js.JobID), zap.Error(&multiErr))
 			return workResults
 		} else {
-			m.log.Warn("unable to assign all requests for job (retrying)", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", workResults))
+			m.log.Warn("unable to assign all requests for job (retrying)", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
 		}
 	} else {
-		m.log.Debug("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("assignedWRtoNodes", workResults))
+		m.log.Debug("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
 	}
 
 	return workResults
+}
+
+func (m *Manager) UpdateWorkRequest(nodeType NodeType, nodeID string, updatedRequest *beegfs.UpdateWorkRequest) (WorkResult, error) {
+
+	workResponse, err := m.nodePools[nodeType].nodeMap[nodeID].worker.UpdateWorkRequest(updatedRequest)
+
+	// TODO: Actually check the node pool and worker node exists or we may panic here.
+
+	if err != nil {
+		return WorkResult{}, err
+	}
+
+	fullStatus := workResponse.GetStatus()
+	workResult := WorkResult{
+		RequestID:    workResponse.GetRequestId(),
+		Status:       fullStatus.Status,
+		Message:      fullStatus.Message,
+		AssignedNode: nodeID,
+		AssignedPool: nodeType,
+	}
+	return workResult, nil
 }
 
 func (m *Manager) Stop() {
@@ -196,6 +221,9 @@ type Pool struct {
 	// otherwise when assigning work requests, nodes will reject any requests
 	// they do not support.
 	nodes []*Node
+	// Node map should contain the same entries as nodes.
+	// We use a map for quick lookup of a particular node.
+	nodeMap map[string]*Node
 	// Next is the index of the next worker that should be assigned a request.
 	next int
 	// The mutex should be locked when interacting with the pool.
@@ -215,15 +243,15 @@ func (p *Pool) StopAll() {
 }
 
 // assignToLeastBusyWorker assigns the work request to the least busy node in
-// the pool. It returns the ID of the assigned node, or an error.
-func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
+// the pool. It returns the ID of the assigned node and the response, or an error.
+func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *beegfs.WorkResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	poolSize := len(p.nodes)
 
 	if poolSize == 0 {
-		return "", fmt.Errorf("unable to assign work request to the %s node pool: %w", p.nodeType, ErrNoWorkersInPool)
+		return "", nil, fmt.Errorf("unable to assign work request to the %s node pool: %w", p.nodeType, ErrNoWorkersInPool)
 	}
 
 	// If no workers are connected we'll wait a bit then retry.
@@ -234,7 +262,14 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 		for i := 0; i < poolSize; i++ {
 			if p.nodes[p.next].GetState() == CONNECTED {
 				assignedWorker := p.nodes[p.next].ID
-				p.nodes[p.next].WorkQueue <- wr
+				resp, err := p.nodes[p.next].worker.SubmitWorkRequest(wr)
+
+				if err != nil {
+					// If that worker is disconnected or there was an error
+					// sending try the next.
+					p.next = (p.next + 1) % poolSize
+					continue
+				}
 
 				// TODO: https://github.com/ThinkParQ/bee-remote/issues/7.
 				// Implement a more advanced mechanism to get the least busy worker
@@ -246,14 +281,13 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, error) {
 				// Ideally move to a weighted system that takes into consideration
 				// the size of the work request.
 				p.next = (p.next + 1) % poolSize
-				return assignedWorker, nil
+				return assignedWorker, resp, nil
 			}
-			// If that worker is disconnected try the next.
-			p.next = (p.next + 1) % poolSize
+
 		}
 		// If no workers are connected sleep and retry.
 		time.Sleep(1 * time.Second)
 	}
 
-	return "", fmt.Errorf("no workers are available in the %s pool: %w", p.nodeType, ErrNoWorkersConnected)
+	return "", nil, fmt.Errorf("no workers are available in the %s pool: %w", p.nodeType, ErrNoWorkersConnected)
 }

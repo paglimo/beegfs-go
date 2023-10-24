@@ -37,6 +37,8 @@ type Manager struct {
 	errChan chan<- error
 	// jobRequests is where external callers should submit requests to be handled by JobMgr.
 	jobRequests <-chan *beeremote.JobRequest
+	// jobUpdates is where external callers should submit requests to update existing jobs.
+	jobUpdates <-chan *beeremote.UpdateJobRequest
 	// pathStore is the store where entries for file system paths with jobs
 	// are kept. This store keeps a mapping of paths to Job(s).
 	pathStore *kvstore.MapStore[Job]
@@ -45,28 +47,26 @@ type Manager struct {
 	// a mapping of JobIDs to to their WorkResult(s) (i.e., a JobResult).
 	jobResultsStore *kvstore.MapStore[worker.WorkResult]
 	jobIDGenerator  *badger.Sequence
-	// SubmitJob is a function provided by WorkerMgr to send work
-	// requests to the appropriate worker node(s).
-	submitJob func(worker.JobSubmission) []worker.WorkResult
-	// WorkResponses is where JobMgr listens for work responses from worker nodes.
-	workResponses <-chan *beegfs.WorkResponse
+	// A pointer to an initialized/started worker manager.
+	workerManager *worker.Manager
 }
 
-// NewManager initializes and returns a new Job manager and channel that is used to submit job requests.
-func NewManager(log *zap.Logger, config Config, submitJob func(worker.JobSubmission) []worker.WorkResult, workResponses <-chan *beegfs.WorkResponse, errCh chan<- error) (*Manager, chan<- *beeremote.JobRequest) {
+// NewManager initializes and returns a new Job manager and channels used to submit and update job requests.
+func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager, errCh chan<- error) (*Manager, chan<- *beeremote.JobRequest, chan<- *beeremote.UpdateJobRequest) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 	jobRequestChan := make(chan *beeremote.JobRequest, config.RequestQueueDepth)
+	jobUpdatesChan := make(chan *beeremote.UpdateJobRequest, config.RequestQueueDepth)
 	return &Manager{
 		log:           log,
 		config:        config,
 		errChan:       errCh,
+		workerManager: workerManager,
 		ctx:           ctx,
 		cancel:        cancel,
 		jobRequests:   jobRequestChan,
-		submitJob:     submitJob,
-		workResponses: workResponses,
-	}, jobRequestChan
+		jobUpdates:    jobUpdatesChan,
+	}, jobRequestChan, jobUpdatesChan
 }
 
 func (m *Manager) Manage() {
@@ -117,9 +117,16 @@ func (m *Manager) Manage() {
 		case <-m.ctx.Done():
 			m.log.Info("shutting down because the app is shutting down")
 			return
-		case jr := <-m.jobRequests:
-			m.processNewJobRequest(jr)
-		case wr := <-m.workResponses:
+		case jobRequest := <-m.jobRequests:
+			m.processNewJobRequest(jobRequest)
+		case jobUpdate := <-m.jobUpdates:
+			switch jobUpdate.NewState {
+			case beegfs.NewState_CANCEL:
+				m.cancelJobRequest(jobUpdate)
+			default:
+				m.log.Warn("unsupported job updated requested", zap.Any("jobUpdate", jobUpdate))
+			}
+		case wr := <-m.workerManager.WorkResponses:
 			// TODO:
 			m.log.Info("workResponse", zap.Any("workResponse", wr))
 		}
@@ -135,9 +142,10 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	}
 
 	// TODO: Consider adding a CreateOrGetEntry method to the MapStore to
-	// simplify/optimize this.
+	// simplify/optimize this. Or adding a flag to the existing method that will
+	// get the entry if it already exists.
 	pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(job.GetPath())
-	if err == kvstore.ErrEntryAlreadyExistsInDB {
+	if err == kvstore.ErrEntryAlreadyExistsInDB || err == kvstore.ErrEntryAlreadyExistsInCache {
 		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.GetPath())
 		if err != nil {
 			m.log.Error("unable to get existing path entry", zap.Error(err), zap.Any("path", job.GetPath()), zap.Any("jobID", job.GetID()))
@@ -156,7 +164,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 		for _, existingJob := range pathEntry.Value {
 			status := existingJob.GetStatus().Status
 			if status != beegfs.RequestStatus_CANCELLED && status != beegfs.RequestStatus_COMPLETED {
-				m.log.Debug("rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)", zap.Any("path", job.GetPath()))
+				m.log.Warn("rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)", zap.Any("path", job.GetPath()))
 				newStatus := &beegfs.RequestStatus{
 					Status:  beegfs.RequestStatus_CANCELLED,
 					Message: "rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)",
@@ -169,7 +177,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	}
 
 	pathEntry.Value[job.GetID()] = job
-	workResults := m.submitJob(job.Allocate())
+	workResults := m.workerManager.SubmitJob(job.Allocate())
 
 	// If we crashed here there could be WRs scheduled to worker nodes but we
 	// have no record which nodes they were assigned to. To handle this after a
@@ -185,6 +193,103 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	for _, result := range workResults {
 		jobResultEntry.Value[result.RequestID] = result
 	}
+}
+
+// cancelJobRequest will attempt to cancel the specified job and any associated
+// work requests. The caller should check the database to see the effect of any
+// changes. If a path is specified then all jobs running for that path will be
+// cancelled. If a job ID is specified, then only that job is cancelled.
+// Specifying both a path and Job ID will result in an error. cancelJobRequest
+// is idempotent, so it can be called multiple times to verify a job is fully
+// cancelled, for example if there was an error cancelling some work requests.
+func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
+
+	if jobUpdate.GetJobID() != "" && jobUpdate.GetPath() != "" {
+		m.log.Warn("updating a job by both path and job ID is not allowed (only one should be specified)", zap.Any("jobUpdate", jobUpdate))
+		return
+
+	} else if path := jobUpdate.GetPath(); path != "" {
+		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(path)
+		if err != nil {
+			m.log.Warn("unable to get jobs for the specified path", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+			return
+		}
+
+		updatedJobs := make(map[string]Job)
+
+		for _, job := range pathEntry.Value {
+
+			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					newStatus := &beegfs.RequestStatus{
+						Status:  beegfs.RequestStatus_CANCELLED,
+						Message: "job cancelled by user",
+					}
+					job.SetStatus(newStatus)
+					continue
+				}
+				m.log.Warn("unknown error getting results for job", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+				continue
+			}
+
+			// If we're unable to definitively cancel on any node, allCancelled is
+			// set to true and the state of the job is unmodified.
+			allCancelled := true
+			updatedResults := make(map[string]worker.WorkResult)
+			for _, workResult := range resultsEntry.Value {
+
+				// If the WR was never assigned we can just cancel it.
+				if workResult.AssignedPool == "" && workResult.AssignedNode == "" {
+					workResult.Status = beegfs.RequestStatus_CANCELLED
+					updatedResults[workResult.RequestID] = workResult
+					continue
+				}
+
+				// Otherwise send a message to the worker node to ensure it is cancelled:
+				updateWorkRequest := &beegfs.UpdateWorkRequest{
+					JobID:     jobUpdate.JobID,
+					RequestID: workResult.RequestID,
+					NewState:  jobUpdate.NewState,
+				}
+
+				newWorkResult, err := m.workerManager.UpdateWorkRequest(workResult.AssignedPool, workResult.AssignedNode, updateWorkRequest)
+				if err != nil {
+					m.log.Warn("error communicating with worker node to update work request", zap.Error(err), zap.Any("jobUpdate", jobUpdate), zap.Any("workResult", workResult))
+					allCancelled = false
+					continue
+				}
+				if newWorkResult.Status != beegfs.RequestStatus_CANCELLED {
+					m.log.Warn("unable to cancel job (some work requests are still active)", zap.Any("workResult", newWorkResult))
+					allCancelled = false
+				}
+				updatedResults[newWorkResult.RequestID] = newWorkResult
+			}
+
+			if allCancelled {
+				newStatus := &beegfs.RequestStatus{
+					Status:  beegfs.RequestStatus_CANCELLED,
+					Message: "job cancelled by user",
+				}
+				job.SetStatus(newStatus)
+			}
+			updatedJobs[job.GetID()] = job
+			resultsEntry.Value = updatedResults
+			releaseResultsEntry()
+		}
+
+		pathEntry.Value = updatedJobs
+		err = releasePathEntry()
+		if err != nil {
+			m.log.Warn("unable to commit and release path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+		}
+	} else if jobUpdate.GetJobID() != "" {
+		// TODO: implement.
+		m.log.Warn("updating jobs based on job ID alone is not currently supported", zap.Any("jobUpdate", jobUpdate))
+	} else {
+		m.log.Warn("unable to update job (no path specified)", zap.Any("jobUpdate", jobUpdate))
+	}
+
 }
 
 func (m *Manager) Stop() {

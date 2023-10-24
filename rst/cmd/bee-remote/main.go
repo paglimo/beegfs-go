@@ -14,6 +14,9 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
+	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	beeremote "github.com/thinkparq/protobuf/beeremote/go"
+	beesync "github.com/thinkparq/protobuf/beesync/go"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +44,6 @@ func main() {
 	pflag.Int("job.pathDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	pflag.String("job.resultsDBPath", "", "Path where the job results database will be created/maintained.")
 	pflag.Int("job.resultsDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
-	pflag.String("job.journalPath", "", "Path where the jobs journal will be created/maintained.")
 	pflag.Int("job.requestQueueDepth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
 	pflag.String("job.journalPath", "", "Path where the job journal will be created/maintained. This is used to optimize crash recovery.")
 	// Hidden flags:
@@ -112,13 +114,13 @@ Using environment variables:
 	// functions otherwise they will block indefinitely.
 	errCh := make(chan error)
 
-	workerManager, submitJob, workResponses := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
+	workerManager := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
 	err = workerManager.Manage()
 	if err != nil {
 		return
 	}
 
-	jobManager, jobRequests := job.NewManager(logger.Logger, initialCfg.Job, submitJob, workResponses, errCh)
+	jobManager, jobRequests, jobUpdates := job.NewManager(logger.Logger, initialCfg.Job, workerManager, errCh)
 	go jobManager.Manage()
 
 	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobRequests)
@@ -126,6 +128,24 @@ Using environment variables:
 		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
 	}
 	go jobServer.ListenAndServe()
+
+	// TODO: Initialize the event subscriber.
+
+	// TODO: Cleanup test code before submitting a PR.
+
+	// Submit a new request
+	sj := beesync.SyncJob{}
+	jr := beeremote.JobRequest{Path: "/some/path", Name: "test", Priority: 3, Type: &beeremote.JobRequest_Sync{Sync: &sj}}
+
+	jobRequests <- &jr
+
+	// Cleanup outstanding requests
+	updateJobRequest := beeremote.UpdateJobRequest{
+		Path:     "/some/path",
+		NewState: beegfs.NewState_CANCEL,
+	}
+
+	jobUpdates <- &updateJobRequest
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
 	select {

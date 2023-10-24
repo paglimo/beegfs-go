@@ -24,8 +24,9 @@ const (
 // All concrete worker node types must implement the Worker interface.
 type Worker interface {
 	Connect() (retry bool, err error)
-	Send(WorkRequest) error
-	Recv() <-chan *beegfs.WorkResponse
+	SubmitWorkRequest(WorkRequest) (*beegfs.WorkResponse, error)
+	UpdateWorkRequest(*beegfs.UpdateWorkRequest) (*beegfs.WorkResponse, error)
+	NodeStream(*beegfs.UpdateWorkRequests) <-chan *beegfs.WorkResponse
 	Disconnect() error
 	GetNodeType() NodeType
 }
@@ -84,8 +85,6 @@ type Node struct {
 	// happen the old node handler has finished shutting down before we swap out
 	// the node or delete it.
 	mu sync.Mutex
-	// Incoming requests that should be sent to the node using Send() are queued here.
-	WorkQueue chan WorkRequest
 	// All work request responses are sent to this channel. This includes responses
 	// from the external node (via Recv()) or responses to local errors from Send()
 	// or if a WorkRequest was assigned to a node while it was disconnected.
@@ -112,7 +111,7 @@ type WorkRequest interface {
 	getStatus() beegfs.RequestStatus
 	// setStatus() sets the request status and message.
 	setStatus(beegfs.RequestStatus_Status, string)
-	// getNodeType() is implemented by BaseWR.
+	// getNodeType() returns the type of node this request should run on.
 	getNodeType() NodeType
 }
 
@@ -124,8 +123,10 @@ type WorkResult struct {
 	RequestID string
 	Status    beegfs.RequestStatus_Status
 	Message   string
-	// Assigned to indicates the node running this work request or "" if it is unassigned.
-	AssignedTo string
+	// AssignedNode is the ID of the node running this work request or "" if it is unassigned.
+	AssignedNode string
+	// AssignedPool is the type of the node pool running this work request or "" if it is unassigned.
+	AssignedPool NodeType
 }
 
 // Handles the connection with a particular worker node. It determines the state
@@ -154,30 +155,18 @@ func (n *Node) Handle(wg *sync.WaitGroup) {
 					n.setState(CONNECTED)
 
 					// We need to start listening for responses from the node
-					// before we do anything. Some nodes may block on receiving
-					// new work requests until they can send responses. Some
-					// nodes may also tell us the last work request they
-					// successfully received so we can avoid sending duplicate
-					// work requests.
-					doneReceiving, cancelReceive := n.receiveLoop()
+					// before we do anything. When a node boots up it should
+					// reject new work requests until we tell it what to do
+					// with any outstanding work requests.
+					doneNodeStream, cancelNodeStream := n.nodeStream()
 
-					// Start sending events to this subscriber:
-					doneSending, cancelSend := n.sendLoop()
-
-					// If either the receive or send goroutines are done, we
-					// should fully disconnect:
 					select {
-					case <-doneReceiving:
-						cancelSend()
-						<-doneSending
-					case <-doneSending:
-						cancelReceive()
-						<-doneReceiving
+					case <-doneNodeStream:
+						// If were done sending and receiving updates from the
+						// node, lets try to disconnect.
 					case <-n.ctx.Done():
-						cancelSend()
-						<-doneSending
-						cancelReceive()
-						<-doneReceiving
+						cancelNodeStream()
+						<-doneNodeStream
 					}
 					n.setState(DISCONNECTING)
 				}
@@ -238,10 +227,17 @@ func (n *Node) connectLoop() bool {
 	}
 }
 
-func (n *Node) receiveLoop() (<-chan struct{}, context.CancelFunc) {
+func (n *Node) nodeStream() (<-chan struct{}, context.CancelFunc) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-	recvStream := n.worker.Recv()
+
+	// TODO: When initially connecting to a node tell it what to do with any outstanding work requests.
+	// For example if any were cancelled while it was offline. For now we don't allow modifying WRs on
+	// offline nodes so just resume all requests.
+	updateWorkRequests := &beegfs.UpdateWorkRequests{
+		DefaultState: beegfs.UpdateWorkRequests_RESUME,
+	}
+	workResponsesStream := n.worker.NodeStream(updateWorkRequests)
 
 	go func() {
 		defer close(done)
@@ -251,56 +247,13 @@ func (n *Node) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 			case <-ctx.Done():
 				n.log.Debug("no longer listening for responses because the handler is shutting down")
 				return
-			case response, ok := <-recvStream:
+			case response, ok := <-workResponsesStream:
 				if !ok {
 					n.log.Info("no longer listening for responses because the worker node disconnected")
 					return
 				}
 				n.log.Debug("received response from worker node", zap.Any("response", response))
 				n.workResponses <- response
-			}
-		}
-	}()
-	return done, cancel
-}
-
-// sendLoop() handles sending work requests to the node. It will do this until
-// the connection breaks for any reason (gracefully or otherwise). Once it
-// returns the connection must be disconnected and reconnected before sendLoop()
-// is called again. It does not return an error because the caller should react
-// the same in all scenarios.
-func (n *Node) sendLoop() (<-chan struct{}, context.CancelFunc) {
-	done := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	n.log.Debug("establishing work request stream")
-
-	go func() {
-		defer close(done)
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				n.log.Debug("no longer sending work requests because the handler is shutting down")
-				return
-			case wr := <-n.WorkQueue:
-				if err := n.worker.Send(wr); err != nil {
-					n.log.Error("unable to send work request", zap.Error(err))
-					workResponse := &beegfs.WorkResponse{
-						JobId:     wr.getJobID(),
-						RequestId: wr.getRequestID(),
-						Status: &beegfs.RequestStatus{
-							Status:  beegfs.RequestStatus_UNASSIGNED,
-							Message: err.Error(),
-						},
-					}
-					n.workResponses <- workResponse
-				}
-				// TODO: The send doesn't guarantee the worker node will
-				// actually receive and get a chance to save the request to its
-				// local DB. Because BeeRemote doesn't ever follow up on
-				// outstanding WRs, this means we could end up with orphaned WRs
-				// that would require user intervention to recover. Figure out
-				// how we want to handle this.
 			}
 		}
 	}()

@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	beeremote "github.com/thinkparq/protobuf/beeremote/go"
-	br "github.com/thinkparq/protobuf/beeremote/go"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -21,10 +20,10 @@ type Config struct {
 }
 
 // Verify interfaces are satisfied:
-var _ br.BeeRemoteServer = &BeeRemoteServer{}
+var _ beeremote.BeeRemoteServer = &BeeRemoteServer{}
 
 type BeeRemoteServer struct {
-	br.UnimplementedBeeRemoteServer
+	beeremote.UnimplementedBeeRemoteServer
 	log *zap.Logger
 	wg  *sync.WaitGroup
 	Config
@@ -56,7 +55,7 @@ func New(log *zap.Logger, config Config, jobRequests chan<- *beeremote.JobReques
 		s.log.Warn("not using TLS because certificate and/or key were not specified")
 	}
 	s.grpcServer = grpc.NewServer(grpcServerOpts...)
-	br.RegisterBeeRemoteServer(s.grpcServer, &s)
+	beeremote.RegisterBeeRemoteServer(s.grpcServer, &s)
 
 	return &s, nil
 }
@@ -92,28 +91,21 @@ func (s *BeeRemoteServer) Stop() {
 	s.wg.Wait()
 }
 
-func (s *BeeRemoteServer) SubmitJob(ctx context.Context, job *br.JobRequest) (*br.JobResponse, error) {
+func (s *BeeRemoteServer) SubmitJob(ctx context.Context, job *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	// TODO: Implement
 	return nil, nil
 }
 
-func (s *BeeRemoteServer) GetJobs(ctx context.Context, job *br.MultiJobRequest) (*br.MultiJobResponse, error) {
+func (s *BeeRemoteServer) GetJobs(ctx context.Context, job *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	// TODO: Implement
 	return nil, nil
 }
 
-func (s *BeeRemoteServer) PauseJobs(ctx context.Context, job *br.MultiJobRequest) (*br.MultiJobResponse, error) {
-	s.wg.Add(1)
-	defer s.wg.Done()
-	// TODO: Implement
-	return nil, nil
-}
-
-func (s *BeeRemoteServer) CancelJobs(ctx context.Context, job *br.MultiJobRequest) (*br.MultiJobResponse, error) {
+func (s *BeeRemoteServer) UpdateJob(ctx context.Context, job *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	// TODO: Implement
