@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/thinkparq/gobee/types"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	"github.com/thinkparq/protobuf/go/flex"
 )
 
 // A Pool defines a pool of workers and methods for automatically assigning work
@@ -43,7 +43,7 @@ func (p *Pool) StopAll() {
 
 // assignToLeastBusyWorker assigns the work request to the least busy node in
 // the pool. It returns the ID of the assigned node and the response, or an error.
-func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *beegfs.WorkResponse, error) {
+func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *flex.WorkResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -104,7 +104,7 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *beegfs.WorkResp
 // the remote worker node. It returns the work response from the remote node or
 // an error if the node was unable to apply the new state or a network/local error
 // occurred preventing the remote node form being updated.
-func (p *Pool) updateWorkRequestOnNode(jobID string, workResult WorkResult, newState beegfs.NewState) (*beegfs.WorkResponse, error) {
+func (p *Pool) updateWorkRequestOnNode(jobID string, workResult WorkResult, newState flex.NewState) (*flex.WorkResponse, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -119,7 +119,7 @@ func (p *Pool) updateWorkRequestOnNode(jobID string, workResult WorkResult, newS
 		return nil, ErrWorkerNotInPool
 	}
 
-	updateRequest := &beegfs.UpdateWorkRequest{
+	updateRequest := &flex.UpdateWorkRequest{
 		JobID:     jobID,
 		RequestID: workResult.RequestID,
 		NewState:  newState,

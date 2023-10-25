@@ -11,7 +11,7 @@ import (
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/types"
-	beesync "github.com/thinkparq/protobuf/beesync/go"
+	"github.com/thinkparq/protobuf/go/beesync"
 )
 
 // We use ConfigManager to handle configuration updates.

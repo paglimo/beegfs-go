@@ -3,8 +3,8 @@ package worker
 import (
 	"fmt"
 
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
-	bs "github.com/thinkparq/protobuf/beesync/go"
+	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 )
 
 // BeeSyncWorker is a concrete implementation of a worker node.
@@ -25,7 +25,7 @@ func (w *BeeSyncWorker) Connect() (bool, error) {
 	return true, nil // TODO
 }
 
-func (w *BeeSyncWorker) SubmitWorkRequest(wr WorkRequest) (*beegfs.WorkResponse, error) {
+func (w *BeeSyncWorker) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error) {
 
 	request, ok := wr.(*SyncRequest)
 	if !ok {
@@ -33,26 +33,26 @@ func (w *BeeSyncWorker) SubmitWorkRequest(wr WorkRequest) (*beegfs.WorkResponse,
 	}
 	// TODO: Actually send the request to the node.
 	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), w.Hostname, w.Port)
-	return &beegfs.WorkResponse{
+	return &flex.WorkResponse{
 		JobId:     wr.getJobID(),
 		RequestId: wr.getRequestID(),
-		Status: &beegfs.RequestStatus{
-			Status:  beegfs.RequestStatus_SCHEDULED,
+		Status: &flex.RequestStatus{
+			Status:  flex.RequestStatus_SCHEDULED,
 			Message: "scheduled",
 		},
 	}, nil
 }
 
-func (w *BeeSyncWorker) UpdateWorkRequest(updateRequest *beegfs.UpdateWorkRequest) (*beegfs.WorkResponse, error) {
+func (w *BeeSyncWorker) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
 
 	// TODO: Actually send the request to the node.
 
-	if updateRequest.NewState == beegfs.NewState_CANCEL {
-		return &beegfs.WorkResponse{
+	if updateRequest.NewState == flex.NewState_CANCEL {
+		return &flex.WorkResponse{
 			JobId:     updateRequest.JobID,
 			RequestId: updateRequest.RequestID,
-			Status: &beegfs.RequestStatus{
-				Status:  beegfs.RequestStatus_CANCELLED,
+			Status: &flex.RequestStatus{
+				Status:  flex.RequestStatus_CANCELLED,
 				Message: "cancelled by user",
 			},
 		}, nil
@@ -60,7 +60,7 @@ func (w *BeeSyncWorker) UpdateWorkRequest(updateRequest *beegfs.UpdateWorkReques
 	return nil, fmt.Errorf("unsupported new state requested for work request: %s", updateRequest.NewState)
 }
 
-func (w *BeeSyncWorker) NodeStream(updateRequests *beegfs.UpdateWorkRequests) <-chan *beegfs.WorkResponse {
+func (w *BeeSyncWorker) NodeStream(updateRequests *flex.UpdateWorkRequests) <-chan *flex.WorkResponse {
 	return nil // TODO
 }
 
@@ -74,7 +74,7 @@ func (w *BeeSyncWorker) GetNodeType() NodeType {
 
 // SyncRequests are handled by BeeSync nodes.
 type SyncRequest struct {
-	*bs.SyncRequest
+	*beesync.SyncRequest
 }
 
 // SyncRequest satisfies the WorkRequest interface.
@@ -88,13 +88,13 @@ func (wr *SyncRequest) getRequestID() string {
 	return wr.GetRequestId()
 }
 
-func (r *SyncRequest) getStatus() beegfs.RequestStatus {
+func (r *SyncRequest) getStatus() flex.RequestStatus {
 	return *r.Metadata.GetStatus()
 }
 
-func (r *SyncRequest) setStatus(status beegfs.RequestStatus_Status, message string) {
+func (r *SyncRequest) setStatus(status flex.RequestStatus_Status, message string) {
 
-	newStatus := &beegfs.RequestStatus{
+	newStatus := &flex.RequestStatus{
 		Status:  status,
 		Message: message,
 	}

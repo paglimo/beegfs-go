@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
-	br "github.com/thinkparq/protobuf/beeremote/go"
-	bs "github.com/thinkparq/protobuf/beesync/go"
+	"github.com/thinkparq/protobuf/go/beeremote"
+	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -19,7 +19,7 @@ import (
 type SyncJob struct {
 	// By directly storing the protobuf defined response we can quickly return
 	// responses to users about the current status of their jobs.
-	br.JobResponse
+	beeremote.JobResponse
 	// Segments aren't populated until Allocate() is called.
 	Segments []*SyncSegment
 }
@@ -50,11 +50,11 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 	if j.Segments == nil {
 		j.Segments = make([]*SyncSegment, 0)
 		j.Segments = append(j.Segments, &SyncSegment{
-			segment: bs.Segment{
+			segment: beesync.Segment{
 				OffsetStart: 0,
 				OffsetStop:  10,
-				Method: &bs.Segment_S3_{
-					S3: &bs.Segment_S3{
+				Method: &beesync.Segment_S3_{
+					S3: &beesync.Segment_S3{
 						MultipartId: "mpartid-01",
 						PartsStart:  0,
 						PartsStop:   1024,
@@ -63,11 +63,11 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 			},
 		})
 		j.Segments = append(j.Segments, &SyncSegment{
-			segment: bs.Segment{
+			segment: beesync.Segment{
 				OffsetStart: 10,
 				OffsetStop:  20,
-				Method: &bs.Segment_S3_{
-					S3: &bs.Segment_S3{
+				Method: &beesync.Segment_S3_{
+					S3: &beesync.Segment_S3{
 						MultipartId: "mpartid-02",
 						PartsStart:  1024,
 						PartsStop:   2048,
@@ -83,7 +83,7 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 		fmt.Printf("request: %+v\n", s.segment.GetMethod())
 
 		wr := worker.SyncRequest{
-			SyncRequest: &bs.SyncRequest{
+			SyncRequest: &beesync.SyncRequest{
 				RequestId: fmt.Sprint(i),
 				Metadata:  j.GetMetadata(),
 				Path:      j.GetPath(),
@@ -110,11 +110,11 @@ func (j *SyncJob) GetID() string {
 	return j.Metadata.GetId()
 }
 
-func (j *SyncJob) GetStatus() *beegfs.RequestStatus {
+func (j *SyncJob) GetStatus() *flex.RequestStatus {
 	return j.Metadata.GetStatus()
 }
 
-func (j *SyncJob) SetStatus(status *beegfs.RequestStatus) {
+func (j *SyncJob) SetStatus(status *flex.RequestStatus) {
 	j.Metadata.Status = status
 }
 
@@ -179,7 +179,7 @@ func (j *SyncJob) GobDecode(data []byte) error {
 // SyncSegment is a wrapper around the protobuf defined BeeSync Segment type to
 // allow encoding/decoding to work properly through encoding/gob.
 type SyncSegment struct {
-	segment bs.Segment
+	segment beesync.Segment
 }
 
 func (r *SyncSegment) GobEncode() ([]byte, error) {

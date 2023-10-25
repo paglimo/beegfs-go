@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"sync"
 
-	beeremote "github.com/thinkparq/protobuf/beeremote/go"
+	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

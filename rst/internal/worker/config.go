@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/thinkparq/gobee/types"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +46,7 @@ type BeeSyncConfig struct {
 // It is up to the caller to decide to act on the configuration if an error is
 // returned. For example the caller could choose to move forward with whatever
 // good Nodes were returned and log a warning about the misconfigured nodes.
-func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *beegfs.WorkResponse, configs []Config) ([]*Node, error) {
+func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkResponse, configs []Config) ([]*Node, error) {
 
 	var newWorkers []*Node
 	var multiErr types.MultiError
@@ -70,7 +70,7 @@ func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *beegfs.Work
 // newWorkerNodeFromConfig() is intended to be used with newWorkerNodesFromConfig().
 // It accepts a single worker node configuration and returns either an
 // initialized worker node or an error.
-func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *beegfs.WorkResponse, config Config) (*Node, error) {
+func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkResponse, config Config) (*Node, error) {
 
 	log = log.With(zap.String("nodeID", config.ID), zap.String("nodeName", config.Name))
 	ctx, cancel := context.WithCancel(context.Background())

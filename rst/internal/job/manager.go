@@ -10,8 +10,8 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/kvstore"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
-	beeremote "github.com/thinkparq/protobuf/beeremote/go"
+	"github.com/thinkparq/protobuf/go/beeremote"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -121,7 +121,7 @@ func (m *Manager) Manage() {
 			m.processNewJobRequest(jobRequest)
 		case jobUpdate := <-m.jobUpdates:
 			switch jobUpdate.NewState {
-			case beegfs.NewState_CANCEL:
+			case flex.NewState_CANCEL:
 				m.cancelJobRequest(jobUpdate)
 			default:
 				m.log.Warn("unsupported job updated requested", zap.Any("jobUpdate", jobUpdate))
@@ -163,10 +163,10 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	if len(pathEntry.Value) != 0 {
 		for _, existingJob := range pathEntry.Value {
 			status := existingJob.GetStatus().Status
-			if status != beegfs.RequestStatus_CANCELLED && status != beegfs.RequestStatus_COMPLETED {
+			if status != flex.RequestStatus_CANCELLED && status != flex.RequestStatus_COMPLETED {
 				m.log.Warn("rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)", zap.Any("path", job.GetPath()))
-				newStatus := &beegfs.RequestStatus{
-					Status:  beegfs.RequestStatus_CANCELLED,
+				newStatus := &flex.RequestStatus{
+					Status:  flex.RequestStatus_CANCELLED,
 					Message: "rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)",
 				}
 				job.SetStatus(newStatus)
@@ -191,12 +191,12 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	defer commitAndReleaseJobResults()
 	jobResultEntry.Value = workResults
 
-	newStatus := beegfs.RequestStatus{}
+	newStatus := flex.RequestStatus{}
 	if !allScheduled {
-		newStatus.Status = beegfs.RequestStatus_FAILED
+		newStatus.Status = flex.RequestStatus_FAILED
 		newStatus.Message = "error initially scheduling work requests"
 	} else {
-		newStatus.Status = beegfs.RequestStatus_SCHEDULED
+		newStatus.Status = flex.RequestStatus_SCHEDULED
 		newStatus.Message = "job scheduled"
 	}
 
@@ -233,8 +233,8 @@ func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
 			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
 			if err != nil {
 				if err == badger.ErrKeyNotFound {
-					newStatus := &beegfs.RequestStatus{
-						Status:  beegfs.RequestStatus_CANCELLED,
+					newStatus := &flex.RequestStatus{
+						Status:  flex.RequestStatus_CANCELLED,
 						Message: "job cancelled by user",
 					}
 					job.SetStatus(newStatus)
@@ -253,12 +253,12 @@ func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
 			// set to false and the state of the job is unmodified.
 			updatedResults, allCancelled := m.workerManager.UpdateJob(ju)
 
-			newStatus := &beegfs.RequestStatus{}
+			newStatus := &flex.RequestStatus{}
 			if !allCancelled {
-				newStatus.Status = beegfs.RequestStatus_FAILED
+				newStatus.Status = flex.RequestStatus_FAILED
 				newStatus.Message = "error cancelling job (review work results for details)"
 			} else {
-				newStatus.Status = beegfs.RequestStatus_CANCELLED
+				newStatus.Status = flex.RequestStatus_CANCELLED
 				newStatus.Message = "job cancelled"
 			}
 

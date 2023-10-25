@@ -14,9 +14,9 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
-	beeremote "github.com/thinkparq/protobuf/beeremote/go"
-	beesync "github.com/thinkparq/protobuf/beesync/go"
+	beeremote "github.com/thinkparq/protobuf/go/beeremote"
+	beesync "github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -142,7 +142,7 @@ Using environment variables:
 	// Cleanup outstanding requests
 	updateJobRequest := beeremote.UpdateJobRequest{
 		Path:     "/some/path",
-		NewState: beegfs.NewState_CANCEL,
+		NewState: flex.NewState_CANCEL,
 	}
 
 	jobUpdates <- &updateJobRequest

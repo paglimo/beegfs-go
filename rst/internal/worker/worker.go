@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -24,14 +24,14 @@ const (
 // All concrete worker node types must implement the Worker interface.
 type Worker interface {
 	Connect() (retry bool, err error)
-	SubmitWorkRequest(WorkRequest) (*beegfs.WorkResponse, error)
+	SubmitWorkRequest(WorkRequest) (*flex.WorkResponse, error)
 	// UpdateWorkRequest is used to update the state of an outstanding work
 	// request. The work response should indicate the actual state of the work
 	// request, even if the worker node was unable to modify the work request
 	// for some reason (and the message should indicate why). Error should only
 	// be used for local or network issues communicating to the worker node.
-	UpdateWorkRequest(*beegfs.UpdateWorkRequest) (*beegfs.WorkResponse, error)
-	NodeStream(*beegfs.UpdateWorkRequests) <-chan *beegfs.WorkResponse
+	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
+	NodeStream(*flex.UpdateWorkRequests) <-chan *flex.WorkResponse
 	Disconnect() error
 	GetNodeType() NodeType
 }
@@ -93,7 +93,7 @@ type Node struct {
 	// All work request responses are sent to this channel. This includes responses
 	// from the external node (via Recv()) or responses to local errors from Send()
 	// or if a WorkRequest was assigned to a node while it was disconnected.
-	workResponses chan<- *beegfs.WorkResponse
+	workResponses chan<- *flex.WorkResponse
 }
 
 // ComparableNode is a "comparable" view of the Node struct used for testing.
@@ -113,9 +113,9 @@ type WorkRequest interface {
 	// guaranteed to be unique for a particular job.
 	getRequestID() string
 	// getStatus() returns the status of the request.
-	getStatus() beegfs.RequestStatus
+	getStatus() flex.RequestStatus
 	// setStatus() sets the request status and message.
-	setStatus(beegfs.RequestStatus_Status, string)
+	setStatus(flex.RequestStatus_Status, string)
 	// getNodeType() returns the type of node this request should run on.
 	getNodeType() NodeType
 }
@@ -133,7 +133,7 @@ type WorkResult struct {
 	// always always send the request to the worker node to ensure it is
 	// updated. Update requests are expected to be idempotent so if the WR is
 	// already in the requested state no errors will happen.
-	Status  beegfs.RequestStatus_Status
+	Status  flex.RequestStatus_Status
 	Message string
 	// AssignedNode is the ID of the node running this work request or "" if it is unassigned.
 	AssignedNode string
@@ -246,8 +246,8 @@ func (n *Node) nodeStream() (<-chan struct{}, context.CancelFunc) {
 	// TODO: When initially connecting to a node tell it what to do with any outstanding work requests.
 	// For example if any were cancelled while it was offline. For now we don't allow modifying WRs on
 	// offline nodes so just resume all requests.
-	updateWorkRequests := &beegfs.UpdateWorkRequests{
-		DefaultState: beegfs.UpdateWorkRequests_RESUME,
+	updateWorkRequests := &flex.UpdateWorkRequests{
+		DefaultState: flex.UpdateWorkRequests_RESUME,
 	}
 	workResponsesStream := n.worker.NodeStream(updateWorkRequests)
 

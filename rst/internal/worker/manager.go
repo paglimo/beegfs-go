@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"sync"
 
-	beegfs "github.com/thinkparq/protobuf/beegfs/go"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -26,7 +26,7 @@ type Manager struct {
 	// criteria.
 	nodePools map[NodeType]*Pool
 	// WorkResponses is where individual results from each worker node are sent.
-	WorkResponses <-chan *beegfs.WorkResponse
+	WorkResponses <-chan *flex.WorkResponse
 	config        ManagerConfig
 }
 
@@ -45,13 +45,13 @@ type JobSubmission struct {
 type JobUpdate struct {
 	JobID       string
 	WorkResults map[string]WorkResult
-	NewState    beegfs.NewState
+	NewState    flex.NewState
 }
 
 func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
-	workResponsesChan := make(chan *beegfs.WorkResponse)
+	workResponsesChan := make(chan *flex.WorkResponse)
 
 	nodePools := make(map[NodeType]*Pool, 0)
 	nodes, err := newWorkerNodesFromConfig(log, workResponsesChan, workerConfigs)
@@ -119,10 +119,10 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, bool) {
 		pool, ok := m.nodePools[workRequest.getNodeType()]
 		if !ok {
 			err := fmt.Errorf("%s: %w", workRequest.getNodeType(), ErrNoPoolsForNodeType)
-			workRequest.setStatus(beegfs.RequestStatus_FAILED, err.Error())
+			workRequest.setStatus(flex.RequestStatus_FAILED, err.Error())
 			allScheduled = false
 		} else {
-			var workResponse *beegfs.WorkResponse
+			var workResponse *flex.WorkResponse
 			workerID, workResponse, err = pool.assignToLeastBusyWorker(workRequest)
 			// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. For
 			// now treat all failures as fatal. The final implementation
@@ -142,11 +142,11 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, bool) {
 			// buffered channel and the size of the channel determines how
 			// many outstanding work requests we'll allow.
 			if err != nil {
-				workRequest.setStatus(beegfs.RequestStatus_UNASSIGNED, err.Error())
+				workRequest.setStatus(flex.RequestStatus_UNASSIGNED, err.Error())
 				allScheduled = false
 			} else {
 				workRequest.setStatus(workResponse.Status.GetStatus(), workResponse.GetStatus().Message)
-				if workResponse.Status.Status != beegfs.RequestStatus_SCHEDULED {
+				if workResponse.Status.Status != flex.RequestStatus_SCHEDULED {
 					allScheduled = false
 				}
 			}
@@ -167,7 +167,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, bool) {
 		jobUpdate := JobUpdate{
 			JobID:       js.JobID,
 			WorkResults: workResults,
-			NewState:    beegfs.NewState_CANCEL,
+			NewState:    flex.NewState_CANCEL,
 		}
 		var allCancelled bool
 		workResults, allCancelled = m.UpdateJob(jobUpdate)
@@ -198,14 +198,14 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]WorkResult, bool) {
 
 		// If the WR was never assigned we can just cancel it.
 		if workResult.AssignedPool == "" || workResult.AssignedNode == "" {
-			workResult.Status = beegfs.RequestStatus_CANCELLED
+			workResult.Status = flex.RequestStatus_CANCELLED
 			newResults[workResult.RequestID] = workResult
 			continue
 		}
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status = beegfs.RequestStatus_UNKNOWN
+			workResult.Status = flex.RequestStatus_UNKNOWN
 			workResult.Message = ErrNoPoolsForNodeType.Error()
 			newResults[workResult.RequestID] = workResult
 			allUpdated = false
@@ -215,7 +215,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]WorkResult, bool) {
 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
-			workResult.Status = beegfs.RequestStatus_UNKNOWN
+			workResult.Status = flex.RequestStatus_UNKNOWN
 			workResult.Message = err.Error()
 			newResults[workResult.RequestID] = workResult
 			allUpdated = false
@@ -226,7 +226,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]WorkResult, bool) {
 		workResult.Status = resp.Status.Status
 		workResult.Message = resp.Status.GetMessage()
 
-		if jobUpdate.NewState == beegfs.NewState_CANCEL && workResult.Status != beegfs.RequestStatus_CANCELLED {
+		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status != flex.RequestStatus_CANCELLED {
 			allUpdated = false
 		}
 
