@@ -5,9 +5,7 @@ import (
 	"path"
 	"reflect"
 	"sync"
-	"time"
 
-	"github.com/thinkparq/gobee/types"
 	beegfs "github.com/thinkparq/protobuf/beegfs/go"
 	"go.uber.org/zap"
 )
@@ -42,6 +40,12 @@ type Manager struct {
 type JobSubmission struct {
 	JobID        string
 	WorkRequests []WorkRequest
+}
+
+type JobUpdate struct {
+	JobID       string
+	WorkResults map[string]WorkResult
+	NewState    beegfs.NewState
 }
 
 func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
@@ -93,114 +97,142 @@ func (m *Manager) Manage() error {
 	return nil
 }
 
-func (m *Manager) SubmitJob(js JobSubmission) []WorkResult {
-	// Use a multi error to collect errors from all work requests.
-	var multiErr types.MultiError
-	workResults := make([]WorkResult, 0)
+// SubmitJob is used to execute the work requests for a job across one or more
+// worker nodes. It returns a map of the work results and a bool indicating if
+// any of the work results were unable to be scheduled.
+func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, bool) {
+
+	workResults := make(map[string]WorkResult)
+	// If we're unable to schedule any of the work requests this is set to false
+	// so we know to cancel and WRs that were scheduled.
+	allScheduled := true
 
 	// Iterate over the work requests in the job submission and attempt
 	// to schedule them while simultaneously adding them to the work results.
-	for _, wr := range js.WorkRequests {
+	for _, workRequest := range js.WorkRequests {
 		// WorkerID will be empty if an error happens.
 		workerID := ""
-		var workResponse *beegfs.WorkResponse
+
 		// If an error occurs return it as the message in the work response status.
 		var err error
 
-		pool, ok := m.nodePools[wr.getNodeType()]
+		pool, ok := m.nodePools[workRequest.getNodeType()]
 		if !ok {
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("%s: %w", wr.getNodeType(), ErrNoPoolsForNodeType))
-			wr.setStatus(beegfs.RequestStatus_FAILED, err.Error())
-			break // No point continuing to try if no pools are available.
+			err := fmt.Errorf("%s: %w", workRequest.getNodeType(), ErrNoPoolsForNodeType)
+			workRequest.setStatus(beegfs.RequestStatus_FAILED, err.Error())
+			allScheduled = false
 		} else {
-			workerID, workResponse, err = pool.assignToLeastBusyWorker(wr)
+			var workResponse *beegfs.WorkResponse
+			workerID, workResponse, err = pool.assignToLeastBusyWorker(workRequest)
+			// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. For
+			// now treat all failures as fatal. The final implementation
+			// should include logic that handles any errors that can be
+			// retried by WorkerMgr, for example if there aren't any nodes
+			// available in the pool yet, or a request fails on one node but
+			// others are available.
+			//
+			// Note since we don't store the full work requests in the DB
+			// (only the results) we have to retry immediately (perhaps with
+			// a backoff). We can't just store the work request in the
+			// jobResultStore and try again later. This means we need to be
+			// careful not to run ourselves out of memory if some extended
+			// condition prevents scheduling requests because we can't just
+			// keep an infinite backlog of outstanding work requests.
+			// Probably the correct/easiest way to handle this is to use a
+			// buffered channel and the size of the channel determines how
+			// many outstanding work requests we'll allow.
 			if err != nil {
-				multiErr.Errors = append(multiErr.Errors, err)
-				wr.setStatus(beegfs.RequestStatus_UNASSIGNED, err.Error())
-				continue
-			}
-		}
-
-		fullStatus := workResponse.GetStatus()
-		workResult := WorkResult{
-			RequestID:    wr.getRequestID(),
-			Status:       fullStatus.Status,
-			Message:      fullStatus.Message,
-			AssignedNode: workerID,
-			AssignedPool: wr.getNodeType(),
-		}
-		workResults = append(workResults, workResult)
-	}
-
-	// If any errors happened lets check if we can retry them.
-	if len(multiErr.Errors) != 0 {
-
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. For
-		// now treat all failures as fatal. The final implementation
-		// should include logic that handles any errors that can be
-		// retried by WorkerMgr, for example if there aren't any nodes
-		// available in the pool yet, or a request fails on one node but
-		// others are available.
-		//
-		// Note since we don't store the full work requests in the DB
-		// (only the results) we have to retry immediately (perhaps with
-		// a backoff). We can't just store the work request in the
-		// jobResultStore and try again later. This means we need to be
-		// careful not to run ourselves out of memory if some extended
-		// condition prevents scheduling requests because we can't just
-		// keep an infinite backlog of outstanding work requests.
-		// Probably the correct/easiest way to handle this is to use a
-		// buffered channel and the size of the channel determines how
-		// many outstanding work requests we'll allow.
-		isFatal := true // Force all errors to be fatal for now.
-		for _, r := range workResults {
-			if r.Status == beegfs.RequestStatus_FAILED {
-				// If any requests failed just cancel any requests that did started.
-				isFatal = true
-			}
-			// TODO: Evaluate if we need to handle any other state differently.
-		}
-
-		// If a fatal error occurred request the job be cancelled on all nodes.
-		if isFatal {
-			for _, r := range workResults {
-				if r.Status == beegfs.RequestStatus_SCHEDULED {
-					// TODO: Request the WR be cancelled.
-					continue
+				workRequest.setStatus(beegfs.RequestStatus_UNASSIGNED, err.Error())
+				allScheduled = false
+			} else {
+				workRequest.setStatus(workResponse.Status.GetStatus(), workResponse.GetStatus().Message)
+				if workResponse.Status.Status != beegfs.RequestStatus_SCHEDULED {
+					allScheduled = false
 				}
 			}
-			// If a fatal error happened let JobMgr know immediately.
-			m.log.Error("unable to assign job", zap.Any("jobID", js.JobID), zap.Error(&multiErr))
-			return workResults
-		} else {
-			m.log.Warn("unable to assign all requests for job (retrying)", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
+		}
+
+		workResult := WorkResult{
+			RequestID:    workRequest.getRequestID(),
+			Status:       workRequest.getStatus().Status,
+			Message:      workRequest.getStatus().Message,
+			AssignedNode: workerID,
+			AssignedPool: workRequest.getNodeType(),
+		}
+		workResults[workResult.RequestID] = workResult
+	}
+
+	if !allScheduled {
+		m.log.Warn("unable to assign all work requests for job (attempting to cancel)", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
+		jobUpdate := JobUpdate{
+			JobID:       js.JobID,
+			WorkResults: workResults,
+			NewState:    beegfs.NewState_CANCEL,
+		}
+		var allCancelled bool
+		workResults, allCancelled = m.UpdateJob(jobUpdate)
+		if !allCancelled {
+			m.log.Warn("unable to cancel some outstanding work requests", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
 		}
 	} else {
 		m.log.Debug("finished assigning work requests for job", zap.Any("jobID", js.JobID), zap.Any("workResults", workResults))
 	}
-
-	return workResults
+	return workResults, allScheduled
 }
 
-func (m *Manager) UpdateWorkRequest(nodeType NodeType, nodeID string, updatedRequest *beegfs.UpdateWorkRequest) (WorkResult, error) {
+// UpdateJob takes a jobUpdate containing work results for outstanding work
+// requests and a new state. It attempts to communicate with the worker node
+// running the work requests to set the new state and returns the updated
+// WorkResults and a bool indicating if all work requests were updated to the
+// requested state (true) or false if any updates failed or resulted in a
+// different state than what was requested.
+func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]WorkResult, bool) {
 
-	workResponse, err := m.nodePools[nodeType].nodeMap[nodeID].worker.UpdateWorkRequest(updatedRequest)
+	newResults := make(map[string]WorkResult)
 
-	// TODO: Actually check the node pool and worker node exists or we may panic here.
+	// If we're unable to definitively update the state if the work request on
+	// any node to the requested state, allUpdated is set to false.
+	allUpdated := true
 
-	if err != nil {
-		return WorkResult{}, err
+	for _, workResult := range jobUpdate.WorkResults {
+
+		// If the WR was never assigned we can just cancel it.
+		if workResult.AssignedPool == "" || workResult.AssignedNode == "" {
+			workResult.Status = beegfs.RequestStatus_CANCELLED
+			newResults[workResult.RequestID] = workResult
+			continue
+		}
+
+		pool, ok := m.nodePools[workResult.AssignedPool]
+		if !ok {
+			workResult.Status = beegfs.RequestStatus_UNKNOWN
+			workResult.Message = ErrNoPoolsForNodeType.Error()
+			newResults[workResult.RequestID] = workResult
+			allUpdated = false
+			newResults[workResult.RequestID] = workResult
+			continue
+		}
+
+		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
+		if err != nil {
+			workResult.Status = beegfs.RequestStatus_UNKNOWN
+			workResult.Message = err.Error()
+			newResults[workResult.RequestID] = workResult
+			allUpdated = false
+			newResults[workResult.RequestID] = workResult
+			continue
+		}
+
+		workResult.Status = resp.Status.Status
+		workResult.Message = resp.Status.GetMessage()
+
+		if jobUpdate.NewState == beegfs.NewState_CANCEL && workResult.Status != beegfs.RequestStatus_CANCELLED {
+			allUpdated = false
+		}
+
+		newResults[workResult.RequestID] = workResult
 	}
-
-	fullStatus := workResponse.GetStatus()
-	workResult := WorkResult{
-		RequestID:    workResponse.GetRequestId(),
-		Status:       fullStatus.Status,
-		Message:      fullStatus.Message,
-		AssignedNode: nodeID,
-		AssignedPool: nodeType,
-	}
-	return workResult, nil
+	return newResults, allUpdated
 }
 
 func (m *Manager) Stop() {
@@ -209,85 +241,4 @@ func (m *Manager) Stop() {
 	for _, pool := range m.nodePools {
 		pool.StopAll()
 	}
-}
-
-// Pool defines a pool of workers and methods for automatically assigning work
-// requests to the least busy node in the pool.
-type Pool struct {
-	// What type of workers are in this pool. Pools are generally organized into
-	// a map based on their NodeType.
-	nodeType NodeType
-	// All nodes in a particular pool should be the same underlying type,
-	// otherwise when assigning work requests, nodes will reject any requests
-	// they do not support.
-	nodes []*Node
-	// Node map should contain the same entries as nodes.
-	// We use a map for quick lookup of a particular node.
-	nodeMap map[string]*Node
-	// Next is the index of the next worker that should be assigned a request.
-	next int
-	// The mutex should be locked when interacting with the pool.
-	mu *sync.Mutex
-}
-
-func (p *Pool) HandleAll(wg *sync.WaitGroup) {
-	for _, node := range p.nodes {
-		go node.Handle(wg)
-	}
-}
-
-func (p *Pool) StopAll() {
-	for _, node := range p.nodes {
-		go node.Stop()
-	}
-}
-
-// assignToLeastBusyWorker assigns the work request to the least busy node in
-// the pool. It returns the ID of the assigned node and the response, or an error.
-func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *beegfs.WorkResponse, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	poolSize := len(p.nodes)
-
-	if poolSize == 0 {
-		return "", nil, fmt.Errorf("unable to assign work request to the %s node pool: %w", p.nodeType, ErrNoWorkersInPool)
-	}
-
-	// If no workers are connected we'll wait a bit then retry.
-	// When first starting it can take time for all nodes to connect.
-	for i := 0; i <= 3; i++ {
-		// Don't retry more times than the number of workers in the pool. It could
-		// be all workers are disconnected.
-		for i := 0; i < poolSize; i++ {
-			if p.nodes[p.next].GetState() == CONNECTED {
-				assignedWorker := p.nodes[p.next].ID
-				resp, err := p.nodes[p.next].worker.SubmitWorkRequest(wr)
-
-				if err != nil {
-					// If that worker is disconnected or there was an error
-					// sending try the next.
-					p.next = (p.next + 1) % poolSize
-					continue
-				}
-
-				// TODO: https://github.com/ThinkParQ/bee-remote/issues/7.
-				// Implement a more advanced mechanism to get the least busy worker
-				// in the pool. For now we'll just assign work requests round robin
-				// so just advance the next cursor wrapping around if needed.
-				// However this will usually lead to imbalanced utilization as work
-				// requests are expected to take varying times to complete.
-				//
-				// Ideally move to a weighted system that takes into consideration
-				// the size of the work request.
-				p.next = (p.next + 1) % poolSize
-				return assignedWorker, resp, nil
-			}
-
-		}
-		// If no workers are connected sleep and retry.
-		time.Sleep(1 * time.Second)
-	}
-
-	return "", nil, fmt.Errorf("no workers are available in the %s pool: %w", p.nodeType, ErrNoWorkersConnected)
 }

@@ -25,6 +25,11 @@ const (
 type Worker interface {
 	Connect() (retry bool, err error)
 	SubmitWorkRequest(WorkRequest) (*beegfs.WorkResponse, error)
+	// UpdateWorkRequest is used to update the state of an outstanding work
+	// request. The work response should indicate the actual state of the work
+	// request, even if the worker node was unable to modify the work request
+	// for some reason (and the message should indicate why). Error should only
+	// be used for local or network issues communicating to the worker node.
 	UpdateWorkRequest(*beegfs.UpdateWorkRequest) (*beegfs.WorkResponse, error)
 	NodeStream(*beegfs.UpdateWorkRequests) <-chan *beegfs.WorkResponse
 	Disconnect() error
@@ -121,8 +126,15 @@ type WorkRequest interface {
 // the statuses of the results will reflect this.
 type WorkResult struct {
 	RequestID string
-	Status    beegfs.RequestStatus_Status
-	Message   string
+	// The last known status of the request. IMPORTANT: Don't rely on status
+	// when submitting an UpdateWorkRequest. Instead check if the assigned node
+	// and pool aren't empty to decide if an update can be requested. Because
+	// this is the last known status, if a state change is requested we should
+	// always always send the request to the worker node to ensure it is
+	// updated. Update requests are expected to be idempotent so if the WR is
+	// already in the requested state no errors will happen.
+	Status  beegfs.RequestStatus_Status
+	Message string
 	// AssignedNode is the ID of the node running this work request or "" if it is unassigned.
 	AssignedNode string
 	// AssignedPool is the type of the node pool running this work request or "" if it is unassigned.

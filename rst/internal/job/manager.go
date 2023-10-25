@@ -177,7 +177,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	}
 
 	pathEntry.Value[job.GetID()] = job
-	workResults := m.workerManager.SubmitJob(job.Allocate())
+	workResults, allScheduled := m.workerManager.SubmitJob(job.Allocate())
 
 	// If we crashed here there could be WRs scheduled to worker nodes but we
 	// have no record which nodes they were assigned to. To handle this after a
@@ -189,10 +189,21 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 		m.log.Error("unable to create a job result entry", zap.Error(err), zap.Any("jobID", job.GetID()))
 	}
 	defer commitAndReleaseJobResults()
+	jobResultEntry.Value = workResults
 
-	for _, result := range workResults {
-		jobResultEntry.Value[result.RequestID] = result
+	newStatus := beegfs.RequestStatus{}
+	if !allScheduled {
+		newStatus.Status = beegfs.RequestStatus_FAILED
+		newStatus.Message = "error initially scheduling work requests"
+	} else {
+		newStatus.Status = beegfs.RequestStatus_SCHEDULED
+		newStatus.Message = "job scheduled"
 	}
+
+	job.SetStatus(&newStatus)
+	pathEntry.Value[job.GetID()] = job
+
+	m.log.Debug("created job", zap.Any("job", job), zap.Any("workResults", workResults))
 }
 
 // cancelJobRequest will attempt to cancel the specified job and any associated
@@ -232,50 +243,33 @@ func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
 				m.log.Warn("unknown error getting results for job", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
 				continue
 			}
-
+			// IMPORTANT: Ensure releaseResultsEntry() is called if we get a valid resultsEntry.
+			ju := worker.JobUpdate{
+				JobID:       jobUpdate.JobID,
+				WorkResults: resultsEntry.Value,
+				NewState:    jobUpdate.NewState,
+			}
 			// If we're unable to definitively cancel on any node, allCancelled is
-			// set to true and the state of the job is unmodified.
-			allCancelled := true
-			updatedResults := make(map[string]worker.WorkResult)
-			for _, workResult := range resultsEntry.Value {
+			// set to false and the state of the job is unmodified.
+			updatedResults, allCancelled := m.workerManager.UpdateJob(ju)
 
-				// If the WR was never assigned we can just cancel it.
-				if workResult.AssignedPool == "" && workResult.AssignedNode == "" {
-					workResult.Status = beegfs.RequestStatus_CANCELLED
-					updatedResults[workResult.RequestID] = workResult
-					continue
-				}
-
-				// Otherwise send a message to the worker node to ensure it is cancelled:
-				updateWorkRequest := &beegfs.UpdateWorkRequest{
-					JobID:     jobUpdate.JobID,
-					RequestID: workResult.RequestID,
-					NewState:  jobUpdate.NewState,
-				}
-
-				newWorkResult, err := m.workerManager.UpdateWorkRequest(workResult.AssignedPool, workResult.AssignedNode, updateWorkRequest)
-				if err != nil {
-					m.log.Warn("error communicating with worker node to update work request", zap.Error(err), zap.Any("jobUpdate", jobUpdate), zap.Any("workResult", workResult))
-					allCancelled = false
-					continue
-				}
-				if newWorkResult.Status != beegfs.RequestStatus_CANCELLED {
-					m.log.Warn("unable to cancel job (some work requests are still active)", zap.Any("workResult", newWorkResult))
-					allCancelled = false
-				}
-				updatedResults[newWorkResult.RequestID] = newWorkResult
+			newStatus := &beegfs.RequestStatus{}
+			if !allCancelled {
+				newStatus.Status = beegfs.RequestStatus_FAILED
+				newStatus.Message = "error cancelling job (review work results for details)"
+			} else {
+				newStatus.Status = beegfs.RequestStatus_CANCELLED
+				newStatus.Message = "job cancelled"
 			}
 
-			if allCancelled {
-				newStatus := &beegfs.RequestStatus{
-					Status:  beegfs.RequestStatus_CANCELLED,
-					Message: "job cancelled by user",
-				}
-				job.SetStatus(newStatus)
-			}
+			job.SetStatus(newStatus)
 			updatedJobs[job.GetID()] = job
 			resultsEntry.Value = updatedResults
-			releaseResultsEntry()
+			err = releaseResultsEntry()
+			if err != nil {
+				m.log.Warn("unable to commit and release results entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+			}
+			m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
 		}
 
 		pathEntry.Value = updatedJobs
