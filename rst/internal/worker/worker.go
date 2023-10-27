@@ -141,6 +141,13 @@ type WorkResult struct {
 	AssignedPool NodeType
 }
 
+func (wr *WorkResult) GetStatus() *flex.RequestStatus {
+	return &flex.RequestStatus{
+		Status:  wr.Status,
+		Message: wr.Message,
+	}
+}
+
 // Handles the connection with a particular worker node. It determines the state
 // of the worker node (i.e., connected, disconnected) based on external and
 // internal factors. It is the only place that should update the state of the node.

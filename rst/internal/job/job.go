@@ -25,6 +25,8 @@ type Job interface {
 	// results for individual work requests. For example if some WRs are
 	// finished and others are still running the state would be RUNNING.
 	SetStatus(*flex.RequestStatus)
+	// Get returns the protocol buffer defined message representing a single Job.
+	Get() *beeremote.Job
 }
 
 // New is the standard way to generate a Job from a JobRequest.

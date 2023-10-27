@@ -17,15 +17,19 @@ import (
 // embeds all the protocol buffer define types needed for BeeRemote to associate
 // what work needs to be done with how it is being carried out.
 type SyncJob struct {
-	// By directly storing the protobuf defined response we can quickly return
+	// By directly storing the protobuf defined Job we can quickly return
 	// responses to users about the current status of their jobs.
-	beeremote.JobResponse
+	beeremote.Job
 	// Segments aren't populated until Allocate() is called.
 	Segments []*SyncSegment
 }
 
 // Verify SyncJob implements the Job interface.
 var _ Job = &SyncJob{}
+
+func (j *SyncJob) Get() *beeremote.Job {
+	return &j.Job
+}
 
 // Allocate breaks the file into segments taking into consideration file size,
 // operation type, and transfer method (S3, POSIX, etc.). It uses these segments
@@ -127,7 +131,7 @@ func (j *SyncJob) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
 	// the oneof type field in the JobRequest struct.
-	jobResponseData, err := proto.Marshal(&j.JobResponse)
+	jobResponseData, err := proto.Marshal(&j.Job)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +167,7 @@ func (j *SyncJob) GobDecode(data []byte) error {
 	jobResponseData := data[2 : 2+jobResponseLength]
 	workRequestData := data[2+jobResponseLength:]
 
-	err := proto.Unmarshal(jobResponseData, &j.JobResponse)
+	err := proto.Unmarshal(jobResponseData, &j.Job)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
@@ -35,6 +36,17 @@ type Manager struct {
 	cancel  context.CancelFunc
 	config  Config
 	errChan chan<- error
+	// Ready indicates the Manage() loop has been started and finished setting
+	// up all MapStores and their backing databases. Methods besides the
+	// Manage() loop must check the ready state before interacting with the
+	// MapStores. Before the Manage() loop terminates and closes connections to
+	// the databases it will update the ready state to ensure databases aren't
+	// closed out from under other methods.
+	ready bool
+	// readyMu is used to coordinate updating the ready state. Manage() will
+	// take a write lock before changing the ready state. Other methods should
+	// take a read lock before checking the ready state.
+	readyMu sync.RWMutex
 	// jobRequests is where external callers should submit requests to be handled by JobMgr.
 	jobRequests <-chan *beeremote.JobRequest
 	// jobUpdates is where external callers should submit requests to update existing jobs.
@@ -59,11 +71,12 @@ func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager, e
 	jobUpdatesChan := make(chan *beeremote.UpdateJobRequest, config.RequestQueueDepth)
 	return &Manager{
 		log:           log,
-		config:        config,
-		errChan:       errCh,
-		workerManager: workerManager,
 		ctx:           ctx,
 		cancel:        cancel,
+		config:        config,
+		errChan:       errCh,
+		ready:         false,
+		workerManager: workerManager,
 		jobRequests:   jobRequestChan,
 		jobUpdates:    jobUpdatesChan,
 	}, jobRequestChan, jobUpdatesChan
@@ -109,6 +122,10 @@ func (m *Manager) Manage() {
 	defer jobIDGenerator.Release() // Defers are LIFO which means this is called before closing the DB.
 	m.jobIDGenerator = jobIDGenerator
 
+	m.readyMu.Lock()
+	m.ready = true
+	m.readyMu.Unlock()
+
 	// TODO: https://github.com/ThinkParQ/bee-remote/issues/9. Use a pool of
 	// goroutines to process job requests and work responses.
 	m.log.Info("now accepting job requests and work responses")
@@ -116,6 +133,9 @@ func (m *Manager) Manage() {
 		select {
 		case <-m.ctx.Done():
 			m.log.Info("shutting down because the app is shutting down")
+			m.readyMu.Lock()
+			m.ready = false
+			m.readyMu.Unlock()
 			return
 		case jobRequest := <-m.jobRequests:
 			m.processNewJobRequest(jobRequest)
@@ -131,6 +151,67 @@ func (m *Manager) Manage() {
 			m.log.Info("workResponse", zap.Any("workResponse", wr))
 		}
 	}
+}
+
+func (m *Manager) QueryJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
+
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
+	}
+
+	switch query := request.Query.(type) {
+	case *beeremote.GetJobsRequest_ExactPath:
+		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(query.ExactPath)
+		if err != nil {
+			return nil, err
+		}
+		defer releasePathEntry()
+
+		jobResponses := []*beeremote.JobResponse{}
+
+		for jobID, job := range pathEntry.Value {
+
+			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(jobID)
+			if err != nil {
+				return nil, err
+			}
+
+			workResults := []*beeremote.JobResponse_WorkResult{}
+			for _, wr := range resultsEntry.Value {
+				workResult := &beeremote.JobResponse_WorkResult{
+					RequestId:    wr.RequestID,
+					Status:       wr.GetStatus(),
+					AssignedNode: wr.AssignedNode,
+					AssignedPool: string(wr.AssignedPool),
+				}
+				workResults = append(workResults, workResult)
+			}
+
+			jobResponse := beeremote.JobResponse{
+				Job:         job.Get(),
+				WorkResults: workResults,
+			}
+
+			jobResponses = append(jobResponses, &jobResponse)
+			releaseResultsEntry()
+		}
+
+		return &beeremote.GetJobsResponse{
+			Jobs: jobResponses,
+		}, nil
+
+	case *beeremote.GetJobsRequest_PrefixPath:
+		// TODO
+	default:
+		// TODO: If not specified just return all jobs? Might want to add an
+		// explicit option to avoid a user accidentally placing a lot of load on
+		// the system.
+
+	}
+
+	return nil, nil
 }
 
 func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {

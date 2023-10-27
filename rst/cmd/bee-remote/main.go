@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/bee-remote/internal/config"
@@ -134,7 +135,10 @@ Using environment variables:
 	// TODO: Cleanup test code before submitting a PR.
 
 	// Submit a new request
-	sj := beesync.SyncJob{}
+	sj := beesync.SyncJob{
+		Operation:           beesync.SyncJob_UPLOAD,
+		RemoteStorageTarget: "1",
+	}
 	jr := beeremote.JobRequest{Path: "/some/path", Name: "test", Priority: 3, Type: &beeremote.JobRequest_Sync{Sync: &sj}}
 
 	jobRequests <- &jr
@@ -146,6 +150,21 @@ Using environment variables:
 	}
 
 	jobUpdates <- &updateJobRequest
+
+	// Get results:
+	getJobsRequest := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_ExactPath{
+			ExactPath: "/some/path",
+		},
+	}
+
+	time.Sleep(2 * time.Second)
+	responses, err := jobManager.QueryJobs(getJobsRequest)
+	if err != nil {
+		logger.Error("error querying jobs", zap.Error(err))
+	} else {
+		logger.Info("jobResponses", zap.Any("responses", responses))
+	}
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
 	select {
