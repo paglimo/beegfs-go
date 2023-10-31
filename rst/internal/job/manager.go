@@ -153,7 +153,7 @@ func (m *Manager) Manage() {
 	}
 }
 
-func (m *Manager) QueryJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
+func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
 
 	m.readyMu.RLock()
 	defer m.readyMu.RUnlock()
@@ -162,23 +162,31 @@ func (m *Manager) QueryJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJo
 	}
 
 	switch query := request.Query.(type) {
-	case *beeremote.GetJobsRequest_ExactPath:
-		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(query.ExactPath)
+	case *beeremote.GetJobsRequest_JobID:
+		// If we got a JobID first query job results then use the path from the
+		// results metadata to get the path entry and return at most one job.
+		resultsEntry, err := m.jobResultsStore.GetEntry(query.JobID)
 		if err != nil {
 			return nil, err
 		}
-		defer releasePathEntry()
+		exactPath, ok := resultsEntry.Metadata["path"]
+		if !ok {
+			return nil, fmt.Errorf("found job results for job ID %s but the entry's metadata doesn't contain the path (unable to perform reverse lookup of job in path store)", query.JobID)
+		}
 
-		jobResponses := []*beeremote.JobResponse{}
+		pathEntry, err := m.pathStore.GetEntry(exactPath)
+		if err != nil {
+			return nil, err
+		}
 
-		for jobID, job := range pathEntry.Value {
+		job, ok := pathEntry.Value[query.JobID]
+		if !ok {
+			return nil, fmt.Errorf("found job results for job ID %s but there is no corresponding entry in the path store (perhaps the job finished and is being cleaned up?)", query.JobID)
+		}
 
-			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(jobID)
-			if err != nil {
-				return nil, err
-			}
+		workResults := []*beeremote.JobResponse_WorkResult{}
 
-			workResults := []*beeremote.JobResponse_WorkResult{}
+		if request.GetIncludeWorkResults() {
 			for _, wr := range resultsEntry.Value {
 				workResult := &beeremote.JobResponse_WorkResult{
 					RequestId:    wr.RequestID,
@@ -188,30 +196,103 @@ func (m *Manager) QueryJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJo
 				}
 				workResults = append(workResults, workResult)
 			}
+		}
 
+		return &beeremote.GetJobsResponse{
+			Response: []*beeremote.JobResponse{
+				{
+					Job:         job.Get(),
+					WorkResults: workResults,
+				},
+			},
+		}, nil
+
+	case *beeremote.GetJobsRequest_ExactPath:
+		// If we got an exact path first get the jobs for the path entry then
+		// lookup all the job results if requested.
+		pathEntry, err := m.pathStore.GetEntry(query.ExactPath)
+		if err != nil {
+			return nil, err
+		}
+
+		jobResponses := []*beeremote.JobResponse{}
+
+		for jobID, job := range pathEntry.Value {
+			workResults := []*beeremote.JobResponse_WorkResult{}
+
+			if request.GetIncludeWorkResults() {
+				resultsEntry, err := m.jobResultsStore.GetEntry(jobID)
+				if err != nil {
+					return nil, err
+				}
+
+				for _, wr := range resultsEntry.Value {
+					workResult := &beeremote.JobResponse_WorkResult{
+						RequestId:    wr.RequestID,
+						Status:       wr.GetStatus(),
+						AssignedNode: wr.AssignedNode,
+						AssignedPool: string(wr.AssignedPool),
+					}
+					workResults = append(workResults, workResult)
+				}
+			}
 			jobResponse := beeremote.JobResponse{
 				Job:         job.Get(),
 				WorkResults: workResults,
 			}
 
 			jobResponses = append(jobResponses, &jobResponse)
-			releaseResultsEntry()
 		}
-
 		return &beeremote.GetJobsResponse{
-			Jobs: jobResponses,
+			Response: jobResponses,
 		}, nil
 
-	case *beeremote.GetJobsRequest_PrefixPath:
-		// TODO
-	default:
-		// TODO: If not specified just return all jobs? Might want to add an
-		// explicit option to avoid a user accidentally placing a lot of load on
-		// the system.
+	case *beeremote.GetJobsRequest_PathPrefix:
+		// If we got a path prefix first get all jobs for that path prefix.
+		// If someone wanted to get all jobs they could provide a prefix of "/".
 
+		pathItems, err := m.pathStore.GetEntries(query.PathPrefix)
+		if err != nil {
+			return nil, err
+		}
+
+		jobResponses := []*beeremote.JobResponse{}
+
+		for _, pathItem := range pathItems {
+
+			for jobID, job := range pathItem.Entry.Value {
+				workResults := []*beeremote.JobResponse_WorkResult{}
+
+				if request.GetIncludeWorkResults() {
+					resultsEntry, err := m.jobResultsStore.GetEntry(jobID)
+					if err != nil {
+						return nil, err
+					}
+
+					for _, wr := range resultsEntry.Value {
+						workResult := &beeremote.JobResponse_WorkResult{
+							RequestId:    wr.RequestID,
+							Status:       wr.GetStatus(),
+							AssignedNode: wr.AssignedNode,
+							AssignedPool: string(wr.AssignedPool),
+						}
+						workResults = append(workResults, workResult)
+					}
+				}
+				jobResponse := beeremote.JobResponse{
+					Job:         job.Get(),
+					WorkResults: workResults,
+				}
+
+				jobResponses = append(jobResponses, &jobResponse)
+			}
+		}
+		return &beeremote.GetJobsResponse{
+			Response: jobResponses,
+		}, nil
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
 }
 
 func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
@@ -270,6 +351,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 		m.log.Error("unable to create a job result entry", zap.Error(err), zap.Any("jobID", job.GetID()))
 	}
 	defer commitAndReleaseJobResults()
+	jobResultEntry.Metadata["path"] = job.GetPath()
 	jobResultEntry.Value = workResults
 
 	newStatus := flex.RequestStatus{}

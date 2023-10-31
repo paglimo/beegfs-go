@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	beeremote "github.com/thinkparq/protobuf/go/beeremote"
-	beesync "github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
@@ -135,35 +136,74 @@ Using environment variables:
 	// TODO: Cleanup test code before submitting a PR.
 
 	// Submit a new request
-	sj := beesync.SyncJob{
-		Operation:           beesync.SyncJob_UPLOAD,
-		RemoteStorageTarget: "1",
+	for i := 0; i <= 100; i++ {
+		sj := beesync.SyncJob{
+			Operation:           beesync.SyncJob_UPLOAD,
+			RemoteStorageTarget: "1",
+		}
+		jr := beeremote.JobRequest{Path: "/some/" + strconv.Itoa(i), Name: "test", Priority: 3, Type: &beeremote.JobRequest_Sync{Sync: &sj}}
+
+		jobRequests <- &jr
 	}
-	jr := beeremote.JobRequest{Path: "/some/path", Name: "test", Priority: 3, Type: &beeremote.JobRequest_Sync{Sync: &sj}}
-
-	jobRequests <- &jr
-
-	// Cleanup outstanding requests
-	updateJobRequest := beeremote.UpdateJobRequest{
-		Path:     "/some/path",
-		NewState: flex.NewState_CANCEL,
-	}
-
-	jobUpdates <- &updateJobRequest
 
 	// Get results:
-	getJobsRequest := &beeremote.GetJobsRequest{
+	getJobsRequestByPath := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ExactPath{
 			ExactPath: "/some/path",
 		},
 	}
 
+	getJobsRequestByID := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_JobID{
+			JobID: "84011",
+		},
+	}
+
+	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_PathPrefix{
+			PathPrefix: "/some",
+		},
+		IncludeWorkResults: true,
+	}
+
 	time.Sleep(2 * time.Second)
-	responses, err := jobManager.QueryJobs(getJobsRequest)
+	responses, err := jobManager.GetJobs(getJobsRequestByPath)
 	if err != nil {
 		logger.Error("error querying jobs", zap.Error(err))
 	} else {
-		logger.Info("jobResponses", zap.Any("responses", responses))
+		logger.Info("get jobs by path", zap.Any("responses", responses))
+	}
+
+	responses, err = jobManager.GetJobs(getJobsRequestByID)
+	if err != nil {
+		logger.Error("error querying jobs", zap.Error(err))
+	} else {
+		logger.Info("get job by ID", zap.Any("responses", responses))
+	}
+
+	responses, err = jobManager.GetJobs(getJobRequestsByPrefix)
+	if err != nil {
+		logger.Error("error querying jobs", zap.Error(err))
+	} else {
+		logger.Info("get job by path prefix", zap.Any("responses", responses))
+	}
+
+	// Cleanup outstanding results:
+	for _, response := range responses.Response {
+		// Cleanup outstanding requests
+		updateJobRequest := beeremote.UpdateJobRequest{
+			Path:     response.Job.Request.Path,
+			NewState: flex.NewState_CANCEL,
+		}
+		jobUpdates <- &updateJobRequest
+	}
+
+	time.Sleep(2 * time.Second)
+	responses, err = jobManager.GetJobs(getJobRequestsByPrefix)
+	if err != nil {
+		logger.Error("error querying jobs", zap.Error(err))
+	} else {
+		logger.Info("get job by path prefix (after cancel)", zap.Any("responses", responses))
 	}
 
 	// Block and wait for either a shutdown signal or unrecoverable error.
