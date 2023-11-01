@@ -184,6 +184,11 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			return nil, fmt.Errorf("found job results for job ID %s but there is no corresponding entry in the path store (perhaps the job finished and is being cleaned up?)", query.JobID)
 		}
 
+		workRequests := ""
+		if request.GetIncludeWorkRequests() {
+			workRequests = job.GetWorkRequests()
+		}
+
 		workResults := []*beeremote.JobResponse_WorkResult{}
 
 		if request.GetIncludeWorkResults() {
@@ -201,8 +206,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		return &beeremote.GetJobsResponse{
 			Response: []*beeremote.JobResponse{
 				{
-					Job:         job.Get(),
-					WorkResults: workResults,
+					Job:          job.Get(),
+					WorkRequests: workRequests,
+					WorkResults:  workResults,
 				},
 			},
 		}, nil
@@ -219,6 +225,11 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 
 		for jobID, job := range pathEntry.Value {
 			workResults := []*beeremote.JobResponse_WorkResult{}
+
+			workRequests := ""
+			if request.GetIncludeWorkRequests() {
+				workRequests = job.GetWorkRequests()
+			}
 
 			if request.GetIncludeWorkResults() {
 				resultsEntry, err := m.jobResultsStore.GetEntry(jobID)
@@ -237,8 +248,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 				}
 			}
 			jobResponse := beeremote.JobResponse{
-				Job:         job.Get(),
-				WorkResults: workResults,
+				Job:          job.Get(),
+				WorkRequests: workRequests,
+				WorkResults:  workResults,
 			}
 
 			jobResponses = append(jobResponses, &jobResponse)
@@ -263,6 +275,11 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			for jobID, job := range pathItem.Entry.Value {
 				workResults := []*beeremote.JobResponse_WorkResult{}
 
+				workRequests := ""
+				if request.GetIncludeWorkRequests() {
+					workRequests = job.GetWorkRequests()
+				}
+
 				if request.GetIncludeWorkResults() {
 					resultsEntry, err := m.jobResultsStore.GetEntry(jobID)
 					if err != nil {
@@ -280,8 +297,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 					}
 				}
 				jobResponse := beeremote.JobResponse{
-					Job:         job.Get(),
-					WorkResults: workResults,
+					Job:          job.Get(),
+					WorkRequests: workRequests,
+					WorkResults:  workResults,
 				}
 
 				jobResponses = append(jobResponses, &jobResponse)

@@ -31,6 +31,16 @@ func (j *SyncJob) Get() *beeremote.Job {
 	return &j.Job
 }
 
+func (j *SyncJob) GetWorkRequests() string {
+
+	var output string
+	for i, segment := range j.Segments {
+		output += fmt.Sprintf("{request_id: %d, segment: %s}", i, segment.segment.String())
+	}
+
+	return output
+}
+
 // Allocate breaks the file into segments taking into consideration file size,
 // operation type, and transfer method (S3, POSIX, etc.). It uses these segments
 // to return a WorkSubmission containing work requests that can be distributed

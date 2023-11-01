@@ -27,6 +27,15 @@ type Job interface {
 	SetStatus(*flex.RequestStatus)
 	// Get returns the protocol buffer defined message representing a single Job.
 	Get() *beeremote.Job
+	// GetWorkRequests returns a string representation of the original work
+	// requests generated for this job. It is primarily intended for
+	// troubleshooting. This shouldn't just return all fields from the original
+	// work request, only whatever is unique for that particular work request
+	// type. For example even though work request for a SyncJob includes the
+	// path and other details needed to run the job, only the request ID and a
+	// particular segment need to be returned as the other fields can be
+	// determined by looking elsewhere in the JobResponse.
+	GetWorkRequests() string
 }
 
 // New is the standard way to generate a Job from a JobRequest.

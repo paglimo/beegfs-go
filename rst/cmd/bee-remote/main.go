@@ -163,7 +163,8 @@ Using environment variables:
 		Query: &beeremote.GetJobsRequest_PathPrefix{
 			PathPrefix: "/some",
 		},
-		IncludeWorkResults: true,
+		IncludeWorkRequests: true,
+		IncludeWorkResults:  true,
 	}
 
 	time.Sleep(2 * time.Second)
