@@ -25,6 +25,7 @@ type Config struct {
 	// Across all embedded structs, the field tags must be unique for proper unmarshalling.
 	// The standard is to prefix field tags with the subscriber type.
 	BeeSyncConfig `mapstructure:",squash"` // Configuration options for type BeeSync.
+	MockConfig                             // Allow mocking worker node behavior from other packages. We could add a map structure tag here if we wanted to be able to setup expectations using a TOML file.
 }
 
 // BeeSyncConfig contains configuration options specific to BeeSync worker nodes.
@@ -36,6 +37,24 @@ type BeeSyncConfig struct {
 	AllowInsecure         bool   `mapstructure:"beeSyncAllowInsecure"`
 	DisconnectTimeout     int    `mapstructure:"beeSyncDisconnectTimeout"`
 	SelfSignedTLSCertPath string `mapstructure:"beeSyncSelfSignedTLSCertPath"`
+}
+
+// Mock worker nodes represent simulated worker nodes. They are configured just
+// like other worker node types, except their configuration defines how they
+// should behave for a particular test. An entry must exist in Expectations for
+// each method that would be called during a particular test run.
+type MockConfig struct {
+	Expectations []MockExpectation
+}
+
+// MockExpectation is a wrapper around a single call to setup expectations for
+// Testify (i.e., `testObj.On("DoSomething", 123).Return(true, nil)`
+// https://github.com/stretchr/testify#mock-package). This allows us to mock
+// worker nodes from other packages which cannot directly modify worker nodes.
+type MockExpectation struct {
+	MethodName string
+	Args       []interface{}
+	ReturnArgs []interface{}
 }
 
 // newWorkerNodesFromConfig is the standard way for initializing worker nodes.
@@ -94,6 +113,9 @@ func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkRes
 		// panic because the base Worker struct doesn't actually implement these
 		// methods.
 		node.worker = newBeeSyncWorker(config.BeeSyncConfig)
+		return node, nil
+	case Mock:
+		node.worker = newMockWorker(config.MockConfig)
 		return node, nil
 	default:
 		return nil, fmt.Errorf("unknown worker type: %s", config.Type)

@@ -5,11 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+	"strconv"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
-	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
-	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -17,19 +16,13 @@ import (
 // embeds all the protocol buffer define types needed for BeeRemote to associate
 // what work needs to be done with how it is being carried out.
 type SyncJob struct {
-	// By directly storing the protobuf defined Job we can quickly return
-	// responses to users about the current status of their jobs.
-	beeremote.Job
+	baseJob
 	// Segments aren't populated until Allocate() is called.
 	Segments []*SyncSegment
 }
 
 // Verify SyncJob implements the Job interface.
 var _ Job = &SyncJob{}
-
-func (j *SyncJob) Get() *beeremote.Job {
-	return &j.Job
-}
 
 func (j *SyncJob) GetWorkRequests() string {
 
@@ -98,7 +91,7 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 
 		wr := worker.SyncRequest{
 			SyncRequest: &beesync.SyncRequest{
-				RequestId: fmt.Sprint(i),
+				RequestId: strconv.Itoa(i),
 				Metadata:  j.GetMetadata(),
 				Path:      j.GetPath(),
 				Job:       j.Request.GetSync(),
@@ -114,29 +107,15 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 	}
 }
 
-// GetPath returns the path to the BeeGFS entry this job is running against.
-func (j *SyncJob) GetPath() string {
-	return j.Request.GetPath()
-}
-
-// GetID returns the job ID.
-func (j *SyncJob) GetID() string {
-	return j.Metadata.GetId()
-}
-
-func (j *SyncJob) GetStatus() *flex.RequestStatus {
-	return j.Metadata.GetStatus()
-}
-
-func (j *SyncJob) SetStatus(status *flex.RequestStatus) {
-	j.Metadata.Status = status
-}
-
 // GobEncode encodes the SyncJob into a byte slice for gob serialization. The
-// method serializes the JobResponse using protobufs and the WorkRequests using
-// gob. It prefixes the serialized WorkRequests data with its length to handle
-// variable-length slices during deserialization. It is primarily used when
-// storing SyncJobs in the database.
+// method serializes the JobResponse using the protobuf marshaller and the
+// Segments using gob. It prefixes the serialized JobResponse data with its
+// length to handle variable-length slices during deserialization. It is
+// primarily used when storing SyncJobs in the database.
+//
+// IMPORTANT: If you are using this as a reference to implement custom
+// encoding/decoding of a new type, don't forget the to update the package
+// init() function to add `gob.Register(&MyType{})`.
 func (j *SyncJob) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
@@ -168,9 +147,13 @@ func (j *SyncJob) GobEncode() ([]byte, error) {
 }
 
 // GobDecode decodes a byte slice into the SyncJob. The method first extracts
-// the length prefix to determine the size of the WorkRequests data. It then
-// decodes WorkRequests using gob and JobResponse using protobufs. It is
-// primarily used when retrieving SyncJobs from the database.
+// the length prefix to determine the size of the JobResponse data. It then
+// decodes JobResponse using the protobuf unmarshaller and Segments using gob.
+// It is primarily used when retrieving SyncJobs from the database.
+//
+// IMPORTANT: If you are using this as a reference to implement custom
+// encoding/decoding of a new type, don't forget the to update the package
+// init() function to add `gob.Register(&MyType{})`.
 func (j *SyncJob) GobDecode(data []byte) error {
 
 	jobResponseLength := binary.BigEndian.Uint16(data[:2])

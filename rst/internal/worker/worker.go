@@ -19,6 +19,7 @@ type NodeType string
 
 const (
 	BeeSync NodeType = "beesync"
+	Mock    NodeType = "mock"
 )
 
 // All concrete worker node types must implement the Worker interface.

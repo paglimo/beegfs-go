@@ -38,25 +38,61 @@ type Job interface {
 	GetWorkRequests() string
 }
 
+// baseJob defines the fields and methods that apply to all job types.
+type baseJob struct {
+	// By directly storing the protobuf defined Job we can quickly return
+	// responses to users about the current status of their jobs.
+	beeremote.Job
+}
+
+func (j *baseJob) Get() *beeremote.Job {
+	return &j.Job
+}
+
+// GetPath returns the path to the BeeGFS entry this job is running against.
+func (j *baseJob) GetPath() string {
+	return j.Request.GetPath()
+}
+
+// GetID returns the job ID.
+func (j *baseJob) GetID() string {
+	return j.Metadata.GetId()
+}
+
+func (j *baseJob) GetStatus() *flex.RequestStatus {
+	return j.Metadata.GetStatus()
+}
+
+func (j *baseJob) SetStatus(status *flex.RequestStatus) {
+	j.Metadata.Status = status
+}
+
 // New is the standard way to generate a Job from a JobRequest.
 func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error) {
+
+	jobID, err := jobSeq.Next()
+	if err != nil {
+		return nil, err
+	}
+
+	jobMetadata := &flex.JobMetadata{
+		Id: fmt.Sprint(jobID),
+		Status: &flex.RequestStatus{
+			Status:  flex.RequestStatus_UNASSIGNED,
+			Message: "created",
+		},
+	}
+
 	switch jobRequest.Type.(type) {
 	case *beeremote.JobRequest_Sync:
-
-		jobID, err := jobSeq.Next()
-		if err != nil {
-			return nil, err
-		}
-
 		job := &SyncJob{}
 		job.Request = jobRequest
-		job.Metadata = &flex.JobMetadata{
-			Id: fmt.Sprint(jobID),
-			Status: &flex.RequestStatus{
-				Status:  flex.RequestStatus_UNASSIGNED,
-				Message: "created",
-			},
-		}
+		job.Metadata = jobMetadata
+		return job, nil
+	case *beeremote.JobRequest_Mock:
+		job := &MockJob{}
+		job.Request = jobRequest
+		job.Metadata = jobMetadata
 		return job, nil
 	}
 	return nil, fmt.Errorf("bad job request")
