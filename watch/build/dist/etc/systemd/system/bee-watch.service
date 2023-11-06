@@ -1,0 +1,19 @@
+[Unit]
+Description=BeeGFS File System Modification Event Watcher
+Documentation=http://www.beegfs.com/content/documentation/
+After=basic.target
+Wants=basic.target
+
+[Service]
+Type=simple
+ExecStart=/opt/beegfs/sbin/bee-watch --cfgFile=/etc/beegfs/bee-watch.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# When we shutdown we first disconnect the metadata socket then try to send all
+# outstanding events in the buffer to subscribers before shutting down. On busy
+# systems this can take awhile, and the stop timeout may need to be adjusted to
+# avoid dropping events.
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target
