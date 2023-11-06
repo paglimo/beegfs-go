@@ -48,7 +48,7 @@ type JobUpdate struct {
 	NewState    flex.NewState
 }
 
-func NewManager(log *zap.Logger, errCh chan<- error, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
+func NewManager(log *zap.Logger, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	workResponsesChan := make(chan *flex.WorkResponse)

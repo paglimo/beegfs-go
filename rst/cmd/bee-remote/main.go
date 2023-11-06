@@ -107,23 +107,17 @@ Using environment variables:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
-	// Use a channel to allow components to pass errors that should cause a
-	// shutdown back to the main goroutine. Typically this should only be used
-	// for startup failures (for example unable to open the DB). Failures after
-	// components are running should be handled gracefully through mechanisms
-	// like retries. We don't use a buffered channel so components should not
-	// use this to send errors when they are being setup using their New()
-	// functions otherwise they will block indefinitely.
-	errCh := make(chan error)
-
-	workerManager := worker.NewManager(logger.Logger, errCh, initialCfg.WorkerMgr, initialCfg.Workers)
+	workerManager := worker.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers)
 	err = workerManager.Manage()
 	if err != nil {
-		return
+		logger.Fatal("unable to start worker manager", zap.Error(err))
 	}
 
-	jobManager, jobRequests, jobUpdates := job.NewManager(logger.Logger, initialCfg.Job, workerManager, errCh)
-	go jobManager.Manage()
+	jobManager, jobRequests, jobUpdates := job.NewManager(logger.Logger, initialCfg.Job, workerManager)
+	err = jobManager.Manage()
+	if err != nil {
+		logger.Fatal("unable to start job manager", zap.Error(err))
+	}
 
 	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobRequests)
 	if err != nil {
@@ -207,14 +201,8 @@ Using environment variables:
 		logger.Info("get job by path prefix (after cancel)", zap.Any("responses", responses))
 	}
 
-	// Block and wait for either a shutdown signal or unrecoverable error.
-	select {
-	case <-sigs:
-		logger.Info("shutting down on signal")
-	case err := <-errCh:
-		logger.Error("shutting down on error", zap.Error(err))
-	}
-
+	// Block and wait for a shutdown signal:
+	<-sigs
 	logger.Info("shutdown signal received")
 	jobServer.Stop()
 	jobManager.Stop()

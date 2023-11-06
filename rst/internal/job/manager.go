@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"os"
 	"path"
 	"reflect"
 	"sync"
@@ -11,15 +12,27 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/kvstore"
+	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/gobee/types"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
+// Register custom types for serialization/deserialization via Gob when the
+// package is initialized.
 func init() {
 	gob.Register(&SyncJob{})
 	gob.Register(&SyncSegment{})
+	gob.Register(&MockJob{})
 }
+
+var (
+	// When running tests testMode can be set to true in individual test cases
+	// to allow on-disk artifacts such as databases to be automatically cleaned
+	// up after the test.
+	testMode = false
+)
 
 type Config struct {
 	PathDBPath         string `mapstructure:"pathDBPath"`
@@ -31,11 +44,10 @@ type Config struct {
 }
 
 type Manager struct {
-	log     *zap.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
-	config  Config
-	errChan chan<- error
+	log    *zap.Logger
+	ctx    context.Context
+	cancel context.CancelFunc
+	config Config
 	// Ready indicates the Manage() loop has been started and finished setting
 	// up all MapStores and their backing databases. Methods besides the
 	// Manage() loop must check the ready state before interacting with the
@@ -64,7 +76,7 @@ type Manager struct {
 }
 
 // NewManager initializes and returns a new Job manager and channels used to submit and update job requests.
-func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager, errCh chan<- error) (*Manager, chan<- *beeremote.JobRequest, chan<- *beeremote.UpdateJobRequest) {
+func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) (*Manager, chan<- *beeremote.JobRequest, chan<- *beeremote.UpdateJobRequest) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 	jobRequestChan := make(chan *beeremote.JobRequest, config.RequestQueueDepth)
@@ -74,7 +86,6 @@ func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager, e
 		ctx:           ctx,
 		cancel:        cancel,
 		config:        config,
-		errChan:       errCh,
 		ready:         false,
 		workerManager: workerManager,
 		jobRequests:   jobRequestChan,
@@ -82,75 +93,148 @@ func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager, e
 	}, jobRequestChan, jobUpdatesChan
 }
 
-func (m *Manager) Manage() {
+// Manage handles initializing all databases and starting a goroutine that
+// handles job requests. It returns an error if there were any issues on setup,
+// otherwise it returns nil to indicate the manager is ready to accept requests.
+// Additional calls to manage while the Manager is already started will return
+// an error. Use Stop() to shutdown a running manager.
+func (m *Manager) Manage() error {
+
+	m.readyMu.Lock()
+	if m.ready {
+		return fmt.Errorf("an instance of job manager is already running")
+	}
+
+	// If anything goes wrong we want to execute all deferred functions
+	// immediately to cleanup anything that did get initialized correctly. If we
+	// startup normally then we don't want to execute deferred functions until
+	// we're shutting down.
+	executeDefersImmediately := true
+	deferredFuncs := []func() error{}
+	defer func() {
+		if executeDefersImmediately {
+			// Deferred function calls should happen LIFO.
+			for i := len(deferredFuncs) - 1; i >= 0; i-- {
+				if err := deferredFuncs[i](); err != nil {
+					m.log.Error("encountered an error aborting JobMgr startup", zap.Error(err))
+				}
+			}
+		}
+	}()
 
 	// We initialize databases in Manage() so we can ensure the DBs are closed properly when shutting down.
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
-	pathStore, closePathDB, err := kvstore.NewMapStore[Job](pathDBOpts, m.config.PathDBCacheSize)
+	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
+	pathStore, closePathDB, err := kvstore.NewMapStore[Job](pathDBOpts, m.config.PathDBCacheSize, testMode)
 	if err != nil {
-		m.errChan <- fmt.Errorf("unable to setup paths DB: %w", err)
+		return fmt.Errorf("unable to setup paths DB: %w", err)
 	}
-	defer closePathDB()
+	deferredFuncs = append(deferredFuncs, closePathDB)
 	m.pathStore = pathStore
 
 	jobResultsDBOpts := badger.DefaultOptions(m.config.ResultsDBPath)
-	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[worker.WorkResult](jobResultsDBOpts, m.config.ResultsDBCacheSize)
+	jobResultsDBOpts = jobResultsDBOpts.WithLogger(logger.NewBadgerLoggerBridge("jobResultsDB", m.log))
+	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[worker.WorkResult](jobResultsDBOpts, m.config.ResultsDBCacheSize, testMode)
 	if err != nil {
-		m.errChan <- fmt.Errorf("unable to setup job results DB: %w", err)
-		return
+		return fmt.Errorf("unable to setup job results DB: %w", err)
 	}
-	defer closeJobResultsStoreDB()
+	deferredFuncs = append(deferredFuncs, closeJobResultsStoreDB)
 	m.jobResultsStore = jobResultsStore
 
 	// TODO: Create a journal that also can be used to generate monotonically
 	// increasing integers we can use as job IDs. The journal should also be
 	// used to generate sequential job IDs.
 	// Ref: https://dgraph.io/docs/badger/get-started/#monotonically-increasing-integers
-	jobJournal, err := badger.Open(badger.DefaultOptions(m.config.JournalPath))
-	if err != nil {
-		m.errChan <- err
-		return
+
+	var journalDBPath string
+	if testMode {
+		journalDBPath, err = os.MkdirTemp(m.config.JournalPath, "journalDBTestMode")
+		if err != nil {
+			return err
+		}
+	} else {
+		journalDBPath = m.config.JournalPath
 	}
-	defer jobJournal.Close()
+
+	jobJournalDBOpts := badger.DefaultOptions(journalDBPath)
+	jobJournalDBOpts = jobJournalDBOpts.WithLogger(logger.NewBadgerLoggerBridge("journalDB", m.log))
+	jobJournal, err := badger.Open(jobJournalDBOpts)
+	if err != nil {
+		return err
+	}
+	if testMode {
+		deferredFuncs = append(deferredFuncs, func() error {
+			var multiErr types.MultiError
+			err := jobJournal.Close()
+			if err != nil {
+				multiErr.Errors = append(multiErr.Errors, err)
+			}
+			err = os.RemoveAll(journalDBPath)
+			if err != nil {
+				multiErr.Errors = append(multiErr.Errors, err)
+			}
+			if len(multiErr.Errors) > 0 {
+				return &multiErr
+			}
+			return nil
+		})
+	} else {
+		deferredFuncs = append(deferredFuncs, func() error { return jobJournal.Close() })
+	}
+
 	// TODO: Evaluate if a bandwidth of 1000 is appropriate.
 	// Possibly this should be user configurable.
 	jobIDGenerator, err := jobJournal.GetSequence([]byte("jobIDs"), 1000)
 	if err != nil {
-		m.errChan <- err
-		return
+		return err
 	}
-	defer jobIDGenerator.Release() // Defers are LIFO which means this is called before closing the DB.
+	// Defers are LIFO which means this is called before closing the DB.
+	deferredFuncs = append(deferredFuncs, func() error { return jobIDGenerator.Release() })
 	m.jobIDGenerator = jobIDGenerator
 
-	m.readyMu.Lock()
 	m.ready = true
 	m.readyMu.Unlock()
+	executeDefersImmediately = false
 
-	// TODO: https://github.com/ThinkParQ/bee-remote/issues/9. Use a pool of
-	// goroutines to process job requests and work responses.
-	m.log.Info("now accepting job requests and work responses")
-	for {
-		select {
-		case <-m.ctx.Done():
-			m.log.Info("shutting down because the app is shutting down")
-			m.readyMu.Lock()
-			m.ready = false
-			m.readyMu.Unlock()
-			return
-		case jobRequest := <-m.jobRequests:
-			m.processNewJobRequest(jobRequest)
-		case jobUpdate := <-m.jobUpdates:
-			switch jobUpdate.NewState {
-			case flex.NewState_CANCEL:
-				m.cancelJobRequest(jobUpdate)
-			default:
-				m.log.Warn("unsupported job updated requested", zap.Any("jobUpdate", jobUpdate))
+	// Start a separate goroutine that will handle closing the databases when
+	// the Manager shuts down.
+	go func() {
+		defer func() {
+			// Deferred function calls should happen LIFO.
+			for i := len(deferredFuncs) - 1; i >= 0; i-- {
+				if err := deferredFuncs[i](); err != nil {
+					m.log.Error("encountered an error shutting down JobMgr", zap.Error(err))
+				}
 			}
-		case wr := <-m.workerManager.WorkResponses:
-			// TODO:
-			m.log.Info("workResponse", zap.Any("workResponse", wr))
+		}()
+
+		m.log.Info("now accepting job requests and work responses")
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/9. Use a pool of
+		// goroutines to process job requests and work responses.
+		for {
+			select {
+			case <-m.ctx.Done():
+				m.log.Info("shutting down because the app is shutting down")
+				m.readyMu.Lock()
+				m.ready = false
+				m.readyMu.Unlock()
+				return
+			case jobRequest := <-m.jobRequests:
+				m.processNewJobRequest(jobRequest)
+			case jobUpdate := <-m.jobUpdates:
+				switch jobUpdate.NewState {
+				case flex.NewState_CANCEL:
+					m.cancelJobRequest(jobUpdate)
+				default:
+					m.log.Warn("unsupported job updated requested", zap.Any("jobUpdate", jobUpdate))
+				}
+			case wr := <-m.workerManager.WorkResponses:
+				// TODO:
+				m.log.Info("workResponse", zap.Any("workResponse", wr))
+			}
 		}
-	}
+	}()
+	return nil
 }
 
 func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
@@ -335,7 +419,30 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 		m.log.Error("unable to create new path entry", zap.Error(err), zap.Any("path", job.GetPath()), zap.Any("jobID", job.GetID()))
 		return
 	}
-	defer commitAndReleasePath()
+	defer func() {
+		if err := commitAndReleasePath(); err != nil {
+			m.log.Error("unable to release path entry", zap.Error(err))
+		}
+	}()
+
+	jobResultEntry, commitAndReleaseJobResults, err := m.jobResultsStore.CreateAndLockEntry(job.GetID())
+	if err != nil {
+		m.log.Error("unable to create a job result entry", zap.Error(err), zap.Any("jobID", job.GetID()))
+		// Mostly likely an error here either means there was an existing entry,
+		// or an issue accessing the DB. In theory we should never have an
+		// existing entry for a new Job unless we have duplicate Job IDs. The
+		// way things are setup we could end up with a job result entry but not
+		// job entry for a particular Job ID (if we crashed at precisely the
+		// right time as the deferred commitAndRelease funcs are being called).
+		// But whenever processNewJobRequest is called it always generated a new
+		// job ID. Either way something has gone horribly wrong, lets bail out.
+		return
+	}
+	defer func() {
+		if err := commitAndReleaseJobResults(); err != nil {
+			m.log.Error("unable to release job results", zap.Error(err))
+		}
+	}()
 
 	// TODO: More complex handling of existing jobs for this path. In some cases
 	// we do support multiple jobs running for the same path. For example if the
@@ -351,6 +458,11 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 				}
 				job.SetStatus(newStatus)
 				pathEntry.Value[job.GetID()] = job
+
+				// Even if we don't submit a job we should still add a job results entry.
+				// This allows reverse lookup of jobs by ID.
+				jobResultEntry.Metadata["path"] = job.GetPath()
+				jobResultEntry.Value = make(map[string]worker.WorkResult)
 				return
 			}
 		}
@@ -364,11 +476,6 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	// crash we'll replay the request journal and broadcast to all workers they
 	// should cancel and work requests for jobs in the journal.
 
-	jobResultEntry, commitAndReleaseJobResults, err := m.jobResultsStore.CreateAndLockEntry(job.GetID())
-	if err != nil {
-		m.log.Error("unable to create a job result entry", zap.Error(err), zap.Any("jobID", job.GetID()))
-	}
-	defer commitAndReleaseJobResults()
 	jobResultEntry.Metadata["path"] = job.GetPath()
 	jobResultEntry.Value = workResults
 
