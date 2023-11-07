@@ -5,9 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/bee-remote/internal/config"
@@ -16,9 +14,6 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
-	beeremote "github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/beesync"
-	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
@@ -39,7 +34,7 @@ func main() {
 	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
-	pflag.String("server.address", "localhost:9000", "The hostname:port where BeeRemote should listen for job requests.")
+	pflag.String("server.address", "127.0.0.1:9000", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
 	pflag.String("job.pathDBPath", "", "Path where the jobs database will be created/maintained.")
@@ -108,98 +103,24 @@ Using environment variables:
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
 	workerManager := worker.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers)
-	err = workerManager.Manage()
+	err = workerManager.Start()
 	if err != nil {
 		logger.Fatal("unable to start worker manager", zap.Error(err))
 	}
 
-	jobManager, jobRequests, jobUpdates := job.NewManager(logger.Logger, initialCfg.Job, workerManager)
-	err = jobManager.Manage()
+	jobManager := job.NewManager(logger.Logger, initialCfg.Job, workerManager)
+	err = jobManager.Start()
 	if err != nil {
 		logger.Fatal("unable to start job manager", zap.Error(err))
 	}
 
-	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobRequests)
+	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobManager)
 	if err != nil {
 		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
 	}
 	go jobServer.ListenAndServe()
 
 	// TODO: Initialize the event subscriber.
-
-	// TODO: Cleanup test code before submitting a PR.
-
-	// Submit a new request
-	for i := 0; i <= 100; i++ {
-		sj := beesync.SyncJob{
-			Operation:           beesync.SyncJob_UPLOAD,
-			RemoteStorageTarget: "1",
-		}
-		jr := beeremote.JobRequest{Path: "/some/" + strconv.Itoa(i), Name: "test", Priority: 3, Type: &beeremote.JobRequest_Sync{Sync: &sj}}
-
-		jobRequests <- &jr
-	}
-
-	// Get results:
-	getJobsRequestByPath := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_ExactPath{
-			ExactPath: "/some/path",
-		},
-	}
-
-	getJobsRequestByID := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: "84011",
-		},
-	}
-
-	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_PathPrefix{
-			PathPrefix: "/some",
-		},
-		IncludeWorkRequests: true,
-		IncludeWorkResults:  true,
-	}
-
-	time.Sleep(2 * time.Second)
-	responses, err := jobManager.GetJobs(getJobsRequestByPath)
-	if err != nil {
-		logger.Error("error querying jobs", zap.Error(err))
-	} else {
-		logger.Info("get jobs by path", zap.Any("responses", responses))
-	}
-
-	responses, err = jobManager.GetJobs(getJobsRequestByID)
-	if err != nil {
-		logger.Error("error querying jobs", zap.Error(err))
-	} else {
-		logger.Info("get job by ID", zap.Any("responses", responses))
-	}
-
-	responses, err = jobManager.GetJobs(getJobRequestsByPrefix)
-	if err != nil {
-		logger.Error("error querying jobs", zap.Error(err))
-	} else {
-		logger.Info("get job by path prefix", zap.Any("responses", responses))
-	}
-
-	// Cleanup outstanding results:
-	for _, response := range responses.Response {
-		// Cleanup outstanding requests
-		updateJobRequest := beeremote.UpdateJobRequest{
-			Path:     response.Job.Request.Path,
-			NewState: flex.NewState_CANCEL,
-		}
-		jobUpdates <- &updateJobRequest
-	}
-
-	time.Sleep(2 * time.Second)
-	responses, err = jobManager.GetJobs(getJobRequestsByPrefix)
-	if err != nil {
-		logger.Error("error querying jobs", zap.Error(err))
-	} else {
-		logger.Info("get job by path prefix (after cancel)", zap.Any("responses", responses))
-	}
 
 	// Block and wait for a shutdown signal:
 	<-sigs

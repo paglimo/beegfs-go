@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -14,9 +15,9 @@ import (
 )
 
 type Config struct {
-	address        string
-	tlsCertificate string
-	tlsKey         string
+	Address        string `mapstructure:"address"`
+	TlsCertificate string `mapstructure:"tlsCertificate"`
+	TlsKey         string `mapstructure:"tlsKey"`
 }
 
 // Verify interfaces are satisfied:
@@ -27,26 +28,26 @@ type BeeRemoteServer struct {
 	log *zap.Logger
 	wg  *sync.WaitGroup
 	Config
-	grpcServer  *grpc.Server
-	jobRequests chan<- *beeremote.JobRequest
+	grpcServer *grpc.Server
+	jobMgr     *job.Manager
 }
 
 // New() creates a new BeeRemoteServer that can be used with ListenAndServe().
 // It requires a channel where it can send job requests to JobMgr.
-func New(log *zap.Logger, config Config, jobRequests chan<- *beeremote.JobRequest) (*BeeRemoteServer, error) {
+func New(log *zap.Logger, config Config, jobMgr *job.Manager) (*BeeRemoteServer, error) {
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(BeeRemoteServer{}).PkgPath())))
 
 	s := BeeRemoteServer{
-		log:         log,
-		Config:      config,
-		wg:          new(sync.WaitGroup),
-		jobRequests: jobRequests,
+		log:    log,
+		Config: config,
+		wg:     new(sync.WaitGroup),
+		jobMgr: jobMgr,
 	}
 
 	var grpcServerOpts []grpc.ServerOption
-	if s.tlsCertificate != "" && s.tlsKey != "" {
-		creds, err := credentials.NewServerTLSFromFile(s.tlsCertificate, s.tlsKey)
+	if s.TlsCertificate != "" && s.TlsKey != "" {
+		creds, err := credentials.NewServerTLSFromFile(s.TlsCertificate, s.TlsKey)
 		if err != nil {
 			return nil, err
 		}
@@ -70,8 +71,8 @@ func (s *BeeRemoteServer) ListenAndServe() {
 	// we'll want to make this retry if there is an error listening or serving
 	// requests in case a configuration update fixes things.
 
-	s.log.Debug("listening on local network address", zap.Any("address", s.address))
-	lis, err := net.Listen("tcp", s.address)
+	s.log.Debug("listening on local network address", zap.Any("address", s.Address))
+	lis, err := net.Listen("tcp", s.Address)
 	if err != nil {
 		s.log.Error("")
 	}
@@ -95,14 +96,22 @@ func (s *BeeRemoteServer) SubmitJob(ctx context.Context, job *beeremote.JobReque
 	s.wg.Add(1)
 	defer s.wg.Done()
 	// TODO: Implement
+	// Consider adding a wait flag to the JobRequest then polling GetJobs to return a real response.
+	// Or we could add a synchronous JobMgr function to submit jobs then people could submit lots of
+	// jobs and not wait for them all to get scheduled if they don't set the wait flag, or get a response.
 	return nil, nil
 }
 
 func (s *BeeRemoteServer) GetJobs(ctx context.Context, job *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	// TODO: Implement
-	return nil, nil
+
+	response, err := s.jobMgr.GetJobs(job)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
 }
 
 func (s *BeeRemoteServer) UpdateJob(ctx context.Context, job *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {

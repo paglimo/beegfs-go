@@ -73,7 +73,7 @@ func TestManage(t *testing.T) {
 		},
 	}
 	workerManager := worker.NewManager(logger, workerMgrConfig, workerConfigs)
-	require.NoError(t, workerManager.Manage())
+	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
 		PathDBPath:         mapStoreTestPath,
@@ -83,8 +83,8 @@ func TestManage(t *testing.T) {
 		JournalPath:        journalDBTestPath,
 	}
 
-	jobManager, jobRequests, jobUpdates := NewManager(logger, jobMgrConfig, workerManager)
-	require.NoError(t, jobManager.Manage())
+	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	require.NoError(t, jobManager.Start())
 
 	// When we initially submit a job the state should be scheduled:
 	testJobRequest := beeremote.JobRequest{
@@ -93,7 +93,7 @@ func TestManage(t *testing.T) {
 		Priority: 3,
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
 	}
-	jobRequests <- &testJobRequest
+	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_PathPrefix{
@@ -114,7 +114,7 @@ func TestManage(t *testing.T) {
 	scheduledJobID := getJobsResponse.Response[0].Job.Metadata.Id
 
 	// If we try to submit another job for the same path it should be cancelled but the original job should be unaffected:
-	jobRequests <- &testJobRequest
+	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ExactPath{
@@ -137,7 +137,7 @@ func TestManage(t *testing.T) {
 		Path:     "/test/myfile",
 		NewState: flex.NewState_CANCEL,
 	}
-	jobUpdates <- &updateJobRequest
+	jobManager.JobUpdates <- &updateJobRequest
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID := &beeremote.GetJobsRequest{
@@ -217,7 +217,7 @@ func TestManageErrorHandling(t *testing.T) {
 		},
 	}
 	workerManager := worker.NewManager(logger, workerMgrConfig, workerConfigs)
-	require.NoError(t, workerManager.Manage())
+	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
 		PathDBPath:         mapStoreTestPath,
@@ -227,8 +227,8 @@ func TestManageErrorHandling(t *testing.T) {
 		JournalPath:        journalDBTestPath,
 	}
 
-	jobManager, jobRequests, jobUpdates := NewManager(logger, jobMgrConfig, workerManager)
-	require.NoError(t, jobManager.Manage())
+	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	require.NoError(t, jobManager.Start())
 
 	// When we initially submit a job the state should be failed if any work requests failed:
 	testJobRequest := beeremote.JobRequest{
@@ -237,7 +237,7 @@ func TestManageErrorHandling(t *testing.T) {
 		Priority: 3,
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
 	}
-	jobRequests <- &testJobRequest
+	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_PathPrefix{
@@ -272,7 +272,7 @@ func TestManageErrorHandling(t *testing.T) {
 		Path:     "/test/myfile",
 		NewState: flex.NewState_CANCEL,
 	}
-	jobUpdates <- &updateJobRequest
+	jobManager.JobUpdates <- &updateJobRequest
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID := &beeremote.GetJobsRequest{
@@ -295,7 +295,7 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.Status = flex.RequestStatus_CANCELLED
 	expectedStatus.Message = "test expects a cancelled request"
 
-	jobUpdates <- &updateJobRequest
+	jobManager.JobUpdates <- &updateJobRequest
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID = &beeremote.GetJobsRequest{

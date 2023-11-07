@@ -84,7 +84,7 @@ func NewManager(log *zap.Logger, managerConfig ManagerConfig, workerConfigs []Co
 	return workerManager
 }
 
-func (m *Manager) Manage() error {
+func (m *Manager) Start() error {
 	// TODO: Remove once we allow dynamic configuration updates since it is okay
 	// if we startup with bad configuration (it can be fixed later).
 	if len(m.nodePools) == 0 {

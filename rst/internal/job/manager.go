@@ -59,9 +59,13 @@ type Manager struct {
 	// take a write lock before changing the ready state. Other methods should
 	// take a read lock before checking the ready state.
 	readyMu sync.RWMutex
-	// jobRequests is where external callers should submit requests to be handled by JobMgr.
+	// JobRequests is where external callers should submit requests to be handled by JobMgr.
+	JobRequests chan<- *beeremote.JobRequest
+	// jobRequests is where goroutines manged by JobMgr listen for requests.
 	jobRequests <-chan *beeremote.JobRequest
-	// jobUpdates is where external callers should submit requests to update existing jobs.
+	// JobUpdates is where external callers should submit requests to update existing jobs.
+	JobUpdates chan<- *beeremote.UpdateJobRequest
+	//jobUpdates is where goroutines manged by JobMgr listen for requests.
 	jobUpdates <-chan *beeremote.UpdateJobRequest
 	// pathStore is the store where entries for file system paths with jobs
 	// are kept. This store keeps a mapping of paths to Job(s).
@@ -76,7 +80,7 @@ type Manager struct {
 }
 
 // NewManager initializes and returns a new Job manager and channels used to submit and update job requests.
-func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) (*Manager, chan<- *beeremote.JobRequest, chan<- *beeremote.UpdateJobRequest) {
+func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 	jobRequestChan := make(chan *beeremote.JobRequest, config.RequestQueueDepth)
@@ -88,17 +92,19 @@ func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) (
 		config:        config,
 		ready:         false,
 		workerManager: workerManager,
+		JobRequests:   jobRequestChan,
 		jobRequests:   jobRequestChan,
+		JobUpdates:    jobUpdatesChan,
 		jobUpdates:    jobUpdatesChan,
-	}, jobRequestChan, jobUpdatesChan
+	}
 }
 
-// Manage handles initializing all databases and starting a goroutine that
+// Start handles initializing all databases and starting a goroutine that
 // handles job requests. It returns an error if there were any issues on setup,
 // otherwise it returns nil to indicate the manager is ready to accept requests.
 // Additional calls to manage while the Manager is already started will return
 // an error. Use Stop() to shutdown a running manager.
-func (m *Manager) Manage() error {
+func (m *Manager) Start() error {
 
 	m.readyMu.Lock()
 	if m.ready {
@@ -502,6 +508,10 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 // is idempotent, so it can be called multiple times to verify a job is fully
 // cancelled, for example if there was an error cancelling some work requests.
 func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
+
+	if jobUpdate.NewState != flex.NewState_CANCEL {
+		m.log.Warn("cancel job request was invoked with a new state other than cancelled (probably this is a bug)", zap.Any("newState", jobUpdate.NewState))
+	}
 
 	if jobUpdate.GetJobID() != "" && jobUpdate.GetPath() != "" {
 		m.log.Warn("updating a job by both path and job ID is not allowed (only one should be specified)", zap.Any("jobUpdate", jobUpdate))
