@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
 	"google.golang.org/protobuf/proto"
 )
@@ -16,7 +17,7 @@ import (
 // embeds all the protocol buffer define types needed for BeeRemote to associate
 // what work needs to be done with how it is being carried out.
 type SyncJob struct {
-	baseJob
+	*baseJob
 	// Segments aren't populated until Allocate() is called.
 	Segments []*SyncSegment
 }
@@ -120,7 +121,7 @@ func (j *SyncJob) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
 	// the oneof type field in the JobRequest struct.
-	jobResponseData, err := proto.Marshal(&j.Job)
+	jobResponseData, err := proto.Marshal(j.Job)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +161,17 @@ func (j *SyncJob) GobDecode(data []byte) error {
 	jobResponseData := data[2 : 2+jobResponseLength]
 	workRequestData := data[2+jobResponseLength:]
 
-	err := proto.Unmarshal(jobResponseData, &j.Job)
+	if j.baseJob == nil {
+		j.baseJob = &baseJob{
+			Job: &beeremote.Job{},
+		}
+	}
+
+	if j.Segments == nil {
+		j.Segments = make([]*SyncSegment, 0)
+	}
+
+	err := proto.Unmarshal(jobResponseData, j.Job)
 	if err != nil {
 		return err
 	}

@@ -228,12 +228,7 @@ func (m *Manager) Start() error {
 			case jobRequest := <-m.jobRequests:
 				m.processNewJobRequest(jobRequest)
 			case jobUpdate := <-m.jobUpdates:
-				switch jobUpdate.NewState {
-				case flex.NewState_CANCEL:
-					m.cancelJobRequest(jobUpdate)
-				default:
-					m.log.Warn("unsupported job updated requested", zap.Any("jobUpdate", jobUpdate))
-				}
+				m.updateJobRequest(jobUpdate)
 			case wr := <-m.workerManager.WorkResponses:
 				// TODO:
 				m.log.Info("workResponse", zap.Any("workResponse", wr))
@@ -455,8 +450,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	// job is configured with different RSTs.
 	if len(pathEntry.Value) != 0 {
 		for _, existingJob := range pathEntry.Value {
-			status := existingJob.GetStatus().Status
-			if status != flex.RequestStatus_CANCELLED && status != flex.RequestStatus_COMPLETED {
+			if !existingJob.InTerminalState() {
 				m.log.Warn("rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)", zap.Any("path", job.GetPath()))
 				newStatus := &flex.RequestStatus{
 					Status:  flex.RequestStatus_CANCELLED,
@@ -500,88 +494,228 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	m.log.Debug("created job", zap.Any("job", job), zap.Any("workResults", workResults))
 }
 
-// cancelJobRequest will attempt to cancel the specified job and any associated
+// updateJobRequest will attempt to update the specified job and any associated
 // work requests. The caller should check the database to see the effect of any
 // changes. If a path is specified then all jobs running for that path will be
-// cancelled. If a job ID is specified, then only that job is cancelled.
-// Specifying both a path and Job ID will result in an error. cancelJobRequest
-// is idempotent, so it can be called multiple times to verify a job is fully
-// cancelled, for example if there was an error cancelling some work requests.
-func (m *Manager) cancelJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
+// updated. If a job ID is specified, then only that job is updated.
+// updateJobRequest is idempotent, so it can be called multiple times to verify
+// a job is updated, for example if there was an error cancelling some work
+// requests. Allowed state changes:
+//
+// UNASSIGNED/SCHEDULED/RUNNING/STALLED/PAUSED/FAILED => CANCEL
+// COMPLETED/CANCELLED => DELETE
+//
+// The status message field on a job will reflect if a request was made to move
+// a job to an invalid state.
+func (m *Manager) updateJobRequest(jobUpdate *beeremote.UpdateJobRequest) {
 
-	if jobUpdate.NewState != flex.NewState_CANCEL {
-		m.log.Warn("cancel job request was invoked with a new state other than cancelled (probably this is a bug)", zap.Any("newState", jobUpdate.NewState))
+	if jobUpdate.NewState == flex.NewState_UNCHANGED {
+		m.log.Debug("job update requested but the job state is unchanged (possibly this indicates a bug in the caller)", zap.Any("jobUpdate", jobUpdate))
+		return
 	}
 
-	if jobUpdate.GetJobID() != "" && jobUpdate.GetPath() != "" {
-		m.log.Warn("updating a job by both path and job ID is not allowed (only one should be specified)", zap.Any("jobUpdate", jobUpdate))
-		return
-
-	} else if path := jobUpdate.GetPath(); path != "" {
+	if path := jobUpdate.GetPath(); path != "" {
 		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(path)
 		if err != nil {
-			m.log.Warn("unable to get jobs for the specified path", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+			m.log.Error("unable to get jobs for the specified path", zap.Error(err), zap.Any("path", path))
 			return
 		}
 
-		updatedJobs := make(map[string]Job)
+		// If we've been asked to delete jobs, after we verify they aren't
+		// running and their jobResults are deleted we'll add them for deletion.
+		jobsSafeToDelete := make([]string, 0)
 
 		for _, job := range pathEntry.Value {
 
-			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
-			if err != nil {
-				if err == badger.ErrKeyNotFound {
-					newStatus := &flex.RequestStatus{
-						Status:  flex.RequestStatus_CANCELLED,
-						Message: "job cancelled by user",
-					}
-					job.SetStatus(newStatus)
+			if jobUpdate.NewState == flex.NewState_DELETE {
+				if !job.InTerminalState() {
+					status := job.GetStatus()
+					status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					m.log.Debug("unable to delete job that has not reached a terminal state (cancel it first)", zap.Any("jobID", job.GetID()))
 					continue
 				}
-				m.log.Warn("unknown error getting results for job", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+
+				// There is no need to use GetAndLockEntry() and set the delete
+				// flag on release because after we've reached a terminal state
+				// the resultsEntry for a particular job should only ever be
+				// modified by someone holding the lock on the job.
+				err := m.jobResultsStore.DeleteEntry(job.GetID())
+				if err != nil {
+					status := job.GetStatus()
+					status.Message = "error cleaning up results for job: " + err.Error()
+					m.log.Debug("error cleaning up results for job", zap.Error(err), zap.Any("jobID", job.GetID()))
+					continue
+				}
+				jobsSafeToDelete = append(jobsSafeToDelete, job.GetID())
 				continue
 			}
-			// IMPORTANT: Ensure releaseResultsEntry() is called if we get a valid resultsEntry.
-			ju := worker.JobUpdate{
-				JobID:       jobUpdate.JobID,
-				WorkResults: resultsEntry.Value,
-				NewState:    jobUpdate.NewState,
-			}
-			// If we're unable to definitively cancel on any node, allCancelled is
-			// set to false and the state of the job is unmodified.
-			updatedResults, allCancelled := m.workerManager.UpdateJob(ju)
 
-			newStatus := &flex.RequestStatus{}
-			if !allCancelled {
-				newStatus.Status = flex.RequestStatus_FAILED
-				newStatus.Message = "error cancelling job (review work results for details)"
-			} else {
-				newStatus.Status = flex.RequestStatus_CANCELLED
-				newStatus.Message = "job cancelled"
+			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
+			if err != nil {
+				// We may want to add special handling if the err was a
+				// badger.ErrKeyNotFound. There may be some corner cases where
+				// we're unable to cleanup jobs otherwise. But in theory we
+				// processNewJobRequest should always create a pathEntry and
+				// resultsEntry for every job. So until the need arises just
+				// return an error.
+				status := job.GetStatus()
+				status.Message = "unable to update job due to an error retrieving job results: " + err.Error()
+				m.log.Debug("unable to update job due to an error retrieving job results", zap.Error(err), zap.Any("jobID", job.GetID()))
+				continue
 			}
 
-			job.SetStatus(newStatus)
-			updatedJobs[job.GetID()] = job
-			resultsEntry.Value = updatedResults
+			m.updateJobState(job, resultsEntry, jobUpdate.NewState)
 			err = releaseResultsEntry()
 			if err != nil {
-				m.log.Warn("unable to commit and release results entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+				m.log.Warn("unable to commit and release results entry", zap.Error(err), zap.Any("jobID", job.Get))
 			}
-			m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
 		}
 
-		pathEntry.Value = updatedJobs
-		err = releasePathEntry()
-		if err != nil {
-			m.log.Warn("unable to commit and release path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+		for _, deletedJobID := range jobsSafeToDelete {
+			delete(pathEntry.Value, deletedJobID)
 		}
-	} else if jobUpdate.GetJobID() != "" {
-		// TODO: implement.
-		m.log.Warn("updating jobs based on job ID alone is not currently supported", zap.Any("jobUpdate", jobUpdate))
+
+		if jobUpdate.NewState == flex.NewState_DELETE && len(pathEntry.Value) == 0 {
+			// Only clean up the path entry if there are no more jobs left for it.
+			// We want to delete the entry before releasing the lock, otherwise its
+			// possible someone else slips in a new job for this path and we would
+			// loose it. This is why we use the DeleteEntry release flag here.
+			err = releasePathEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...)
+			if err != nil {
+				m.log.Error("unable to delete path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+			}
+		} else {
+			err = releasePathEntry()
+			if err != nil {
+				m.log.Error("unable to commit and release path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+			}
+		}
+
+	} else if jobID := jobUpdate.GetJobID(); jobID != "" {
+
+		// We defer releasing all entries to ensure they are unlocked even if we
+		// encounter an error. While this works when we're just updating an
+		// existing entry, if the job was deleted we may need to call some of
+		// the release functions with a special flag to immediately delete the
+		// entry if it is safe to do so.
+		executeNormalDefers := true
+		deferredFuncs := []func(flags ...kvstore.ReleaseFlag) error{}
+		defer func() {
+			if executeNormalDefers {
+				// Deferred function calls should happen LIFO.
+				for i := len(deferredFuncs) - 1; i >= 0; i-- {
+					if err := deferredFuncs[i](); err != nil {
+						m.log.Error("encountered an error cleaning up after trying to update job request", zap.Error(err), zap.Any("jobID", jobID))
+					}
+				}
+			}
+		}()
+
+		resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(jobID)
+		if err == badger.ErrKeyNotFound {
+			m.log.Warn("no results found for the specified job ID (perhaps it was deleted?)", zap.Any("jobID", jobID))
+			return
+		} else if err != nil {
+			m.log.Error("unknown error retrieving results for specified job ID", zap.Error(err), zap.Any("jobID", jobID))
+			return
+		}
+		deferredFuncs = append(deferredFuncs, releaseResultsEntry)
+
+		path, ok := resultsEntry.Metadata["path"]
+		if !ok {
+			m.log.Warn("found job results for job ID but the entry's metadata doesn't contain the path (unable to perform reverse lookup of job in path store)", zap.Any("jobID", jobID))
+			return
+		}
+
+		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(path)
+		if err != nil {
+			m.log.Warn("unable to get jobs for the specified path", zap.Error(err), zap.Any("jobID", jobID), zap.Any("path", path))
+			return
+		}
+		deferredFuncs = append(deferredFuncs, releasePathEntry)
+
+		job, ok := pathEntry.Value[jobID]
+		if !ok {
+			m.log.Warn("no job exists for the specified path", zap.Any("jobID", jobID), zap.Any("path", path))
+			return
+		}
+
+		if jobUpdate.NewState == flex.NewState_DELETE {
+			if !job.InTerminalState() {
+				status := job.GetStatus()
+				status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+				m.log.Debug("unable to delete job that has not reached a terminal state (cancel it first)", zap.Any("jobID", jobID))
+				return
+			}
+
+			// At this point we've verified we're safe to proceed with deletions.
+			// Don't execute normal defers so we can delete entries as needed.
+			executeNormalDefers = false
+			err := releaseResultsEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...)
+			if err != nil {
+				status := job.GetStatus()
+				status.Message = "error cleaning up results for job: " + err.Error()
+				m.log.Debug("error cleaning up results for job", zap.Error(err), zap.Any("jobID", jobID))
+				pathReleaseErr := releasePathEntry()
+				if err != nil {
+					m.log.Error("unable to cleanup results for job and unable to update and release job entry", zap.Any("jobID", jobID), zap.Error(err), zap.Error(pathReleaseErr))
+				}
+				return
+			}
+			delete(pathEntry.Value, jobID)
+			// Only clean up the path entry if there are no more jobs left for it:
+			if len(pathEntry.Value) == 0 {
+				err = releasePathEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...)
+				if err != nil {
+					m.log.Error("unable to delete path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+				}
+			} else {
+				err = releasePathEntry()
+				if err != nil {
+					m.log.Error("unable to commit and release path entry", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
+				}
+			}
+			return
+		}
+
+		m.updateJobState(job, resultsEntry, jobUpdate.NewState)
+
 	} else {
-		m.log.Warn("unable to update job (no path specified)", zap.Any("jobUpdate", jobUpdate))
+		m.log.Warn("unable to update job (no job ID or path specified)", zap.Any("jobUpdate", jobUpdate))
 	}
 
+}
+
+// updateJobState takes an already locked job and its resultsEntry and will
+// attempt to apply newState. The job and resultsEntry will be directly updated
+// with the result of the operation. It is the callers responsibility to release
+// the job and resultsEntry.
+func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worker.WorkResult], newState flex.NewState) {
+
+	ju := worker.JobUpdate{
+		JobID:       job.GetID(),
+		WorkResults: resultsEntry.Value,
+		NewState:    newState,
+	}
+
+	if newState == flex.NewState_CANCEL {
+		// If we're unable to definitively cancel on any node, allCancelled is
+		// set to false and the state of the job is unmodified.
+		updatedResults, allCancelled := m.workerManager.UpdateJob(ju)
+
+		newStatus := &flex.RequestStatus{}
+		if !allCancelled {
+			newStatus.Status = flex.RequestStatus_FAILED
+			newStatus.Message = "error cancelling job (review work results for details)"
+		} else {
+			newStatus.Status = flex.RequestStatus_CANCELLED
+			newStatus.Message = "job cancelled"
+		}
+
+		job.SetStatus(newStatus)
+		resultsEntry.Value = updatedResults
+		m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
+	}
 }
 
 func (m *Manager) Stop() {

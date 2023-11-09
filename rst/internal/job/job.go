@@ -19,12 +19,20 @@ type Job interface {
 	GetPath() string
 	// GetID should return the job ID generated when the job was created.
 	GetID() string
-	// GetStatus should return the overall status of the job.
+	// GetStatus returns a pointer to the status of the overall job. Because it
+	// returns a pointer the status and/or message can be updated directly
+	// without using SetStatus(). This is helpful if you want to modify one but
+	// not the other field (commonly message can change but status should not).
 	GetStatus() *flex.RequestStatus
 	// SetStatus sets the overall status for the job. This should encompass the
 	// results for individual work requests. For example if some WRs are
 	// finished and others are still running the state would be RUNNING.
 	SetStatus(*flex.RequestStatus)
+	// InTerminalState returns true if the job has reached a state it would not
+	// continue without user interaction. Notably this indicates there are no active
+	// work requests and the job is safe to be deleted without leaving orphaned
+	// requests on worker nodes.
+	InTerminalState() bool
 	// Get returns the protocol buffer defined message representing a single Job.
 	Get() *beeremote.Job
 	// GetWorkRequests returns a string representation of the original work
@@ -39,14 +47,18 @@ type Job interface {
 }
 
 // baseJob defines the fields and methods that apply to all job types.
+// Individual jobs should embed a pointer to baseJob so Jobs can be retrieved
+// from the database and updated directly using methods like
+// Manager.updateJobState() and baseJob.SetStatus() instead of making a copy and
+// having to remember to update the database entry with the updated Job.
 type baseJob struct {
 	// By directly storing the protobuf defined Job we can quickly return
 	// responses to users about the current status of their jobs.
-	beeremote.Job
+	*beeremote.Job
 }
 
 func (j *baseJob) Get() *beeremote.Job {
-	return &j.Job
+	return j.Job
 }
 
 // GetPath returns the path to the BeeGFS entry this job is running against.
@@ -67,6 +79,11 @@ func (j *baseJob) SetStatus(status *flex.RequestStatus) {
 	j.Metadata.Status = status
 }
 
+func (j *baseJob) InTerminalState() bool {
+	status := j.GetStatus()
+	return status.Status == flex.RequestStatus_COMPLETED || status.Status == flex.RequestStatus_CANCELLED
+}
+
 // New is the standard way to generate a Job from a JobRequest.
 func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error) {
 
@@ -83,16 +100,19 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 		},
 	}
 
+	baseJob := &baseJob{
+		Job: &beeremote.Job{
+			Request:  jobRequest,
+			Metadata: jobMetadata,
+		},
+	}
+
 	switch jobRequest.Type.(type) {
 	case *beeremote.JobRequest_Sync:
-		job := &SyncJob{}
-		job.Request = jobRequest
-		job.Metadata = jobMetadata
+		job := &SyncJob{baseJob: baseJob}
 		return job, nil
 	case *beeremote.JobRequest_Mock:
-		job := &MockJob{}
-		job.Request = jobRequest
-		job.Metadata = jobMetadata
+		job := &MockJob{baseJob: baseJob}
 		return job, nil
 	}
 	return nil, fmt.Errorf("bad job request")

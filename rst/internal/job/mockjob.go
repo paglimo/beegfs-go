@@ -8,11 +8,12 @@ import (
 	"strconv"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/protobuf/go/beeremote"
 	"google.golang.org/protobuf/proto"
 )
 
 type MockJob struct {
-	baseJob
+	*baseJob
 	TestSegments []string
 }
 
@@ -70,7 +71,7 @@ func (j *MockJob) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
 	// the oneof type field in the JobRequest struct.
-	jobResponseData, err := proto.Marshal(&j.Job)
+	jobResponseData, err := proto.Marshal(j.Job)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +111,17 @@ func (j *MockJob) GobDecode(data []byte) error {
 	jobResponseData := data[2 : 2+jobResponseLength]
 	workRequestData := data[2+jobResponseLength:]
 
-	err := proto.Unmarshal(jobResponseData, &j.Job)
+	if j.baseJob == nil {
+		j.baseJob = &baseJob{
+			Job: &beeremote.Job{},
+		}
+	}
+
+	if j.TestSegments == nil {
+		j.TestSegments = make([]string, 0)
+	}
+
+	err := proto.Unmarshal(jobResponseData, j.Job)
 	if err != nil {
 		return err
 	}
