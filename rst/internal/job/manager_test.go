@@ -16,7 +16,7 @@ import (
 
 const (
 	mapStoreTestPath  = "/tmp"
-	journalDBTestPath = "/tmp/testjournal"
+	journalDBTestPath = "/tmp"
 )
 
 func TestManage(t *testing.T) {

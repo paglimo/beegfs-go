@@ -59,7 +59,11 @@ type Manager struct {
 	// take a write lock before changing the ready state. Other methods should
 	// take a read lock before checking the ready state.
 	readyMu sync.RWMutex
-	// JobRequests is where external callers should submit requests to be handled by JobMgr.
+	// JobRequests is where external callers should submit requests that can be
+	// handled asynchronously by JobMgr. It is best suited for submitting jobs
+	// when no user is waiting on a response (i.e., in response to FS events).
+	// For interactive use cases (i.e., beegfs-ctl) the SubmitJobRequest method
+	// can be used directly to immediately create a job and return a response.
 	JobRequests chan<- *beeremote.JobRequest
 	// jobRequests is where goroutines manged by JobMgr listen for requests.
 	jobRequests <-chan *beeremote.JobRequest
@@ -226,7 +230,12 @@ func (m *Manager) Start() error {
 				m.readyMu.Unlock()
 				return
 			case jobRequest := <-m.jobRequests:
-				m.processNewJobRequest(jobRequest)
+				response, err := m.SubmitJobRequest(jobRequest)
+				if err != nil {
+					m.log.Error("error submitting job request", zap.Error(err), zap.Any("jobRequest", jobRequest))
+				} else {
+					m.log.Debug("submitted job request", zap.Any("jobResponse", response))
+				}
 			case jobUpdate := <-m.jobUpdates:
 				m.updateJobRequest(jobUpdate)
 			case wr := <-m.workerManager.WorkResponses:
@@ -398,12 +407,11 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
 }
 
-func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
+func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 
 	job, err := New(m.jobIDGenerator, jr)
 	if err != nil {
-		m.log.Error("unable to generate job from job request", zap.Error(err), zap.Any("jobRequest", jr))
-		return
+		return nil, fmt.Errorf("unable to generate job from job request: %w", err)
 	}
 
 	// TODO: Consider adding a CreateOrGetEntry method to the MapStore to
@@ -413,12 +421,10 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	if err == kvstore.ErrEntryAlreadyExistsInDB || err == kvstore.ErrEntryAlreadyExistsInCache {
 		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.GetPath())
 		if err != nil {
-			m.log.Error("unable to get existing path entry", zap.Error(err), zap.Any("path", job.GetPath()), zap.Any("jobID", job.GetID()))
-			return
+			return nil, fmt.Errorf("unable to get existing entry for path %s while creating job ID %s: %w", job.GetPath(), job.GetID(), err)
 		}
 	} else if err != nil {
-		m.log.Error("unable to create new path entry", zap.Error(err), zap.Any("path", job.GetPath()), zap.Any("jobID", job.GetID()))
-		return
+		return nil, fmt.Errorf("unable to create new entry for path %s while creating jobID %s: %w", job.GetPath(), job.GetID(), err)
 	}
 	defer func() {
 		if err := commitAndReleasePath(); err != nil {
@@ -428,7 +434,6 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 
 	jobResultEntry, commitAndReleaseJobResults, err := m.jobResultsStore.CreateAndLockEntry(job.GetID())
 	if err != nil {
-		m.log.Error("unable to create a job result entry", zap.Error(err), zap.Any("jobID", job.GetID()))
 		// Mostly likely an error here either means there was an existing entry,
 		// or an issue accessing the DB. In theory we should never have an
 		// existing entry for a new Job unless we have duplicate Job IDs. The
@@ -437,7 +442,7 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 		// right time as the deferred commitAndRelease funcs are being called).
 		// But whenever processNewJobRequest is called it always generated a new
 		// job ID. Either way something has gone horribly wrong, lets bail out.
-		return
+		return nil, fmt.Errorf("unable to create job result entry for job ID %s: %w", job.GetID(), err)
 	}
 	defer func() {
 		if err := commitAndReleaseJobResults(); err != nil {
@@ -463,7 +468,11 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 				// This allows reverse lookup of jobs by ID.
 				jobResultEntry.Metadata["path"] = job.GetPath()
 				jobResultEntry.Value = make(map[string]worker.WorkResult)
-				return
+				return &beeremote.JobResponse{
+					Job:          job.Get(),
+					WorkRequests: job.GetWorkRequests(),
+					WorkResults:  make([]*beeremote.JobResponse_WorkResult, 0),
+				}, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job (cancel or wait for it to complete first)", job.GetPath())
 			}
 		}
 	}
@@ -491,7 +500,22 @@ func (m *Manager) processNewJobRequest(jr *beeremote.JobRequest) {
 	job.SetStatus(&newStatus)
 	pathEntry.Value[job.GetID()] = job
 
-	m.log.Debug("created job", zap.Any("job", job), zap.Any("workResults", workResults))
+	workResultsForResponse := []*beeremote.JobResponse_WorkResult{}
+	for _, wr := range workResults {
+		workResult := &beeremote.JobResponse_WorkResult{
+			RequestId:    wr.RequestID,
+			Status:       wr.GetStatus(),
+			AssignedNode: wr.AssignedNode,
+			AssignedPool: string(wr.AssignedPool),
+		}
+		workResultsForResponse = append(workResultsForResponse, workResult)
+	}
+
+	return &beeremote.JobResponse{
+		Job:          job.Get(),
+		WorkRequests: job.GetWorkRequests(),
+		WorkResults:  workResultsForResponse,
+	}, nil
 }
 
 // updateJobRequest will attempt to update the specified job and any associated

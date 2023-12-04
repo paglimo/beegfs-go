@@ -92,21 +92,17 @@ func (s *BeeRemoteServer) Stop() {
 	s.wg.Wait()
 }
 
-func (s *BeeRemoteServer) SubmitJob(ctx context.Context, job *beeremote.JobRequest) (*beeremote.JobResponse, error) {
+func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	// TODO: Implement
-	// Consider adding a wait flag to the JobRequest then polling GetJobs to return a real response.
-	// Or we could add a synchronous JobMgr function to submit jobs then people could submit lots of
-	// jobs and not wait for them all to get scheduled if they don't set the wait flag, or get a response.
-	return nil, nil
+	return s.jobMgr.SubmitJobRequest(request)
 }
 
-func (s *BeeRemoteServer) GetJobs(ctx context.Context, job *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
+func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	response, err := s.jobMgr.GetJobs(job)
+	response, err := s.jobMgr.GetJobs(request)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +110,14 @@ func (s *BeeRemoteServer) GetJobs(ctx context.Context, job *beeremote.GetJobsReq
 	return response, nil
 }
 
-func (s *BeeRemoteServer) UpdateJob(ctx context.Context, job *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
+func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	// TODO: Implement
+	// TODO (current): Implement including making updateJobRequest optionally run interactively as with submitting job requests.
+	if request.WaitUntilComplete {
+		// Run synchronously
+		return nil, nil
+	}
+	// Run asynchronously
 	return nil, nil
 }
