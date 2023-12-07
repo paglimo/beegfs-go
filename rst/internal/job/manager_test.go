@@ -160,6 +160,12 @@ func TestManage(t *testing.T) {
 
 }
 
+// Use interactive JobMgr methods to submit and update jobs for this test. The
+// channels are mostly just asynchronous wrappers around these anyway, so using
+// these directly lets us also test what they return under different conditions.
+//
+// TODO: Test updating multiple jobs, including when one job updates and the
+// other has a problem.
 func TestUpdateJobRequestDelete(t *testing.T) {
 	testMode = true
 
@@ -241,110 +247,128 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		Priority: 3,
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
 	}
-	jobManager.JobRequests <- &testJobRequest1
-	jobManager.JobRequests <- &testJobRequest2
-	time.Sleep(2 * time.Second)
+
+	_, err := jobManager.SubmitJobRequest(&testJobRequest1)
+	require.NoError(t, err)
+
+	// We only interact with the second job request by its job ID:
+	submitJobResponse2, err := jobManager.SubmitJobRequest(&testJobRequest2)
+	require.NoError(t, err)
 
 	////////////////////////////////////
 	// First test deleting jobs by path:
 	////////////////////////////////////
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
-	deleteJobRequest1 := beeremote.UpdateJobRequest{
+	deleteJobByPathRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_Path{
-			Path: "/test/myfile",
+			Path: testJobRequest1.Path,
 		},
 		NewState: flex.NewState_DELETE,
 	}
-	jobManager.JobUpdates <- &deleteJobRequest1
-	time.Sleep(2 * time.Second)
+	deleteJobByPathResponse, err := jobManager.UpdateJob(&deleteJobByPathRequest)
+	require.NoError(t, err)                     // Only internal errors should return an error.
+	assert.False(t, deleteJobByPathResponse.Ok) // Response should not be okay.
 
-	getJobRequestsByPath1 := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_ExactPath{
-			ExactPath: "/test/myfile",
-		},
-		IncludeWorkRequests: false,
-		IncludeWorkResults:  true,
-	}
-	getJobsResponse1, err := jobManager.GetJobs(getJobRequestsByPath1)
-	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse1.Response[0].Job.Metadata.Status.Status)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", getJobsResponse1.Response[0].Job.Metadata.Status.Message)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, deleteJobByPathResponse.Responses[0].Job.Metadata.Status.Status)
+	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", deleteJobByPathResponse.Responses[0].Job.Metadata.Status.Message)
 
-	assert.Len(t, getJobsResponse1.Response[0].WorkResults, 4)
-	for _, wr := range getJobsResponse1.Response[0].WorkResults {
+	// Work results should all still be scheduled:
+	assert.Len(t, deleteJobByPathResponse.Responses[0].WorkResults, 4)
+	for _, wr := range deleteJobByPathResponse.Responses[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.Status)
 	}
-	jobID1 := getJobsResponse1.Response[0].Job.Metadata.Id
 
-	// Cancel then delete the job:
-	cancelJobRequest1 := beeremote.UpdateJobRequest{
+	// Cancel the job:
+	cancelJobByPathRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_Path{
-			Path: "/test/myfile",
+			Path: testJobRequest1.Path,
 		},
 		NewState: flex.NewState_CANCEL,
 	}
-	jobManager.JobUpdates <- &cancelJobRequest1
-	jobManager.JobUpdates <- &deleteJobRequest1
-	time.Sleep(2 * time.Second)
+	cancelJobByPathResponse, err := jobManager.UpdateJob(&cancelJobByPathRequest)
+	require.NoError(t, err)
+	assert.True(t, cancelJobByPathResponse.Ok)
 
-	// Verify the job was deleted:
-	getJobRequestsByID := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: jobID1,
+	// Work results should all be cancelled:
+	assert.Len(t, cancelJobByPathResponse.Responses[0].WorkResults, 4)
+	for _, wr := range cancelJobByPathResponse.Responses[0].WorkResults {
+		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.Status)
+	}
+
+	// Then delete it:
+	deleteJobByPathResponse, err = jobManager.UpdateJob(&deleteJobByPathRequest)
+	assert.NoError(t, err)
+	assert.True(t, deleteJobByPathResponse.Ok)
+	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.Responses[0].Job.Metadata.Status.Message)
+
+	// Verify the job was fully deleted:
+	getJobRequestsByPath := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_ExactPath{
+			ExactPath: testJobRequest1.Path,
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
 	}
-	getJobsResponse1, err = jobManager.GetJobs(getJobRequestsByID)
+	getJobsResponse1, err := jobManager.GetJobs(getJobRequestsByPath)
 	assert.ErrorIs(t, err, badger.ErrKeyNotFound)
 	assert.Nil(t, getJobsResponse1)
 
 	////////////////////////////////
 	// Then test deleting by job ID:
 	////////////////////////////////
-	getJobRequestsByPath2 := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_ExactPath{
-			ExactPath: "/test/myfile2",
+
+	// If we delete a job that has not yet reached a terminal state, nothing should happen:
+	deleteJobByIDRequest := beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_JobID{
+			JobID: submitJobResponse2.Job.Metadata.Id,
+		},
+		NewState: flex.NewState_DELETE,
+	}
+	updateJobByIDResponse, err := jobManager.UpdateJob(&deleteJobByIDRequest)
+	require.NoError(t, err)                   // Only internal errors should return an error.
+	assert.False(t, updateJobByIDResponse.Ok) // However the response should not be okay.
+
+	require.NoError(t, err)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, updateJobByIDResponse.Responses[0].Job.Metadata.Status.Status)
+	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", updateJobByIDResponse.Responses[0].Job.Metadata.Status.Message)
+
+	assert.Len(t, updateJobByIDResponse.Responses[0].WorkResults, 2)
+	for _, wr := range updateJobByIDResponse.Responses[0].WorkResults {
+		assert.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.Status)
+	}
+
+	// Cancel the job:
+	cancelJobByIDRequest := beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_JobID{
+			JobID: submitJobResponse2.Job.Metadata.Id,
+		},
+		NewState: flex.NewState_CANCEL,
+	}
+	cancelJobByIDResponse, err := jobManager.UpdateJob(&cancelJobByIDRequest)
+	require.NoError(t, err)
+	assert.True(t, cancelJobByIDResponse.Ok)
+
+	// Work requests should be cancelled:
+	assert.Len(t, cancelJobByIDResponse.Responses[0].WorkResults, 2)
+	for _, wr := range cancelJobByIDResponse.Responses[0].WorkResults {
+		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.Status)
+	}
+
+	// Then delete it:
+	updateJobByIDResponse, err = jobManager.UpdateJob(&deleteJobByIDRequest)
+	assert.NoError(t, err)
+	assert.True(t, updateJobByIDResponse.Ok)
+	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.Responses[0].Job.Metadata.Status.Message)
+
+	// Verify the job was fully deleted:
+	getJobRequestsByID := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_JobID{
+			JobID: submitJobResponse2.Job.Metadata.Id,
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
 	}
-	getJobsResponse2, err := jobManager.GetJobs(getJobRequestsByPath2)
-	require.NoError(t, err)
-	jobID2 := getJobsResponse2.Response[0].Job.Metadata.Id
-
-	// If we delete a job that has not yet reached a terminal state, nothing should happen:
-	deleteJobRequest2 := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobID2,
-		},
-		NewState: flex.NewState_DELETE,
-	}
-	jobManager.JobUpdates <- &deleteJobRequest2
-	time.Sleep(2 * time.Second)
-
-	getJobsResponse2, err = jobManager.GetJobs(getJobRequestsByPath2)
-	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse2.Response[0].Job.Metadata.Status.Status)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", getJobsResponse2.Response[0].Job.Metadata.Status.Message)
-
-	assert.Len(t, getJobsResponse2.Response[0].WorkResults, 2)
-	for _, wr := range getJobsResponse2.Response[0].WorkResults {
-		assert.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.Status)
-	}
-
-	// Cancel the delete the job:
-	cancelJobRequest2 := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobID2,
-		},
-		NewState: flex.NewState_CANCEL,
-	}
-	jobManager.JobUpdates <- &cancelJobRequest2
-	jobManager.JobUpdates <- &deleteJobRequest2
-	time.Sleep(2 * time.Second)
-
-	getJobsResponse2, err = jobManager.GetJobs(getJobRequestsByPath2)
+	getJobsResponse2, err := jobManager.GetJobs(getJobRequestsByID)
 	assert.ErrorIs(t, err, badger.ErrKeyNotFound)
 	assert.Nil(t, getJobsResponse2)
 }

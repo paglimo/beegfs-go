@@ -113,11 +113,12 @@ func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJob
 func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	// TODO (current): Implement including making updateJobRequest optionally run interactively as with submitting job requests.
-	if request.WaitUntilComplete {
-		// Run synchronously
-		return nil, nil
+	if request.Wait {
+		return s.jobMgr.UpdateJob(request)
 	}
-	// Run asynchronously
-	return nil, nil
+	s.jobMgr.JobUpdates <- request
+	return &beeremote.UpdateJobResponse{
+		Ok:      true,
+		Message: "asynchronous update requested (query the path or job ID later to check the result)",
+	}, nil
 }
