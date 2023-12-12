@@ -19,6 +19,11 @@ type Job interface {
 	GetPath() string
 	// GetID should return the job ID generated when the job was created.
 	GetID() string
+	// GetRST should return the ID of the RST this job was created for.
+	// This is used to determine if a job already exists for a particular
+	// RST and should be rejected. An empty string should be returned
+	// if RST has no meaning for a particular job type.
+	GetRSTID() string
 	// GetStatus returns a pointer to the status of the overall job. Because it
 	// returns a pointer the status and/or message can be updated directly
 	// without using SetStatus(). This is helpful if you want to modify one but
@@ -79,6 +84,8 @@ func (j *baseJob) SetStatus(status *flex.RequestStatus) {
 	j.Metadata.Status = status
 }
 
+// InTerminalState() indicates the job is no longer active, cannot be restarted,
+// and will not conflict with a new job.
 func (j *baseJob) InTerminalState() bool {
 	status := j.GetStatus()
 	return status.Status == flex.RequestStatus_COMPLETED || status.Status == flex.RequestStatus_CANCELLED

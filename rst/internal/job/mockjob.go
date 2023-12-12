@@ -19,6 +19,10 @@ type MockJob struct {
 
 var _ Job = &MockJob{}
 
+func (j *MockJob) GetRSTID() string {
+	return j.GetRequest().GetMock().Rst
+}
+
 func (j *MockJob) Allocate() worker.JobSubmission {
 
 	if len(j.TestSegments) == 0 {

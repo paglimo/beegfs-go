@@ -92,7 +92,7 @@ func TestManage(t *testing.T) {
 		Path:     "/test/myfile",
 		Name:     "test job 1",
 		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
 	}
 	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
@@ -114,9 +114,12 @@ func TestManage(t *testing.T) {
 
 	scheduledJobID := getJobsResponse.Response[0].Job.Metadata.Id
 
-	// If we try to submit another job for the same path it should be cancelled but the original job should be unaffected:
-	jobManager.JobRequests <- &testJobRequest
-	time.Sleep(2 * time.Second)
+	// If we try to submit another job for the same path with the same RST an error should be returned:
+	jr, err := jobManager.SubmitJobRequest(&testJobRequest)
+	assert.Nil(t, jr)
+	assert.Error(t, err)
+
+	// No job should be created:
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ExactPath{
 			ExactPath: "/test/myfile",
@@ -124,14 +127,19 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByPath)
 	require.NoError(t, err)
-	for _, response := range getJobsResponse.Response {
-		// Note the order responses are returned is not guaranteed.
-		if response.Job.Metadata.Id == scheduledJobID {
-			assert.Equal(t, flex.RequestStatus_SCHEDULED, response.Job.Metadata.Status.Status)
-		} else {
-			assert.Equal(t, flex.RequestStatus_CANCELLED, response.Job.Metadata.Status.Status)
-		}
+	assert.Len(t, getJobsResponse.Response, 1)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse.Response[0].Job.Metadata.Status.Status)
+
+	// If we schedule a job for a different RST it should be scheduled:
+	testJobRequest2 := beeremote.JobRequest{
+		Path:     "/test/myfile",
+		Name:     "test job 1",
+		Priority: 3,
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "1"}},
 	}
+	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
+	assert.NoError(t, err)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, jr.Job.Metadata.Status.Status)
 
 	// If we cancel a job the state of the job and work requests should update:
 	updateJobRequest := beeremote.UpdateJobRequest{

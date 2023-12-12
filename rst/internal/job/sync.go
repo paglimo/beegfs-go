@@ -25,6 +25,10 @@ type SyncJob struct {
 // Verify SyncJob implements the Job interface.
 var _ Job = &SyncJob{}
 
+func (j *SyncJob) GetRSTID() string {
+	return j.GetRequest().GetSync().RemoteStorageTarget
+}
+
 func (j *SyncJob) GetWorkRequests() string {
 
 	var output string

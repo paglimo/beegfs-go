@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"sort"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -32,6 +33,19 @@ var (
 	// to allow on-disk artifacts such as databases to be automatically cleaned
 	// up after the test.
 	testMode = false
+)
+
+const (
+	// This many jobs for each RST configured on a particular path is guaranteed
+	// to be retained. At minimum this should be set to 1 so we always know the
+	// last sync result for a particular RST.
+	// TODO: Make this user configurable.
+	minJobEntriesPerRST = 2
+	// Once this threshold is exceeded older jobs will be deleted
+	// (oldest-to-newest) until the number of jobs equals the
+	// minJobEntriesPerRST The oldest job is determined by the lowest job ID.
+	// TODO: Make this user configurable.
+	maxJobEntriesPerRST = 4
 )
 
 type Config struct {
@@ -72,7 +86,9 @@ type Manager struct {
 	//jobUpdates is where goroutines manged by JobMgr listen for requests.
 	jobUpdates <-chan *beeremote.UpdateJobRequest
 	// pathStore is the store where entries for file system paths with jobs
-	// are kept. This store keeps a mapping of paths to Job(s).
+	// are kept. This store keeps a mapping of paths to Job(s). Note the inner
+	// map is a map of Job IDs to jobs (not RST IDs to jobs) so we can retain
+	// a configurable number of historical jobs for each path+RST combo.
 	pathStore *kvstore.MapStore[Job]
 	// jobResultsStore is the store where the entries for jobs with work
 	// requests currently being handled by WorkerMgr are kept. This store keeps
@@ -459,27 +475,64 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	// we do support multiple jobs running for the same path. For example if the
 	// job is configured with different RSTs.
 	if len(pathEntry.Value) != 0 {
-		for _, existingJob := range pathEntry.Value {
-			if !existingJob.InTerminalState() {
-				m.log.Warn("rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)", zap.Any("path", job.GetPath()))
-				newStatus := &flex.RequestStatus{
-					Status:  flex.RequestStatus_CANCELLED,
-					Message: "rejecting job request because the specified entry already has an active job (cancel or wait for it to complete first)",
-				}
-				job.SetStatus(newStatus)
-				pathEntry.Value[job.GetID()] = job
 
-				// Even if we don't submit a job we should still add a job results entry.
-				// This allows reverse lookup of jobs by ID.
-				jobResultEntry.Metadata["path"] = job.GetPath()
-				jobResultEntry.Value = make(map[string]worker.WorkResult)
-				return &beeremote.JobResponse{
-					Job:          job.Get(),
-					WorkRequests: job.GetWorkRequests(),
-					WorkResults:  make([]*beeremote.JobResponse_WorkResult, 0),
-				}, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job (cancel or wait for it to complete first)", job.GetPath())
+		// Set true if we can't start a new job due to a conflict.
+		jobConflict := false
+		// Add jobs in a terminal state to a map based on their RST ID.
+		// We limit the number of historical jobs kept for each RST.
+		terminalJobsByRST := make(map[string][]Job, 0)
+
+		for _, existingJob := range pathEntry.Value {
+			if existingJob.GetRSTID() == job.GetRSTID() && !existingJob.InTerminalState() {
+				// We found an active job for this RST. We shouldn't try to start a new job but we also shouldn't clean up the active job.
+				jobConflict = true
+			} else if existingJob.InTerminalState() {
+				// Found a job in a terminal state, add it to the list to check if it should be cleaned up:
+				terminalJobsByRST[existingJob.GetRSTID()] = append(terminalJobsByRST[existingJob.GetRSTID()], existingJob)
+			}
+			// Otherwise we found a job for a different RST not in a terminal state. Don't touch it.
+		}
+
+	cleanupTerminalJobs:
+		for _, jobsForRST := range terminalJobsByRST {
+			// It would be inefficient if we only cleaned up one entry at a
+			// time so we set a max number of entries before we start GC.
+			if len(jobsForRST) > maxJobEntriesPerRST {
+				// Sort the slice so we can delete old jobs based on the lowest
+				// job ID until we reach minJobEntriesPerRST.
+				sort.Slice(jobsForRST, func(i, j int) bool { return jobsForRST[i].GetID() < jobsForRST[j].GetID() })
+				for _, gcJob := range jobsForRST[:minJobEntriesPerRST+1] {
+					err := m.jobResultsStore.DeleteEntry(gcJob.GetID())
+					if err != nil {
+						// Warn and don't continue trying to run garbage
+						// collection if we get an error. Returning the error
+						// here could be confusing since this is an error
+						// cleaning up a different job while trying to create a
+						// new one.
+						m.log.Warn("error running garbage collection for job in terminal state (unable to remove results entry)", zap.Error(err), zap.Any("jobID", gcJob.GetID()))
+						break cleanupTerminalJobs
+					}
+					delete(pathEntry.Value, gcJob.GetID())
+				}
 			}
 		}
+
+		if jobConflict {
+			// Initially we would add a cancelled job entry even if there was a
+			// conflict. The goal was to avoid potentially spamming the logs
+			// with rejected jobs. But typically users will submit jobs
+			// interactively giving us a chance to immediately return an error.
+			// And generally jobs submitted non-interactively are generated
+			// based on events. And our event handling functionality should know
+			// how to never create a job when there is already one running.
+			//
+			// A benefit of this approach is that we don't end up with a job
+			// with a higher ID that would be retained longer than the active
+			// job. We want the job with the highest ID for a particular RST
+			// to always be the latest job result for that path+RST combo.
+			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %s (cancel or wait for it to complete first)", job.GetPath(), job.GetRSTID())
+		}
+
 	}
 
 	pathEntry.Value[job.GetID()] = job
@@ -542,7 +595,8 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 // Allowed state changes:
 //
 // UNASSIGNED/SCHEDULED/RUNNING/STALLED/PAUSED/FAILED => CANCEL
-// COMPLETED/CANCELLED => DELETE
+// CANCELLED => DELETE
+// COMPLETED => DELETE (only if deleteCompletedJobs==true)
 //
 // The status message field on a job will reflect if a request was made to move
 // a job to an invalid state.
@@ -572,10 +626,9 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		jobsSafeToDelete := make([]string, 0)
 
 		for _, job := range pathEntry.Value {
-
 			if jobUpdate.NewState == flex.NewState_DELETE {
+				status := job.GetStatus()
 				if !job.InTerminalState() {
-					status := job.GetStatus()
 					status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
 					response.Ok = false
 
@@ -602,6 +655,11 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 					continue
 				}
 
+				// By default only delete jobs in a terminal state other than completed:
+				if status.Status == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+					continue
+				}
+
 				// There is no need to use GetAndLockEntry() and set the delete
 				// flag on release because after we've reached a terminal state
 				// the resultsEntry for a particular job should only ever be
@@ -612,7 +670,6 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 					continue
 				}
 				jobsSafeToDelete = append(jobsSafeToDelete, job.GetID())
-				status := job.GetStatus()
 				status.Message = "job scheduled for deletion"
 				response.Responses = append(response.Responses, &beeremote.JobResponse{
 					Job:          job.Get(),
