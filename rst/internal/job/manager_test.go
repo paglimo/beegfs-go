@@ -382,8 +382,9 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 }
 
 // Test fault conditions
-// Schedule a job and one or more work requests fail == job should be failed.
+// Schedule a job and one or more work requests fail == job should be cancelled.
 // Cancel a job and one or more work request don't cancel == job should be failed.
+// Schedule a job and one or more work requests fail and refuse to cancel == job should be failed.
 func TestManageErrorHandling(t *testing.T) {
 	testMode = true
 
@@ -454,12 +455,13 @@ func TestManageErrorHandling(t *testing.T) {
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
 	require.NoError(t, jobManager.Start())
 
-	// When we initially submit a job the state should be failed if any work requests failed:
+	// When we initially submit a job the state should be cancelled if any work
+	// requests aren't scheduled but were able to be cancelled:
 	testJobRequest := beeremote.JobRequest{
 		Path:     "/test/myfile",
 		Name:     "test job 1",
 		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
 	}
 	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
@@ -472,7 +474,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err := jobManager.GetJobs(getJobRequestsByPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_FAILED, getJobsResponse.Response[0].Job.Metadata.Status.Status)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Metadata.Status.Status)
 
 	// JobMgr should have cancelled all outstanding requests:
 	assert.Len(t, getJobsResponse.Response[0].WorkResults, 4)
@@ -483,12 +485,11 @@ func TestManageErrorHandling(t *testing.T) {
 	scheduledJobID := getJobsResponse.Response[0].Job.Metadata.Id
 
 	// The following sequence of events is unlikely in real work scenarios, but
-	// verifies how JobMgr handles states. First try to cancel the failed job.
-	// JobMgr should always attempt to verify the work requests are cancelled on
-	// the worker nodes, even if they were previously cancelled (calls are
-	// idempotent). This time cancelling the work requests fails for some
-	// reason. As a result the Job status should remained failed, but the work
-	// requests should also be marked as failed.
+	// verifies how JobMgr handles states. First try to cancel the already
+	// cancelled job. JobMgr should always attempt to verify the work requests
+	// are cancelled on the worker nodes, even if they were previously cancelled
+	// (calls are idempotent). This time cancelling the work requests fails for
+	// some reason. As a result the Job status is now failed along with the WRs.
 	expectedStatus.Status = flex.RequestStatus_FAILED
 	expectedStatus.Message = "test expects a failed request"
 
@@ -498,8 +499,7 @@ func TestManageErrorHandling(t *testing.T) {
 		},
 		NewState: flex.NewState_CANCEL,
 	}
-	jobManager.JobUpdates <- &updateJobRequest
-	time.Sleep(2 * time.Second)
+	jobManager.UpdateJob(&updateJobRequest)
 
 	getJobRequestsByID := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_JobID{
@@ -538,4 +538,43 @@ func TestManageErrorHandling(t *testing.T) {
 	for _, wr := range getJobsResponse.Response[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.Status)
 	}
+
+	// If we submit a job the state should be failed if any work requests were
+	// failed and unable to be cancelled.
+	expectedStatus.Status = flex.RequestStatus_FAILED
+	expectedStatus.Message = "test expects a failed request"
+
+	jobResponse, err := jobManager.SubmitJobRequest(&testJobRequest)
+	require.NoError(t, err)
+	assert.Equal(t, flex.RequestStatus_FAILED, jobResponse.Job.Metadata.GetStatus().Status)
+
+	// We should not be able to delete failed jobs:
+	updateJobRequest = beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_JobID{
+			JobID: jobResponse.GetJob().Metadata.Id,
+		},
+		NewState: flex.NewState_DELETE,
+	}
+	updateJobResponse, err := jobManager.UpdateJob(&updateJobRequest)
+	require.NoError(t, err)
+	assert.Equal(t, flex.RequestStatus_FAILED, updateJobResponse.Responses[0].Job.Metadata.Status.Status)
+
+	// We should reject new jobs while there is a job in a failed state:
+	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
+	require.Error(t, err)
+	assert.Nil(t, jobResponse)
+
+	// We should be able to cancel failed jobs:
+	expectedStatus.Status = flex.RequestStatus_CANCELLED
+	expectedStatus.Message = "test expects a cancelled request"
+
+	updateJobRequest = beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_JobID{
+			JobID: jobResponse.GetJob().Metadata.Id,
+		},
+		NewState: flex.NewState_CANCEL,
+	}
+	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
+	require.NoError(t, err)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, updateJobResponse.Responses[0].Job.Metadata.Status.Status)
 }

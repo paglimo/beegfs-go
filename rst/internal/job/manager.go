@@ -536,26 +536,17 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	}
 
 	pathEntry.Value[job.GetID()] = job
-	workResults, allScheduled := m.workerManager.SubmitJob(job.Allocate())
+	workResults, newStatus := m.workerManager.SubmitJob(job.Allocate())
 
-	// If we crashed here there could be WRs scheduled to worker nodes but we
-	// have no record which nodes they were assigned to. To handle this after a
-	// crash we'll replay the request journal and broadcast to all workers they
-	// should cancel and work requests for jobs in the journal.
+	// TODO: If we crashed here there could be WRs scheduled to worker nodes but
+	// we have no record which nodes they were assigned to. To handle this after
+	// a crash we'll replay the request journal and broadcast to all workers
+	// they should cancel any work requests for jobs in the journal.
 
 	jobResultEntry.Metadata["path"] = job.GetPath()
 	jobResultEntry.Value = workResults
 
-	newStatus := flex.RequestStatus{}
-	if !allScheduled {
-		newStatus.Status = flex.RequestStatus_FAILED
-		newStatus.Message = "error initially scheduling work requests"
-	} else {
-		newStatus.Status = flex.RequestStatus_SCHEDULED
-		newStatus.Message = "job scheduled"
-	}
-
-	job.SetStatus(&newStatus)
+	job.SetStatus(newStatus)
 	pathEntry.Value[job.GetID()] = job
 
 	return &beeremote.JobResponse{

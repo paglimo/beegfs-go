@@ -42,7 +42,8 @@ func (p *Pool) StopAll() {
 }
 
 // assignToLeastBusyWorker assigns the work request to the least busy node in
-// the pool. It returns the ID of the assigned node and the response, or an error.
+// the pool. It returns the ID of the assigned node and the response from the
+// node, or an error if the request could not be assigned to a node.
 func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *flex.WorkResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
