@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap/zaptest"
@@ -23,19 +24,18 @@ func TestManage(t *testing.T) {
 	testMode = true
 
 	logger := zaptest.NewLogger(t)
-	workerMgrConfig := worker.ManagerConfig{}
+	workerMgrConfig := workermgr.Config{}
 	workResponsesChan := make(chan *flex.WorkResponse)
 	workerConfigs := []worker.Config{
 		{
-			ID:                             "0",
-			Name:                           "test-node-0",
-			Type:                           worker.Mock,
-			MaxReconnectBackOff:            5,
-			MaxWaitForResponseAfterConnect: 5,
+			ID:                  "0",
+			Name:                "test-node-0",
+			Type:                worker.Mock,
+			MaxReconnectBackOff: 5,
 			MockConfig: worker.MockConfig{
 				Expectations: []worker.MockExpectation{
 					{
-						MethodName: "Connect",
+						MethodName: "connect",
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
@@ -66,14 +66,15 @@ func TestManage(t *testing.T) {
 						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
-						MethodName: "Disconnect",
+						MethodName: "disconnect",
 						ReturnArgs: []interface{}{nil},
 					},
 				},
 			},
 		},
 	}
-	workerManager := worker.NewManager(logger, workerMgrConfig, workerConfigs)
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}, {Id: "1"}}
+	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -94,8 +95,10 @@ func TestManage(t *testing.T) {
 		Priority: 3,
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
 	}
-	jobManager.JobRequests <- &testJobRequest
-	time.Sleep(2 * time.Second)
+
+	_, err := jobManager.SubmitJobRequest(&testJobRequest)
+	require.NoError(t, err)
+
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_PathPrefix{
 			PathPrefix: "/",
@@ -178,19 +181,18 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	testMode = true
 
 	logger := zaptest.NewLogger(t)
-	workerMgrConfig := worker.ManagerConfig{}
+	workerMgrConfig := workermgr.Config{}
 	workResponsesChan := make(chan *flex.WorkResponse)
 	workerConfigs := []worker.Config{
 		{
-			ID:                             "0",
-			Name:                           "test-node-0",
-			Type:                           worker.Mock,
-			MaxReconnectBackOff:            5,
-			MaxWaitForResponseAfterConnect: 5,
+			ID:                  "0",
+			Name:                "test-node-0",
+			Type:                worker.Mock,
+			MaxReconnectBackOff: 5,
 			MockConfig: worker.MockConfig{
 				Expectations: []worker.MockExpectation{
 					{
-						MethodName: "Connect",
+						MethodName: "connect",
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
@@ -221,14 +223,15 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
-						MethodName: "Disconnect",
+						MethodName: "disconnect",
 						ReturnArgs: []interface{}{nil},
 					},
 				},
 			},
 		},
 	}
-	workerManager := worker.NewManager(logger, workerMgrConfig, workerConfigs)
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}, {Id: "1"}}
+	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -247,13 +250,13 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		Path:     "/test/myfile",
 		Name:     "test job 1",
 		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
 	}
 	testJobRequest2 := beeremote.JobRequest{
 		Path:     "/test/myfile2",
 		Name:     "test job 2",
 		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2, Rst: "1"}},
 	}
 
 	_, err := jobManager.SubmitJobRequest(&testJobRequest1)
@@ -389,7 +392,7 @@ func TestManageErrorHandling(t *testing.T) {
 	testMode = true
 
 	logger := zaptest.NewLogger(t)
-	workerMgrConfig := worker.ManagerConfig{}
+	workerMgrConfig := workermgr.Config{}
 	workResponsesChan := make(chan *flex.WorkResponse)
 
 	// This allows us to modify the expected status to what we expect in
@@ -401,15 +404,14 @@ func TestManageErrorHandling(t *testing.T) {
 
 	workerConfigs := []worker.Config{
 		{
-			ID:                             "0",
-			Name:                           "test-node-0",
-			Type:                           worker.Mock,
-			MaxReconnectBackOff:            5,
-			MaxWaitForResponseAfterConnect: 5,
+			ID:                  "0",
+			Name:                "test-node-0",
+			Type:                worker.Mock,
+			MaxReconnectBackOff: 5,
 			MockConfig: worker.MockConfig{
 				Expectations: []worker.MockExpectation{
 					{
-						MethodName: "Connect",
+						MethodName: "connect",
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
@@ -434,14 +436,16 @@ func TestManageErrorHandling(t *testing.T) {
 						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
-						MethodName: "Disconnect",
+						MethodName: "disconnect",
 						ReturnArgs: []interface{}{nil},
 					},
 				},
 			},
 		},
 	}
-	workerManager := worker.NewManager(logger, workerMgrConfig, workerConfigs)
+
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}}
+	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -547,11 +551,12 @@ func TestManageErrorHandling(t *testing.T) {
 	jobResponse, err := jobManager.SubmitJobRequest(&testJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, flex.RequestStatus_FAILED, jobResponse.Job.Metadata.GetStatus().Status)
+	jobID := jobResponse.GetJob().Metadata.Id
 
 	// We should not be able to delete failed jobs:
 	updateJobRequest = beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobResponse.GetJob().Metadata.Id,
+			JobID: jobID,
 		},
 		NewState: flex.NewState_DELETE,
 	}
@@ -570,7 +575,7 @@ func TestManageErrorHandling(t *testing.T) {
 
 	updateJobRequest = beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobResponse.GetJob().Metadata.Id,
+			JobID: jobID,
 		},
 		NewState: flex.NewState_CANCEL,
 	}

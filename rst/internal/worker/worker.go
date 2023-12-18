@@ -10,277 +10,229 @@ import (
 	"go.uber.org/zap"
 )
 
-// Supported worker nodes are organized into pools based on their NodeType. In
-// addition to implementing the Worker interface, expand the list of constants
-// below when adding new worker node types. This will allow a pool for the new
-// worker type to automatically be created whenever new workers of that type are
-// configured.
-type NodeType string
-
-const (
-	BeeSync NodeType = "beesync"
-	Mock    NodeType = "mock"
-)
-
-// All concrete worker node types must implement the Worker interface.
+// Worker defines the external facing interface used to interact with all worker
+// node types. Specific worker node types must implement this interface along
+// with the grpcClientHandler interface and add a typed constant in Config
+// before they will be usable. Note common methods are implemented by the
+// baseNode type, which all worker node types are expected to embed.
 type Worker interface {
-	Connect() (retry bool, err error)
+	// Implemented by the base node type:
+	GetID() string
+	GetState() State
+	GetNodeType() Type
+	Handle(*sync.WaitGroup, *flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests)
+	Stop()
+	// Implemented by specific node types:
 	SubmitWorkRequest(WorkRequest) (*flex.WorkResponse, error)
-	// UpdateWorkRequest is used to update the state of an outstanding work
-	// request. The work response should indicate the actual state of the work
-	// request, even if the worker node was unable to modify the work request
-	// for some reason (and the message should indicate why). Error should only
-	// be used for local or network issues communicating to the worker node.
 	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
-	NodeStream(*flex.UpdateWorkRequests) <-chan *flex.WorkResponse
-	Disconnect() error
-	GetNodeType() NodeType
+	// TODO: Require UpdateConfig() once dynamic configuration updates are supported.
+	//UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)
 }
 
-// state should not be used directly.
-// It should be set/inspected using the exported thread safe State methods.
-type state string
-
-const (
-	DISCONNECTED  state = "disconnected"
-	CONNECTING    state = "connecting"
-	CONNECTED     state = "connected"
-	DISCONNECTING state = "disconnecting"
-)
-
-// The GetState method provided by State are used to communicate the state of a worker to the outside world.
-// External readers SHOULD NOT inspect the state directly, but instead use the thread safe GetState() method.
-// The Handler.Handle() method is the ONLY place where WorkerStates should change.
-// All internal handler methods and subscriber methods such as connect(), send(), disconnect(), etc. should not affect the state.
-type State struct {
-	// state should only be accessed through the GetStateStatus() and SetStateStatus() methods to ensure thread safety.
-	state state
-	mutex sync.RWMutex
+// grpcClientHandler defines the interface for managing gRPC connections in
+// worker nodes. Implementers of this interface are responsible for establishing
+// and terminating gRPC connections and clients specific to their node type.
+// This interface enables a common handler implementation through dependency
+// injection. Implementations must ensure that they set the grpcClientHandler in
+// their respective constructor functions.
+//
+// The interface consists of two methods:
+//   - connect: Establishes a gRPC connection and initializes a gRPC client of the appropriate type
+//     that is reused for all unary RPCs. After the new client is setup it should update the
+//     configuration and state of any existing work requests on the node. It should return false if
+//     an error occurred that is fatal (i.e., remote node was unable to update config or WRs) or
+//     true if an transient error occurred that can be retried (i.e., network connectivity).
+//   - disconnect: Cleanup the gRPC connection and client that was created for this node.
+//     It should return an error if there were any problems freeing these resources.
+//
+// Note: Connect and disconnect operations should be idempotent and safe to call
+// multiple times.
+type grpcClientHandler interface {
+	connect(*flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests) (retry bool, err error)
+	disconnect() error
 }
 
-// GetState is a thread safe mechanism to get the current state of a worker.
-func (s *State) GetState() state {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-	return s.state
-}
-
-// setState is a thread safe mechanism to set the current state of a worker
-// although with the current us it doesn't need to be. It should only be called
-// from within Handle().
-func (s *State) setState(newState state) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	s.state = newState
-}
-
-// Node encapsulates the configuration and functionality implemented by all
-// types of worker nodes. It uses an Interface to abstract implementation
-// details for a particular worker type to allow a common handler.
-type Node struct {
-	Config
-	State
-	// Worker should be set equal to a concrete type that fulfills the Worker
-	// interface. This is what determines what type of Node we're working with.
-	worker Worker
-	ctx    context.Context
-	cancel context.CancelFunc
-	log    *zap.Logger
+// All worker node implementations should embed the baseNode type.
+type baseNode struct {
+	log *zap.Logger
+	grpcClientHandler
+	// State should not be used directly. It should be set/inspected using the
+	// exported thread safe State methods that first lock stateMu.
+	State   State
+	stateMu sync.RWMutex
+	config  Config
 	// The mutex serves two purposes: (1) guarantee only one Handle() methods
 	// for each node at a time. (2) guarantee when dynamic configuration updates
 	// happen the old node handler has finished shutting down before we swap out
 	// the node or delete it.
-	mu sync.Mutex
-	// All work request responses are sent to this channel. This includes responses
-	// from the external node (via Recv()) or responses to local errors from Send()
-	// or if a WorkRequest was assigned to a node while it was disconnected.
-	workResponses chan<- *flex.WorkResponse
+	nodeMu sync.Mutex
+	// Context for the overall node. When cancelled the node will wait up to
+	// the DisconnectTimeout for any outstanding RPCs to complete before they
+	// are forcibly cancelled.
+	nodeCtx    context.Context
+	nodeCancel context.CancelFunc
+	// When an RPC request is made the WG is incremented then deincremented
+	// when the RPC completes. This is used to check for outstanding RPCs
+	// when a disconnect is requested, allowing us to wait up to the
+	// DisconnectTimeout for RPCs to complete before cancelling them.
+	rpcWG *sync.WaitGroup
+	// Context used for all RPCs. Can be cancelled to force outstanding RPCs
+	// to complete if the DisconnectTimeout is exceeded.
+	rpcCtx    context.Context
+	rpcCancel context.CancelFunc
+	// rpcErr is used by unary RPC functions to notify the handler in the event
+	// of an unrecoverable error to indicate the worker node should be marked as
+	// offline. When sending to this channel it is important to use a
+	// non-blocking send pattern using a select statement with a default case.
+	// This is necessary because multiple RPCs may simultaneously encounter
+	// errors, but only a single notification is needed to inform the handler to
+	// set the node offline. A non-blocking send prevents RPCs from being
+	// blocked and ensures after the node reconnects an RPC that was previously
+	// blocked doesn't send a stale offline notification which would make the
+	// node offline again.
+	rpcErr chan struct{}
 }
 
-// ComparableNode is a "comparable" view of the Node struct used for testing.
-// When Node is updated it should also be updated with any fields that are a comparable type.
-// Notably the interface is omitted and each worker should implement its own comparable type.
-type ComparableNode struct {
-	Config
-	State
+// While gRPC handles most aspects of managing connections with worker nodes,
+// because these nodes are stateless we must first send them configuration and
+// tell them what to do with any outstanding work requests before they can
+// handle new work requests and are considered "online". After a node is online,
+// if any unary RPC results in an error the state will move to offline and
+// we'll verify we can reconnect to the node and send the configuration. This
+// way if a worker node was rebooted or the service restarted, it gets the
+// correct configuration and knows how to handle any outstanding WRs.
+type State string
+
+const (
+	UNKNOWN State = "unknown"
+	OFFLINE State = "offline"
+	ONLINE  State = "online"
+)
+
+func (n *baseNode) setState(state State) {
+	n.stateMu.Lock()
+	defer n.stateMu.Unlock()
+	n.State = state
 }
 
-// WorkRequest represents an interface for work requests that can be processed
-// by different types of worker nodes.
-type WorkRequest interface {
-	// getJobID() returns the job id.
-	getJobID() string
-	// getRequestID() returns the request ID. Note request IDs are only
-	// guaranteed to be unique for a particular job.
-	getRequestID() string
-	// getStatus() returns the status of the request.
-	getStatus() flex.RequestStatus
-	// setStatus() sets the request status and message.
-	setStatus(flex.RequestStatus_Status, string)
-	// getNodeType() returns the type of node this request should run on.
-	getNodeType() NodeType
+func (n *baseNode) GetState() State {
+	n.stateMu.RLock()
+	defer n.stateMu.RUnlock()
+	return n.State
 }
 
-// WorkResult carries status and node assignment for a particular WorkRequest.
-// It is setup so it can be copied when needed, either in JobResults or when
-// saving WorkResults to disk. The requests may not necessarily be completed and
-// the statuses of the results will reflect this.
-type WorkResult struct {
-	RequestID string
-	// The last known status of the request. IMPORTANT: Don't rely on status
-	// when submitting an UpdateWorkRequest. Instead check if the assigned node
-	// and pool aren't empty to decide if an update can be requested. Because
-	// this is the last known status, if a state change is requested we should
-	// always always send the request to the worker node to ensure it is
-	// updated. Update requests are expected to be idempotent so if the WR is
-	// already in the requested state no errors will happen.
-	Status  flex.RequestStatus_Status
-	Message string
-	// AssignedNode is the ID of the node running this work request or "" if it is unassigned.
-	AssignedNode string
-	// AssignedPool is the type of the node pool running this work request or "" if it is unassigned.
-	AssignedPool NodeType
+func (n *baseNode) GetNodeType() Type {
+	return n.config.Type
 }
 
-func (wr *WorkResult) GetStatus() *flex.RequestStatus {
-	return &flex.RequestStatus{
-		Status:  wr.Status,
-		Message: wr.Message,
-	}
+func (n *baseNode) GetID() string {
+	return n.config.ID
 }
 
-// Handles the connection with a particular worker node. It determines the state
-// of the worker node (i.e., connected, disconnected) based on external and
-// internal factors. It is the only place that should update the state of the node.
-func (n *Node) Handle(wg *sync.WaitGroup) {
+// Handle() should be run as a goroutine and is a common handler for all node
+// types to manage the overall state of the node. It handles initializing the
+// gRPC connection and client reused by all RPCs. It is also responsible for
+// sending the node its configuration and telling the node what to do with
+// outstanding work requests whenever the node transitions from offline->online.
+// It also coordinates placing the node offline by first giving outstanding RPCs
+// time to complete before forcibly disconnecting them. To allow this to happen
+// it also requires a wait group that should be used to ensure nodes are
+// disconnected cleanly when the application is shutting down.
+func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) {
+
 	wg.Add(1)
 	defer wg.Done()
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.nodeMu.Lock()
+	defer n.nodeMu.Unlock()
 
+	// Set to true if the handler was stopped.
+	done := false
 	for {
-		select {
-		case <-n.ctx.Done():
-			n.log.Debug("successfully shutdown connection to worker node")
-			return
-		default:
-
-			// We look at the result of the last loop to tell us what needs to
-			// happen next. If we're disconnected we should connect. If we're
-			// connected we should start handling the connection. Otherwise we
-			// presume we need to disconnect for some reason.
-			if state := n.GetState(); state == DISCONNECTED {
-				n.setState(CONNECTING)
-				if n.connectLoop() {
-					n.setState(CONNECTED)
-
-					// We need to start listening for responses from the node
-					// before we do anything. When a node boots up it should
-					// reject new work requests until we tell it what to do
-					// with any outstanding work requests.
-					doneNodeStream, cancelNodeStream := n.nodeStream()
-
-					select {
-					case <-doneNodeStream:
-						// If were done sending and receiving updates from the
-						// node, lets try to disconnect.
-					case <-n.ctx.Done():
-						cancelNodeStream()
-						<-doneNodeStream
-					}
-					n.setState(DISCONNECTING)
+		if n.GetState() == OFFLINE {
+			if n.connectLoop(config, wrUpdates) {
+				n.setState(ONLINE)
+				select {
+				case <-n.nodeCtx.Done():
+					n.log.Debug("node is shutting down because its context was cancelled")
+					done = true
+				case <-n.rpcErr:
+					n.log.Error("placing node offline due to an error")
 				}
 			}
-			// If the connection was lost for any reason, we should first
-			// disconnect before we reconnect or shutdown:
-			if n.doDisconnect() {
-				n.setState(DISCONNECTED)
+		}
+		// We'll first set the node state to offline so the node is not assigned
+		// more WRs and any RPC requests that do/did make it through are
+		// rejected. We'll then wait up to the disconnect timeout for any active
+		// RPCs to gracefully complete before cancelling the shared RPC context
+		// and immediately trying to disconnect the node. Probably this is a bit
+		// excessive, but allows for tight control over the shutdown process.
+		n.setState(OFFLINE)
+		allDone := make(chan struct{})
+		go func() {
+			n.rpcWG.Wait()
+			select {
+			case allDone <- struct{}{}:
+			default:
+				// Don't leak the goroutine if we reached the timeout and aren't
+				// listening on the channel anymore.
+				return
 			}
+		}()
+		select {
+		case <-allDone:
+		case <-time.After(time.Duration(n.config.DisconnectTimeout) * time.Second):
+		}
+		// If we hit the timeout this allows us to cancel the context for any
+		// outstanding RPCs and ensure they complete before disconnecting.
+		// Otherwise this is essentially a no-op and we'll go straight to the
+		// disconnect without further waiting.
+		n.rpcCancel()
+		n.rpcWG.Wait()
+		err := n.disconnect()
+		if err != nil {
+			n.log.Error("error disconnecting node", zap.Error(err))
+		}
+		if done {
+			return
 		}
 	}
-}
-
-func (n *Node) doDisconnect() bool {
-	n.log.Info("disconnecting worker node")
-	err := n.worker.Disconnect()
-	if err != nil {
-		n.log.Error("encountered one or more errors disconnecting worker node (ignoring)", zap.Error(err))
-		return false
-	}
-	n.log.Info("disconnected worker node")
-	return true
 }
 
 // connectLoop() attempts to connect to a worker node. If the node is not ready
 // or there is an error it will attempt to reconnect with an exponential
 // backoff. If it returns false there was an unrecoverable error and the caller
 // should first call doDisconnect() before reconnecting.
-func (n *Node) connectLoop() bool {
-	n.log.Info("connecting to worker node")
+func (n *baseNode) connectLoop(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) bool {
+	n.log.Info("connecting to node")
 	var reconnectBackOff float64 = 1
+
 	for {
 		select {
-		case <-n.ctx.Done():
-			n.log.Info("not attempting to connect to worker node because the handler is shutting down")
+		case <-n.nodeCtx.Done():
+			n.log.Info("not attempting to connect to node because its context was cancelled")
 			return false
-		case <-time.After(time.Second * time.Duration(reconnectBackOff)): // We use this instead of time.Ticker so we can change the duration.
-			retry, err := n.worker.Connect()
+		case <-time.After(time.Second * time.Duration(reconnectBackOff)):
+			retry, err := n.connect(config, wrUpdates)
 			if err != nil {
 				if !retry {
-					n.log.Error("unable to connect to worker node (unable to retry)", zap.Error(err))
+					n.log.Error("unable to connect to node (unable to retry)", zap.Error(err))
 					return false
 				}
-
 				// We'll retry to connect with an exponential back off. We'll add some jitter to avoid load spikes.
 				reconnectBackOff *= 2 + rand.Float64()
-				if reconnectBackOff > float64(n.MaxReconnectBackOff) {
-					reconnectBackOff = float64(n.MaxReconnectBackOff) - rand.Float64()
+				if reconnectBackOff > float64(n.config.MaxReconnectBackOff) {
+					reconnectBackOff = float64(n.config.MaxReconnectBackOff) - rand.Float64()
 				}
 
-				n.log.Warn("unable to connect to worker node (retrying)", zap.Error(err), zap.Any("retryInSeconds", reconnectBackOff))
+				n.log.Warn("unable to connect to node (retrying)", zap.Error(err), zap.Any("retry_in_seconds", reconnectBackOff))
 				continue
 			}
-
-			n.log.Info("connected to worker node")
+			n.log.Info("connected to node")
 			return true
 		}
 	}
 }
 
-func (n *Node) nodeStream() (<-chan struct{}, context.CancelFunc) {
-	done := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// TODO: When initially connecting to a node tell it what to do with any outstanding work requests.
-	// For example if any were cancelled while it was offline. For now we don't allow modifying WRs on
-	// offline nodes so just resume all requests.
-	updateWorkRequests := &flex.UpdateWorkRequests{
-		DefaultState: flex.UpdateWorkRequests_RESUME,
-	}
-	workResponsesStream := n.worker.NodeStream(updateWorkRequests)
-
-	go func() {
-		defer close(done)
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				n.log.Debug("no longer listening for responses because the handler is shutting down")
-				return
-			case response, ok := <-workResponsesStream:
-				if !ok {
-					n.log.Info("no longer listening for responses because the worker node disconnected")
-					return
-				}
-				n.log.Debug("received response from worker node", zap.Any("response", response))
-				n.workResponses <- response
-			}
-		}
-	}()
-	return done, cancel
-}
-
-func (n *Node) Stop() {
-	n.log.Info("shutting down connection to worker node")
-	n.cancel()
+func (n *baseNode) Stop() {
+	n.nodeCancel()
 }

@@ -8,8 +8,10 @@ import (
 	"strconv"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,11 +54,13 @@ func (j *SyncJob) GetWorkRequests() string {
 // WorkSubmission. This allows Allocate() to be called multiple times to check
 // on the status of outstanding work requests (e.g., after an app crash or
 // because a user requests this).
-func (j *SyncJob) Allocate() worker.JobSubmission {
+func (j *SyncJob) Allocate(rst *flex.RemoteStorageTarget) workermgr.JobSubmission {
 
 	// TODO: Stat the file to determine how to generate segments. Consider if we
 	// should store the file size anywhere so if Allocate() is called a second
 	// time and the file size changes we can handle it.
+
+	//rst := j.Request.GetSync().RemoteStorageTarget
 
 	// TODO: Actually generate segments.
 	if j.Segments == nil {
@@ -106,7 +110,7 @@ func (j *SyncJob) Allocate() worker.JobSubmission {
 		workRequests = append(workRequests, &wr)
 
 	}
-	return worker.JobSubmission{
+	return workermgr.JobSubmission{
 		JobID:        j.Metadata.GetId(),
 		WorkRequests: workRequests,
 	}

@@ -1,4 +1,4 @@
-package worker
+package workermgr
 
 import (
 	"fmt"
@@ -6,11 +6,13 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
-type ManagerConfig struct {
+// Configuration that should apply to all nodes.
+type Config struct {
 }
 
 // The WorkerManager handles mapping WorkRequests to the appropriate node type.
@@ -24,10 +26,15 @@ type Manager struct {
 	// future nodePools could be modified to support multiple Pools for each
 	// NodeType and the Pool struct extended to include additional selection
 	// criteria.
-	nodePools map[NodeType]*Pool
-	// WorkResponses is where individual results from each worker node are sent.
-	WorkResponses <-chan *flex.WorkResponse
-	config        ManagerConfig
+	nodePools map[worker.Type]*Pool
+	config    Config
+	// WorkerManager maintains the list of RSTs because it is responsible for
+	// keeping the configuration on all worker nodes in sync. This is exported
+	// so other components like JobMgr can also reference it as needed.
+	// TODO: Allow RST configuration to be dynamically updated. This is complicated
+	// because we'll have to add locking and figure out how to handle when there
+	// are existing jobs for a changed/removed RST.
+	RemoteStorageTargets map[string]*flex.RemoteStorageTarget
 }
 
 // JobSubmission is used to submit a Job and its associated work requests to be
@@ -39,46 +46,50 @@ type Manager struct {
 // ordered ahead of larger jobs.
 type JobSubmission struct {
 	JobID        string
-	WorkRequests []WorkRequest
+	WorkRequests []worker.WorkRequest
 }
 
 type JobUpdate struct {
 	JobID       string
-	WorkResults map[string]WorkResult
+	WorkResults map[string]worker.WorkResult
 	NewState    flex.NewState
 }
 
-func NewManager(log *zap.Logger, managerConfig ManagerConfig, workerConfigs []Config) *Manager {
+func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rsts []*flex.RemoteStorageTarget) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
-	workResponsesChan := make(chan *flex.WorkResponse)
+	rstMap := make(map[string]*flex.RemoteStorageTarget)
+	for _, rst := range rsts {
+		rstMap[rst.Id] = rst
+	}
 
-	nodePools := make(map[NodeType]*Pool, 0)
-	nodes, err := newWorkerNodesFromConfig(log, workResponsesChan, workerConfigs)
+	nodePools := make(map[worker.Type]*Pool, 0)
+	nodes, err := worker.NewWorkerNodesFromConfig(log, workerConfigs)
 	if err != nil {
 		log.Warn("encountered one or more errors configuring workers", zap.Error(err))
 	}
 
-	for _, node := range nodes {
-		if _, ok := nodePools[node.worker.GetNodeType()]; !ok {
-			nodePools[node.worker.GetNodeType()] = &Pool{
-				nodeType: node.worker.GetNodeType(),
-				nodes:    make([]*Node, 0),
-				nodeMap:  map[string]*Node{},
-				next:     0,
-				mu:       new(sync.Mutex),
+	for _, n := range nodes {
+		if _, ok := nodePools[n.GetNodeType()]; !ok {
+			nodePools[n.GetNodeType()] = &Pool{
+				nodeType:     n.GetNodeType(),
+				nodes:        make([]worker.Worker, 0),
+				nodeMap:      map[string]worker.Worker{},
+				next:         0,
+				mu:           new(sync.Mutex),
+				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rsts},
 			}
 		}
-		nodePools[node.worker.GetNodeType()].nodeMap[node.ID] = node
-		nodePools[node.worker.GetNodeType()].nodes = append(nodePools[node.worker.GetNodeType()].nodes, node)
+		nodePools[n.GetNodeType()].nodeMap[n.GetID()] = n
+		nodePools[n.GetNodeType()].nodes = append(nodePools[n.GetNodeType()].nodes, n)
 	}
 
 	workerManager := &Manager{
-		log:           log,
-		nodeWG:        new(sync.WaitGroup),
-		nodePools:     nodePools,
-		WorkResponses: workResponsesChan,
-		config:        managerConfig,
+		log:                  log,
+		nodeWG:               new(sync.WaitGroup),
+		nodePools:            nodePools,
+		config:               managerConfig,
+		RemoteStorageTargets: rstMap,
 	}
 
 	return workerManager
@@ -103,9 +114,9 @@ func (m *Manager) Start() error {
 // status of the job submission. If all requests have the same state, that is
 // the overall status. Otherwise the overall status is failed if one or more
 // requests cannot be cancelled after an initial failure.
-func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, *flex.RequestStatus) {
+func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *flex.RequestStatus) {
 
-	workResults := make(map[string]WorkResult)
+	workResults := make(map[string]worker.WorkResult)
 	// If we're unable to schedule any of the work requests this is set to false
 	// so we know to cancel any WRs that were scheduled.
 	allScheduled := true
@@ -119,10 +130,10 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, *flex.Requ
 		// If an error occurs return it as the message in the work response status.
 		var err error
 
-		pool, ok := m.nodePools[workRequest.getNodeType()]
+		pool, ok := m.nodePools[workRequest.GetNodeType()]
 		if !ok {
-			err := fmt.Errorf("%s: %w", workRequest.getNodeType(), ErrNoPoolsForNodeType)
-			workRequest.setStatus(flex.RequestStatus_FAILED, err.Error())
+			err := fmt.Errorf("%s: %w", workRequest.GetNodeType(), ErrNoPoolsForNodeType)
+			workRequest.SetStatus(flex.RequestStatus_FAILED, err.Error())
 			allScheduled = false
 		} else {
 			var workResponse *flex.WorkResponse
@@ -145,22 +156,22 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, *flex.Requ
 			// buffered channel and the size of the channel determines how
 			// many outstanding work requests we'll allow.
 			if err != nil {
-				workRequest.setStatus(flex.RequestStatus_UNASSIGNED, err.Error())
+				workRequest.SetStatus(flex.RequestStatus_UNASSIGNED, err.Error())
 				allScheduled = false
 			} else {
-				workRequest.setStatus(workResponse.Status.GetStatus(), workResponse.GetStatus().Message)
+				workRequest.SetStatus(workResponse.Status.GetStatus(), workResponse.GetStatus().Message)
 				if workResponse.Status.Status != flex.RequestStatus_SCHEDULED {
 					allScheduled = false
 				}
 			}
 		}
 
-		workResult := WorkResult{
-			RequestID:    workRequest.getRequestID(),
-			Status:       workRequest.getStatus().Status,
-			Message:      workRequest.getStatus().Message,
+		workResult := worker.WorkResult{
+			RequestID:    workRequest.GetRequestID(),
+			Status:       workRequest.GetStatus().Status,
+			Message:      workRequest.GetStatus().Message,
 			AssignedNode: workerID,
-			AssignedPool: workRequest.getNodeType(),
+			AssignedPool: workRequest.GetNodeType(),
 		}
 		workResults[workResult.RequestID] = workResult
 	}
@@ -201,9 +212,9 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]WorkResult, *flex.Requ
 // cancellation request may be required to understand what happened.
 //
 // TODO: Support job updates besides just cancellations.
-func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]WorkResult, bool) {
+func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, bool) {
 
-	newResults := make(map[string]WorkResult)
+	newResults := make(map[string]worker.WorkResult)
 
 	// If we're unable to definitively update the state if the work request on
 	// any node to the requested state, allUpdated is set to false.

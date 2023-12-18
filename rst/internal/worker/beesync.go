@@ -5,71 +5,108 @@ import (
 
 	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
+	"google.golang.org/grpc"
 )
 
-// BeeSyncWorker is a concrete implementation of a worker node.
-type BeeSyncWorker struct {
-	BeeSyncConfig
+type BeeSyncNode struct {
+	*baseNode
+	conn   *grpc.ClientConn
+	client beesync.BeeSyncClient
 }
 
-// Verify BeeSyncWorker satisfies the Worker interface.
-var _ Worker = &BeeSyncWorker{}
+var _ Worker = &BeeSyncNode{}
+var _ grpcClientHandler = &BeeSyncNode{}
 
-func newBeeSyncWorker(config BeeSyncConfig) *BeeSyncWorker {
-	return &BeeSyncWorker{
-		BeeSyncConfig: config,
+func newBeeSyncNode(baseNode *baseNode) Worker {
+
+	beeSyncNode := &BeeSyncNode{baseNode: baseNode}
+	beeSyncNode.baseNode.grpcClientHandler = beeSyncNode
+	return beeSyncNode
+}
+
+func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) (bool, error) {
+	var err error
+	n.conn, err = getGRPCClientConnection(n.config)
+	if err != nil {
+		return false, err
 	}
+
+	n.client = beesync.NewBeeSyncClient(n.conn)
+
+	configureResp, err := n.client.UpdateConfig(n.rpcCtx, config)
+	if err != nil {
+		return true, err
+	}
+
+	// If we could send the message but the node didn't update the configuration
+	// correctly probably we can't recover with a simple retry so consider fatal.
+	if configureResp.Result != flex.WorkerNodeConfigResponse_SUCCESS {
+		return false, fmt.Errorf("%s configure update on node with message %s", configureResp.Result, configureResp.Message)
+	}
+
+	updateWRResp, err := n.client.UpdateWorkRequests(n.rpcCtx, wrUpdates)
+	if err != nil {
+		return true, err
+	}
+
+	// If we could send the message but the node couldn't update the WRs,
+	// probably we can't recover with a simply retry so consider fatal.
+	if !updateWRResp.Success {
+		return false, fmt.Errorf("updating work requests on node failed with message %s", updateWRResp.Message)
+	}
+
+	return false, nil
 }
 
-func (w *BeeSyncWorker) Connect() (bool, error) {
-	return true, nil // TODO
+func (n *BeeSyncNode) disconnect() error {
+
+	if n.conn != nil {
+		if err := n.conn.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func (w *BeeSyncWorker) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error) {
-
+func (n *BeeSyncNode) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error) {
+	n.rpcWG.Add(1)
+	defer n.rpcWG.Done()
+	if n.GetState() != ONLINE {
+		return nil, fmt.Errorf("unable to submit work request to an offline node")
+	}
 	request, ok := wr.(*SyncRequest)
 	if !ok {
 		return nil, fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
 	}
-	// TODO: Actually send the request to the node.
-	fmt.Printf("sent request ID %s for job ID %s to %s:%d\n", wr.getRequestID(), wr.getJobID(), w.Hostname, w.Port)
-	return &flex.WorkResponse{
-		JobId:     wr.getJobID(),
-		RequestId: wr.getRequestID(),
-		Status: &flex.RequestStatus{
-			Status:  flex.RequestStatus_SCHEDULED,
-			Message: "scheduled",
-		},
-	}, nil
-}
 
-func (w *BeeSyncWorker) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
-
-	// TODO: Actually send the request to the node.
-
-	if updateRequest.NewState == flex.NewState_CANCEL {
-		return &flex.WorkResponse{
-			JobId:     updateRequest.JobID,
-			RequestId: updateRequest.RequestID,
-			Status: &flex.RequestStatus{
-				Status:  flex.RequestStatus_CANCELLED,
-				Message: "cancelled by user",
-			},
-		}, nil
+	resp, err := n.client.SubmitWorkRequest(n.rpcCtx, request.SyncRequest)
+	if err != nil {
+		select {
+		case n.rpcErr <- struct{}{}:
+		default:
+		}
+		return nil, err
 	}
-	return nil, fmt.Errorf("unsupported new state requested for work request: %s", updateRequest.NewState)
+	return resp, nil
 }
 
-func (w *BeeSyncWorker) NodeStream(updateRequests *flex.UpdateWorkRequests) <-chan *flex.WorkResponse {
-	return nil // TODO
-}
+func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
+	n.rpcWG.Add(1)
+	defer n.rpcWG.Done()
+	if n.GetState() != ONLINE {
+		return nil, fmt.Errorf("unable to submit work request to an offline node")
+	}
 
-func (w *BeeSyncWorker) Disconnect() error {
-	return nil // TODO
-}
-
-func (w *BeeSyncWorker) GetNodeType() NodeType {
-	return BeeSync
+	resp, err := n.client.UpdateWorkRequest(n.rpcCtx, updateRequest)
+	if err != nil {
+		select {
+		case n.rpcErr <- struct{}{}:
+		default:
+		}
+		return nil, err
+	}
+	return resp, nil
 }
 
 // SyncRequests are handled by BeeSync nodes.
@@ -80,19 +117,19 @@ type SyncRequest struct {
 // SyncRequest satisfies the WorkRequest interface.
 var _ WorkRequest = &SyncRequest{}
 
-func (wr *SyncRequest) getJobID() string {
+func (wr *SyncRequest) GetJobID() string {
 	return wr.Metadata.GetId()
 }
 
-func (wr *SyncRequest) getRequestID() string {
+func (wr *SyncRequest) GetRequestID() string {
 	return wr.GetRequestId()
 }
 
-func (r *SyncRequest) getStatus() flex.RequestStatus {
+func (r *SyncRequest) GetStatus() flex.RequestStatus {
 	return *r.Metadata.GetStatus()
 }
 
-func (r *SyncRequest) setStatus(status flex.RequestStatus_Status, message string) {
+func (r *SyncRequest) SetStatus(status flex.RequestStatus_Status, message string) {
 
 	newStatus := &flex.RequestStatus{
 		Status:  status,
@@ -102,6 +139,6 @@ func (r *SyncRequest) setStatus(status flex.RequestStatus_Status, message string
 	r.Metadata.Status = newStatus
 }
 
-func (r *SyncRequest) getNodeType() NodeType {
+func (r *SyncRequest) GetNodeType() Type {
 	return BeeSync
 }

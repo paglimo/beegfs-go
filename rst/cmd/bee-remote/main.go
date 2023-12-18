@@ -11,7 +11,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/config"
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
-	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
@@ -102,7 +102,7 @@ Using environment variables:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
-	workerManager := worker.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers)
+	workerManager := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets)
 	err = workerManager.Start()
 	if err != nil {
 		logger.Fatal("unable to start worker manager", zap.Error(err))

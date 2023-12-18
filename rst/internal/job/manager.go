@@ -12,6 +12,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/types"
@@ -85,6 +86,11 @@ type Manager struct {
 	JobUpdates chan<- *beeremote.UpdateJobRequest
 	//jobUpdates is where goroutines manged by JobMgr listen for requests.
 	jobUpdates <-chan *beeremote.UpdateJobRequest
+	// WorkResponses is where work request updates from worker nodes should be sent.
+	// These updates are sent to JobMgr via the gRPC server.
+	WorkResponses chan<- *flex.WorkResponse
+	// workResponses is where goroutines managed by JobMgr listen for work responses.
+	workResponses <-chan *flex.WorkResponse
 	// pathStore is the store where entries for file system paths with jobs
 	// are kept. This store keeps a mapping of paths to Job(s). Note the inner
 	// map is a map of Job IDs to jobs (not RST IDs to jobs) so we can retain
@@ -96,15 +102,16 @@ type Manager struct {
 	jobResultsStore *kvstore.MapStore[worker.WorkResult]
 	jobIDGenerator  *badger.Sequence
 	// A pointer to an initialized/started worker manager.
-	workerManager *worker.Manager
+	workerManager *workermgr.Manager
 }
 
 // NewManager initializes and returns a new Job manager and channels used to submit and update job requests.
-func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) *Manager {
+func NewManager(log *zap.Logger, config Config, workerManager *workermgr.Manager) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 	jobRequestChan := make(chan *beeremote.JobRequest, config.RequestQueueDepth)
 	jobUpdatesChan := make(chan *beeremote.UpdateJobRequest, config.RequestQueueDepth)
+	workResponsesChan := make(chan *flex.WorkResponse, config.RequestQueueDepth)
 	return &Manager{
 		log:           log,
 		ctx:           ctx,
@@ -116,6 +123,8 @@ func NewManager(log *zap.Logger, config Config, workerManager *worker.Manager) *
 		jobRequests:   jobRequestChan,
 		JobUpdates:    jobUpdatesChan,
 		jobUpdates:    jobUpdatesChan,
+		WorkResponses: workResponsesChan,
+		workResponses: workResponsesChan,
 	}
 }
 
@@ -259,9 +268,9 @@ func (m *Manager) Start() error {
 				} else {
 					m.log.Debug("updated job request", zap.Any("response", response))
 				}
-			case wr := <-m.workerManager.WorkResponses:
-				// TODO:
-				m.log.Info("workResponse", zap.Any("workResponse", wr))
+			case workResponse := <-m.workResponses:
+				// TODO: Update jobs in the DB based on work responses.
+				m.log.Info("workResponse", zap.Any("workResponse", workResponse))
 			}
 		}
 	}()
@@ -535,8 +544,13 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 
 	}
 
+	rst, ok := m.workerManager.RemoteStorageTargets[job.GetRSTID()]
+	if !ok {
+		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.GetRSTID())
+	}
+
 	pathEntry.Value[job.GetID()] = job
-	workResults, newStatus := m.workerManager.SubmitJob(job.Allocate())
+	workResults, newStatus := m.workerManager.SubmitJob(job.Allocate(rst))
 
 	// TODO: If we crashed here there could be WRs scheduled to worker nodes but
 	// we have no record which nodes they were assigned to. To handle this after
@@ -882,7 +896,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // and its results should be inspected for additional details.
 func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worker.WorkResult], newState flex.NewState) bool {
 
-	ju := worker.JobUpdate{
+	ju := workermgr.JobUpdate{
 		JobID:       job.GetID(),
 		WorkResults: resultsEntry.Value,
 		NewState:    newState,

@@ -8,10 +8,11 @@ import (
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/types"
-	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 )
 
 // We use ConfigManager to handle configuration updates.
@@ -19,12 +20,12 @@ import (
 var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
-	RemoteStorageTargets []*beesync.RemoteStorageTarget `mapstructure:"remote_storage_target"`
-	Server               server.Config                  `mapstructure:"server"`
-	Log                  logger.Config                  `mapstructure:"log"`
-	Job                  job.Config                     `mapstructure:"job"`
-	WorkerMgr            worker.ManagerConfig           `mapstructure:"workerMgr"`
-	Workers              []worker.Config                `mapstructure:"worker"`
+	Server               server.Config               `mapstructure:"server"`
+	Log                  logger.Config               `mapstructure:"log"`
+	Job                  job.Config                  `mapstructure:"job"`
+	WorkerMgr            workermgr.Config            `mapstructure:"workerMgr"`
+	Workers              []worker.Config             `mapstructure:"worker"`
+	RemoteStorageTargets []*flex.RemoteStorageTarget `mapstructure:"remote_storage_target"`
 	Developer            struct {
 		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
 		DumpConfig        bool `mapstructure:"dumpConfig"`
@@ -104,8 +105,8 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 	// added to supportedRSTTypes before configuration for the new RST type will
 	// be unmarshalled from the AppConfig.
 	var supportedRSTTypes = map[string]func() (any, any){
-		"s3":    func() (any, any) { t := new(beesync.RemoteStorageTarget_S3_); return t, &t.S3 },
-		"azure": func() (any, any) { t := new(beesync.RemoteStorageTarget_Azure_); return t, &t.Azure },
+		"s3":    func() (any, any) { t := new(flex.RemoteStorageTarget_S3_); return t, &t.S3 },
+		"azure": func() (any, any) { t := new(flex.RemoteStorageTarget_Azure_); return t, &t.Azure },
 	}
 
 	return func(

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 )
@@ -13,7 +13,7 @@ import (
 type Job interface {
 	// Allocate creates a JobSubmission that can be executed by WorkerMgr on the
 	// appropriate work node(s) based on the job type.
-	Allocate() worker.JobSubmission
+	Allocate(*flex.RemoteStorageTarget) workermgr.JobSubmission
 	// GetPath should return the BeeGFS path typically used as the key when
 	// retrieving Jobs from the DB.
 	GetPath() string

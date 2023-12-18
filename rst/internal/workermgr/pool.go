@@ -1,10 +1,11 @@
-package worker
+package workermgr
 
 import (
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/types"
 	"github.com/thinkparq/protobuf/go/flex"
 )
@@ -15,23 +16,34 @@ import (
 type Pool struct {
 	// What type of workers are in this pool. Pools are generally organized into
 	// a map based on their NodeType.
-	nodeType NodeType
+	nodeType worker.Type
 	// All nodes in a particular pool should be the same underlying type,
 	// otherwise when assigning work requests, nodes will reject any requests
 	// they do not support.
-	nodes []*Node
+	nodes []worker.Worker
 	// Node map should contain the same entries as nodes.
 	// We use a map for quick lookup of a particular node.
-	nodeMap map[string]*Node
+	nodeMap map[string]worker.Worker
 	// Next is the index of the next worker that should be assigned a request.
 	next int
 	// The mutex should be locked when interacting with the pool.
 	mu *sync.Mutex
+	// All worker nodes in a particular pool share the same configuration.
+	workerConfig *flex.WorkerNodeConfigRequest
 }
 
 func (p *Pool) HandleAll(wg *sync.WaitGroup) {
+
+	// TODO: When initially connecting to a node we need to tell it what to do
+	// with any outstanding work requests. For example if any were cancelled
+	// while it was offline. For now we don't allow modifying WRs on offline
+	// nodes so just tell it to resume all requests.
+	wrUpdates := &flex.UpdateWorkRequests{
+		NewState: flex.NewState_UNCHANGED,
+	}
+
 	for _, node := range p.nodes {
-		go node.Handle(wg)
+		go node.Handle(wg, p.workerConfig, wrUpdates)
 	}
 }
 
@@ -44,7 +56,7 @@ func (p *Pool) StopAll() {
 // assignToLeastBusyWorker assigns the work request to the least busy node in
 // the pool. It returns the ID of the assigned node and the response from the
 // node, or an error if the request could not be assigned to a node.
-func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *flex.WorkResponse, error) {
+func (p *Pool) assignToLeastBusyWorker(wr worker.WorkRequest) (string, *flex.WorkResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -61,10 +73,10 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *flex.WorkRespon
 	for i := 0; i <= 3; i++ {
 		// Don't retry more times than the number of workers in the pool. It could
 		// be all workers are disconnected.
-		for i := 0; i < poolSize; i++ {
-			if p.nodes[p.next].GetState() == CONNECTED {
-				assignedWorker := p.nodes[p.next].ID
-				resp, err := p.nodes[p.next].worker.SubmitWorkRequest(wr)
+		for j := 0; j < poolSize; j++ {
+			if p.nodes[p.next].GetState() == worker.ONLINE {
+				assignedWorker := p.nodes[p.next].GetID()
+				resp, err := p.nodes[p.next].SubmitWorkRequest(wr)
 
 				if err != nil {
 					errWithWorker := fmt.Errorf("node: %s - error: %w", assignedWorker, err)
@@ -105,7 +117,7 @@ func (p *Pool) assignToLeastBusyWorker(wr WorkRequest) (string, *flex.WorkRespon
 // the remote worker node. It returns the work response from the remote node or
 // an error if the node was unable to apply the new state or a network/local error
 // occurred preventing the remote node form being updated.
-func (p *Pool) updateWorkRequestOnNode(jobID string, workResult WorkResult, newState flex.NewState) (*flex.WorkResponse, error) {
+func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResult, newState flex.NewState) (*flex.WorkResponse, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -126,5 +138,5 @@ func (p *Pool) updateWorkRequestOnNode(jobID string, workResult WorkResult, newS
 		NewState:  newState,
 	}
 
-	return node.worker.UpdateWorkRequest(updateRequest)
+	return node.UpdateWorkRequest(updateRequest)
 }

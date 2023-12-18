@@ -3,22 +3,37 @@ package worker
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/thinkparq/gobee/types"
-	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
-// Config defines the configuration options that could be set on any type of
-// worker node. It embeds the configuration for each type of worker to
-// standardize and simplify unmarshalling configuration and initializing
-// workers.
+// Supported worker nodes are organized into pools based on their Type. In
+// addition to implementing the Worker and grpcClientHandler interfaces, expand
+// the list of constants below when adding new worker node types. This will
+// allow a pool for the new worker type to automatically be created whenever new
+// workers of that type are configured.
+type Type string
+
+const (
+	BeeSync Type = "beesync"
+	Mock    Type = "mock"
+)
+
+// Configuration for a single worker node.
 type Config struct {
-	ID                             string   `mapstructure:"id"`
-	Name                           string   `mapstructure:"name"`
-	Type                           NodeType `mapstructure:"type"`
-	MaxReconnectBackOff            int      `mapstructure:"maxReconnectBackOff"`
-	MaxWaitForResponseAfterConnect int      `mapstructure:"maxWaitForResponseAfterConnect"`
+	ID       string `mapstructure:"id"`
+	Name     string `mapstructure:"name"`
+	Type     Type   `mapstructure:"type"`
+	Hostname string `mapstructure:"hostname"`
+	Port     int    `mapstructure:"port"`
+	// If AllowInsecure is unset it will default to "false", ensuring insecure
+	// connections are not allowed by default.
+	AllowInsecure         bool   `mapstructure:"allowInsecure"`
+	SelfSignedTLSCertPath string `mapstructure:"selfSignedTLSCertPath"`
+	MaxReconnectBackOff   int    `mapstructure:"maxReconnectBackOff"`
+	DisconnectTimeout     int    `mapstructure:"disconnectTimeout"`
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into the worker Config.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
@@ -28,15 +43,8 @@ type Config struct {
 	MockConfig                             // Allow mocking worker node behavior from other packages. We could add a map structure tag here if we wanted to be able to setup expectations using a TOML file.
 }
 
-// BeeSyncConfig contains configuration options specific to BeeSync worker nodes.
+// Configuration specific to BeeSync nodes.
 type BeeSyncConfig struct {
-	Hostname string `mapstructure:"beeSyncHostname"`
-	Port     int    `mapstructure:"beeSyncPort"`
-	// If AllowInsecure is unset it will default to "false", ensuring insecure
-	// connections are not allowed by default.
-	AllowInsecure         bool   `mapstructure:"beeSyncAllowInsecure"`
-	DisconnectTimeout     int    `mapstructure:"beeSyncDisconnectTimeout"`
-	SelfSignedTLSCertPath string `mapstructure:"beeSyncSelfSignedTLSCertPath"`
 }
 
 // Mock worker nodes represent simulated worker nodes. They are configured just
@@ -65,13 +73,13 @@ type MockExpectation struct {
 // It is up to the caller to decide to act on the configuration if an error is
 // returned. For example the caller could choose to move forward with whatever
 // good Nodes were returned and log a warning about the misconfigured nodes.
-func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkResponse, configs []Config) ([]*Node, error) {
+func NewWorkerNodesFromConfig(log *zap.Logger, configs []Config) ([]Worker, error) {
 
-	var newWorkers []*Node
+	var newWorkers []Worker
 	var multiErr types.MultiError
 
 	for _, config := range configs {
-		w, err := newWorkerNodeFromConfig(log, workResponses, config)
+		w, err := newWorkerNodeFromConfig(log, config)
 		if err != nil {
 			multiErr.Errors = append(multiErr.Errors, err)
 			continue
@@ -89,34 +97,42 @@ func newWorkerNodesFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkRe
 // newWorkerNodeFromConfig() is intended to be used with newWorkerNodesFromConfig().
 // It accepts a single worker node configuration and returns either an
 // initialized worker node or an error.
-func newWorkerNodeFromConfig(log *zap.Logger, workResponses chan<- *flex.WorkResponse, config Config) (*Node, error) {
+func newWorkerNodeFromConfig(log *zap.Logger, config Config) (Worker, error) {
 
 	log = log.With(zap.String("nodeID", config.ID), zap.String("nodeName", config.Name))
-	ctx, cancel := context.WithCancel(context.Background())
+	nodeCtx, nodeCancel := context.WithCancel(context.Background())
+	rpcCtx, rpcCancel := context.WithCancel(context.Background())
 
-	node := &Node{
-		Config: config,
-		State: State{
-			state: DISCONNECTED,
-		},
-		ctx:           ctx,
-		cancel:        cancel,
-		log:           log,
-		workResponses: workResponses,
+	// TODO: Allow configuration that should apply to all nodes to be set using
+	// configmgr, including the default values (which should be set using
+	// flags). For now just ensure these are not set to zero here, otherwise
+	// weird things can happen.
+
+	if config.MaxReconnectBackOff == 0 {
+		config.MaxReconnectBackOff = 60
 	}
 
-	switch node.Type {
+	if config.DisconnectTimeout == 0 {
+		config.DisconnectTimeout = 30
+	}
+
+	baseNode := &baseNode{
+		config:     config,
+		State:      OFFLINE,
+		nodeCtx:    nodeCtx,
+		nodeCancel: nodeCancel,
+		rpcWG:      &sync.WaitGroup{},
+		rpcCtx:     rpcCtx,
+		rpcCancel:  rpcCancel,
+		log:        log,
+		rpcErr:     make(chan struct{}),
+	}
+
+	switch baseNode.GetNodeType() {
 	case BeeSync:
-		// In order to use the connect and disconnect methods from the specific
-		// BeeSync struct, we need to ensure that the interface in the Worker is
-		// actually holding a BeeSync value. If we don't do this we'll get a
-		// panic because the base Worker struct doesn't actually implement these
-		// methods.
-		node.worker = newBeeSyncWorker(config.BeeSyncConfig)
-		return node, nil
+		return newBeeSyncNode(baseNode), nil
 	case Mock:
-		node.worker = newMockWorker(config.MockConfig)
-		return node, nil
+		return newMockNode(baseNode), nil
 	default:
 		return nil, fmt.Errorf("unknown worker type: %s", config.Type)
 	}

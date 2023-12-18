@@ -9,6 +9,7 @@ import (
 
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/protobuf/go/beeremote"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -120,5 +121,16 @@ func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.Upda
 	return &beeremote.UpdateJobResponse{
 		Ok:      true,
 		Message: "asynchronous update requested (query the path or job ID later to check the result)",
+	}, nil
+}
+
+func (s *BeeRemoteServer) UpdateWorkRequest(ctx context.Context, workResponse *flex.WorkResponse) (*flex.Response, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	// TODO: Keep a journal of work responses that can be replayed should we crash before jobMgr processes the response.
+	s.jobMgr.WorkResponses <- workResponse
+	return &flex.Response{
+		Success: true,
+		Message: "sent work response to channel (persistence is not currently guaranteed and the response could be lost with a crash)",
 	}, nil
 }
