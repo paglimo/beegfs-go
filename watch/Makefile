@@ -32,7 +32,7 @@ $(CMDS:%=build-%): build-%: check-go-version
 build: $(CMDS:%=build-%)
 
 generate-notices:
-	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl
+	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 .PHONY: package-docker
 package-docker: build
@@ -112,7 +112,19 @@ test-go-vendor:
 #
 # IMPORTANT: Any exceptions (using --ignore) such as the one for HCL must be
 # manually added AFTER the NOTICE file has been updated and/or other appropriate
-# steps have been taken based on the license requirements.
+# steps have been taken based on the license requirements also ensure to add 
+# justification below.
+# 
+# === Justification for Ignored Licenses === 
+# 
+# github.com/hashicorp/hcl: Distributed under MPL 2.0 which is a copyleft (reciprocal) license.
+# 
+# 	By default we consider reciprocal licenses a disallowed type because we need
+#   to manually verify our use doesn't violate the license terms. Here our use
+#   of an MPL 2.0 license is acceptable because we don't modify any of the
+#   original source. Note this exists in the project because we use Viper
+#   creating an indirect dependancy on HCL. However we don't allow users to use
+#   HCL for configuration so technically we don't even use this at all.
 test-licenses: generate-notices
 	@echo "Checking license compliance..."
 	@go-licenses check ./cmd/bee-watch/ --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown

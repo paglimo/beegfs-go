@@ -225,10 +225,11 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 	return done, cancel
 }
 
-// connectedLoop() handles sending events and receiving responses from the subscriber.
-// It will do this until the connection breaks for any reason (gracefully or otherwise).
-// Once it returns the connection must be disconnected and reconnected before connectedLoop() is called again.
-// It does not return an error because the caller should react the same in all scenarios.
+// sendLoop() handles sending events to the subscriber. It will do this until
+// the connection breaks for any reason (gracefully or otherwise). Once it
+// returns the connection must be disconnected and reconnected before sendLoop()
+// is called again. It does not return an error because the caller should react
+// the same in all scenarios.
 func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 
 	done := make(chan struct{})
