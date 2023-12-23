@@ -437,6 +437,22 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
 }
 
+// Takes a single job request and attempts to create and schedule a job for it.
+// Returns an error if the job could not be created. There are two main reasons
+// we may not be able to create a job:
+//
+// (1) The provided request is invalid. For example the job type doesn't support
+// the specified RST or the RST doesn't exist.
+//
+// (2) Some temporary condition makes the job request currently impossible. For
+// example there is already an active job for the RST/path combo or there was an
+// internal error retrieving or saving DB entries.
+//
+// Once the job is created if there were any issues allocating, scheduling or
+// running the job these will be indicated in the job response or by inspecting
+// the job status later on. If there was a temporary issue such as a network
+// error trying to contact the RST, the job will still be created but the status
+// will indicate the error.
 func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 
 	job, err := New(m.jobIDGenerator, jr)
@@ -549,8 +565,39 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.GetRSTID())
 	}
 
+	jobSubmission, retry, err := job.Allocate(rst)
+	if err != nil && !retry {
+		return nil, fmt.Errorf("unable to create job due to an unrecoverable error during allocation: %w", err)
+	} else if err != nil {
+		// If an temporary error occurred that can be retried still go forward
+		// with creating the job and just leave the results empty.
+		newStatus := &flex.RequestStatus{
+			Status:  flex.RequestStatus_ERROR,
+			Message: err.Error(),
+		}
+		job.SetStatus(newStatus)
+		pathEntry.Value[job.GetID()] = job
+		jobResultEntry.Metadata["path"] = job.GetPath()
+		workResults := make(map[string]worker.WorkResult)
+		jobResultEntry.Value = workResults
+		// TODO: Push to a queue of jobs that need to be periodically retried by
+		// a separate go routine. Note error is not considered a terminal state
+		// so subsequent job requests for the same path/RST will be rejected
+		// until this one is cancelled. This handler will need to periodically
+		// retry Allocate() until there is no error then submit the job
+		// submission to worker manager.
+		return &beeremote.JobResponse{
+			Job:          job.Get(),
+			WorkRequests: job.GetWorkRequests(),
+			WorkResults:  getWorkResultsForResponse(workResults),
+		}, nil
+	}
+
+	// At this point we have a properly formed job request that should be
+	// runnable barring any ephemeral issues. Errors from this point onwards
+	// should be indicated by the job status.
 	pathEntry.Value[job.GetID()] = job
-	workResults, newStatus := m.workerManager.SubmitJob(job.Allocate(rst))
+	workResults, newStatus := m.workerManager.SubmitJob(jobSubmission)
 
 	// TODO: If we crashed here there could be WRs scheduled to worker nodes but
 	// we have no record which nodes they were assigned to. To handle this after
@@ -597,11 +644,16 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 // be logged or returned to the user when handling interactive requests, and the
 // typical recovery path is to retry.
 //
+// When deleteCompletedJobs != true, when updating jobs by path, completed jobs
+// are silently skipped. When updating an individual job the response will be
+// !ok and the response message will indicate the delete completed jobs was not
+// set (the job message will not be changed, consistent with how it is handled
+// for paths).
+//
 // Allowed state changes:
 //
-// UNASSIGNED/SCHEDULED/RUNNING/STALLED/PAUSED/FAILED => CANCEL
-// CANCELLED => DELETE
-// COMPLETED => DELETE (only if deleteCompletedJobs==true)
+// UNASSIGNED/SCHEDULED/RUNNING/STALLED/PAUSED/FAILED => CANCEL CANCELLED =>
+// DELETE COMPLETED => DELETE (only if deleteCompletedJobs==true)
 //
 // The status message field on a job will reflect if a request was made to move
 // a job to an invalid state.
@@ -611,6 +663,11 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		return nil, fmt.Errorf("job update requested by the job state is unchanged (possibly this indicates a bug in the caller)")
 	}
 
+	// We handle things a little differently depending if the job update was by
+	// path or job ID. A path can update multiple jobs, a job ID at most one.
+	// Both methods utilize a shared updateJobState for all job updates except
+	// deletions. Job deletions are handled here because we have slightly
+	// different handling depending if were working with a path or single job.
 	if path := jobUpdate.GetPath(); path != "" {
 		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(path)
 		if err != nil {
@@ -797,12 +854,24 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		}
 
 		if jobUpdate.NewState == flex.NewState_DELETE {
-			if !job.InTerminalState() {
-				status := job.GetStatus()
-				status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+			status := job.GetStatus()
+			if !job.InTerminalState() || (status.Status == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs) {
+
+				var responseMessage string
+
+				if status.Status == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+					// Note we don't set a message here to be consistent with how this is handled
+					// when updating jobs by path.
+					//status.Message = "refusing to delete completed job (deleted completed jobs flag is not set)"
+					responseMessage = "refusing to delete completed job (deleted completed jobs flag is not set)"
+				} else {
+					status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					responseMessage = "unable to delete job that has not reached a terminal state (cancel it first)"
+				}
+
 				response := &beeremote.UpdateJobResponse{
 					Ok:      false,
-					Message: "error updating job",
+					Message: responseMessage,
 					Responses: []*beeremote.JobResponse{
 						{
 							Job:          job.Get(),
@@ -811,6 +880,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 						},
 					},
 				}
+
 				if err = releasePathEntry(); err != nil {
 					multiErr.Errors = append(multiErr.Errors, fmt.Errorf("an error occurred while releasing path entry %s: %w", path, err))
 				}
@@ -825,7 +895,6 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 			// We need to build the response before releasing anything.
 			// This is just discarded if anything goes wrong.
-			status := job.GetStatus()
 			status.Message = "job scheduled for deletion"
 			response := &beeremote.UpdateJobResponse{
 				Ok:      true,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/bee-remote/internal/config"
+	"github.com/thinkparq/bee-remote/internal/filesystem"
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
@@ -28,6 +29,7 @@ func main() {
 	// Notably remote storage target defaults are handled as part of
 	// initializing a particular RST type.
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When Remote Storage Targets are configured using a file, they can be updated without restarting the application.")
+	pflag.String("mountPoint", "", "The path where BeeGFS is mounted.")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
 	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file' (if needed the directory and all parent directories will be created).")
 	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
@@ -97,6 +99,15 @@ Using environment variables:
 	}
 	defer logger.Sync()
 	logger.Info("<=== Application Initialized ===>")
+
+	// Determine if we should use a real or mock mount point:
+	filesystem.MountPoint, err = filesystem.New(initialCfg.MountPoint)
+	if err != nil {
+		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
+	}
+	if initialCfg.MountPoint == filesystem.MockFSIdentifier {
+		logger.Warn("start requested with a mock file system, operations will happen in memory only")
+	}
 
 	// Create a channel to receive OS signals to coordinate graceful shutdown:
 	sigs := make(chan os.Signal, 1)

@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/thinkparq/bee-remote/internal/filesystem"
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
-	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -54,50 +55,74 @@ func (j *SyncJob) GetWorkRequests() string {
 // WorkSubmission. This allows Allocate() to be called multiple times to check
 // on the status of outstanding work requests (e.g., after an app crash or
 // because a user requests this).
-func (j *SyncJob) Allocate(rst *flex.RemoteStorageTarget) workermgr.JobSubmission {
+func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, error) {
 
-	// TODO: Stat the file to determine how to generate segments. Consider if we
-	// should store the file size anywhere so if Allocate() is called a second
-	// time and the file size changes we can handle it.
+	// TODO: Consider if we should store the file size anywhere so if Allocate()
+	// is called a second time and the file size changes we can handle it.
 
-	//rst := j.Request.GetSync().RemoteStorageTarget
+	stat, err := filesystem.MountPoint.Stat(j.GetPath())
+	fileSize := stat.Size()
+	if err != nil {
+		// TODO: Consider if we should return retry=true for stat failures.
+		return workermgr.JobSubmission{}, false, err
+	}
 
-	// TODO: Actually generate segments.
 	if j.Segments == nil {
+		uploadID := ""
+		rstType, segCount, partsPerSegment := client.RecommendedSegments(fileSize)
+
+		if j.Request.GetSync().Operation == beesync.SyncJob_UNKNOWN {
+			return workermgr.JobSubmission{}, false, fmt.Errorf("no operation specified for the sync job")
+		} else if segCount > 1 && j.Request.GetSync().Operation == beesync.SyncJob_UPLOAD {
+			uploadID, err = client.CreateUpload()
+			if err != nil {
+				return workermgr.JobSubmission{}, true, err
+			}
+		}
+
+		bytesPerSegment := fileSize / segCount
+		extraBytesForLastSegment := fileSize % segCount
 		j.Segments = make([]*SyncSegment, 0)
-		j.Segments = append(j.Segments, &SyncSegment{
-			segment: beesync.Segment{
-				OffsetStart: 0,
-				OffsetStop:  10,
-				Method: &beesync.Segment_S3_{
-					S3: &beesync.Segment_S3{
-						MultipartId: "mpartid-01",
-						PartsStart:  0,
-						PartsStop:   1024,
-					},
+
+		// Based on the RST type generate the appropriate BeeSync segments.
+		// We have to use a int64 counter for byte ranges inside the file
+		// and a int32 counter for the parts. This is probably slightly
+		// faster/cleaner than constantly recasting each iteration.
+		for i64, i32 := int64(0), int32(1); i64 < segCount; i64, i32 = i64+1, i32+1 {
+			offsetStop := (i64+1)*bytesPerSegment - 1
+			if i64 == segCount-1 {
+				// If the number of bytes cannot be divided evenly into the
+				// number of segments, just add the extra bytes to the last
+				// segment. S3 multipart uploads allow the last part to be any
+				// size.
+				offsetStop += extraBytesForLastSegment
+			}
+
+			segment := &SyncSegment{
+				segment: beesync.Segment{
+					OffsetStart: i64 * bytesPerSegment,
+					OffsetStop:  offsetStop,
 				},
-			},
-		})
-		j.Segments = append(j.Segments, &SyncSegment{
-			segment: beesync.Segment{
-				OffsetStart: 10,
-				OffsetStop:  20,
-				Method: &beesync.Segment_S3_{
+			}
+			switch rstType {
+			case rst.S3:
+				segment.segment.Method = &beesync.Segment_S3_{
 					S3: &beesync.Segment_S3{
-						MultipartId: "mpartid-02",
-						PartsStart:  1024,
-						PartsStop:   2048,
+						MultipartId: uploadID,
+						PartsStart:  (i32-1)*partsPerSegment + 1,
+						PartsStop:   i32 * partsPerSegment,
 					},
-				},
-			},
-		})
+				}
+			default:
+				return workermgr.JobSubmission{}, false, fmt.Errorf("BeeSync nodes do not support %s remote storage targets", rstType)
+			}
+			j.Segments = append(j.Segments, segment)
+		}
 	}
 
 	workRequests := make([]worker.WorkRequest, 0)
 
 	for i, s := range j.Segments {
-		fmt.Printf("request: %+v\n", s.segment.GetMethod())
-
 		wr := worker.SyncRequest{
 			SyncRequest: &beesync.SyncRequest{
 				RequestId: strconv.Itoa(i),
@@ -108,12 +133,11 @@ func (j *SyncJob) Allocate(rst *flex.RemoteStorageTarget) workermgr.JobSubmissio
 			},
 		}
 		workRequests = append(workRequests, &wr)
-
 	}
 	return workermgr.JobSubmission{
 		JobID:        j.Metadata.GetId(),
 		WorkRequests: workRequests,
-	}
+	}, false, nil
 }
 
 // GobEncode encodes the SyncJob into a byte slice for gob serialization. The

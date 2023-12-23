@@ -20,6 +20,7 @@ import (
 var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
+	MountPoint           string                      `mapstructure:"mountPoint"`
 	Server               server.Config               `mapstructure:"server"`
 	Log                  logger.Config               `mapstructure:"log"`
 	Job                  job.Config                  `mapstructure:"job"`

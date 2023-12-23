@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,7 +25,7 @@ func (j *MockJob) GetRSTID() string {
 	return j.GetRequest().GetMock().Rst
 }
 
-func (j *MockJob) Allocate(rst *flex.RemoteStorageTarget) workermgr.JobSubmission {
+func (j *MockJob) Allocate(rst rst.Client) (workermgr.JobSubmission, bool, error) {
 
 	if len(j.TestSegments) == 0 {
 		numTestSegments := 1
@@ -53,7 +53,7 @@ func (j *MockJob) Allocate(rst *flex.RemoteStorageTarget) workermgr.JobSubmissio
 	return workermgr.JobSubmission{
 		JobID:        j.Metadata.GetId(),
 		WorkRequests: workRequests,
-	}
+	}, false, nil
 }
 
 func (j *MockJob) GetWorkRequests() string {

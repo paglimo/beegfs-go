@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
@@ -34,7 +35,7 @@ type Manager struct {
 	// TODO: Allow RST configuration to be dynamically updated. This is complicated
 	// because we'll have to add locking and figure out how to handle when there
 	// are existing jobs for a changed/removed RST.
-	RemoteStorageTargets map[string]*flex.RemoteStorageTarget
+	RemoteStorageTargets map[string]rst.Client
 }
 
 // JobSubmission is used to submit a Job and its associated work requests to be
@@ -55,12 +56,19 @@ type JobUpdate struct {
 	NewState    flex.NewState
 }
 
-func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rsts []*flex.RemoteStorageTarget) *Manager {
+func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget) *Manager {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
-	rstMap := make(map[string]*flex.RemoteStorageTarget)
-	for _, rst := range rsts {
-		rstMap[rst.Id] = rst
+	rstMap := make(map[string]rst.Client)
+	for _, config := range rstConfigs {
+		rst, err := rst.New(config)
+		if err != nil {
+			// TODO: Probably we should treat this as fatal and return an error.
+			// Right now the Manager doesn't return an error so it needs to be
+			// adapted to allow this.
+			log.Warn("encountered an error setting up remote storage target", zap.Error(err))
+		}
+		rstMap[config.Id] = rst
 	}
 
 	nodePools := make(map[worker.Type]*Pool, 0)
@@ -72,12 +80,15 @@ func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Co
 	for _, n := range nodes {
 		if _, ok := nodePools[n.GetNodeType()]; !ok {
 			nodePools[n.GetNodeType()] = &Pool{
-				nodeType:     n.GetNodeType(),
-				nodes:        make([]worker.Worker, 0),
-				nodeMap:      map[string]worker.Worker{},
-				next:         0,
-				mu:           new(sync.Mutex),
-				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rsts},
+				nodeType: n.GetNodeType(),
+				nodes:    make([]worker.Worker, 0),
+				nodeMap:  map[string]worker.Worker{},
+				next:     0,
+				mu:       new(sync.Mutex),
+				// TODO: If/when we allow dynamic configuration this won't work.
+				// We would need to pass a reference to the actual RST clients
+				// and provide methods to get their configuration.
+				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rstConfigs},
 			}
 		}
 		nodePools[n.GetNodeType()].nodeMap[n.GetID()] = n

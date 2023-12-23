@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -12,8 +13,12 @@ import (
 // Job represents an interface for tasks that can be managed by BeeRemote.
 type Job interface {
 	// Allocate creates a JobSubmission that can be executed by WorkerMgr on the
-	// appropriate work node(s) based on the job type.
-	Allocate(*flex.RemoteStorageTarget) workermgr.JobSubmission
+	// appropriate work node(s) based on the job type. When an error occurs
+	// retry will be false if the job request is invalid, typically because the
+	// RST and job type are incompatible. Otherwise it will be true if an
+	// ephemeral issue occurred, typically an issue contacting the RST to setup
+	// any prerequisites such as creating a multipart upload.
+	Allocate(rst.Client) (jobSubmission workermgr.JobSubmission, retry bool, err error)
 	// GetPath should return the BeeGFS path typically used as the key when
 	// retrieving Jobs from the DB.
 	GetPath() string
