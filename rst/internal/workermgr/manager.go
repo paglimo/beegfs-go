@@ -56,17 +56,14 @@ type JobUpdate struct {
 	NewState    flex.NewState
 }
 
-func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget) *Manager {
+func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget) (*Manager, error) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	rstMap := make(map[string]rst.Client)
 	for _, config := range rstConfigs {
 		rst, err := rst.New(config)
 		if err != nil {
-			// TODO: Probably we should treat this as fatal and return an error.
-			// Right now the Manager doesn't return an error so it needs to be
-			// adapted to allow this.
-			log.Warn("encountered an error setting up remote storage target", zap.Error(err))
+			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}
 		rstMap[config.Id] = rst
 	}
@@ -103,7 +100,7 @@ func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Co
 		RemoteStorageTargets: rstMap,
 	}
 
-	return workerManager
+	return workerManager, nil
 }
 
 func (m *Manager) Start() error {

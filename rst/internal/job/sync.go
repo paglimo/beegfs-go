@@ -55,24 +55,32 @@ func (j *SyncJob) GetWorkRequests() string {
 // WorkSubmission. This allows Allocate() to be called multiple times to check
 // on the status of outstanding work requests (e.g., after an app crash or
 // because a user requests this).
+//
+// IMPORTANT: After initially generating segments subsequent calls to allocate
+// will not recheck the size of the file to determine if the generated segments
+// are still valid, the original segments will always be returned. This is to
+// discourage misuse of the Allocate() function as a method to determine if a
+// file has changed and it is safe to resume a job or if it should be cancelled.
 func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, error) {
 
-	// TODO: Consider if we should store the file size anywhere so if Allocate()
-	// is called a second time and the file size changes we can handle it.
-
-	stat, err := filesystem.MountPoint.Stat(j.GetPath())
-	fileSize := stat.Size()
-	if err != nil {
-		// TODO: Consider if we should return retry=true for stat failures.
-		return workermgr.JobSubmission{}, false, err
-	}
-
 	if j.Segments == nil {
+		stat, err := filesystem.MountPoint.Stat(j.GetPath())
+		if err != nil {
+			// The most likely reason for an error is the path wasn't found because
+			// we got a job request for a file in BeeGFS that didn't exist or was
+			// removed after the job request was submitted. Less likely there was
+			// some transient network/other issue preventing us from talking to
+			// BeeGFS that could actually be retried. Until there is a reason to add
+			// more complex error handling lets just treat all stat errors as fatal.
+			return workermgr.JobSubmission{}, false, err
+		}
+		fileSize := stat.Size()
+
 		uploadID := ""
 		rstType, segCount, partsPerSegment := client.RecommendedSegments(fileSize)
 
 		if j.Request.GetSync().Operation == beesync.SyncJob_UNKNOWN {
-			return workermgr.JobSubmission{}, false, fmt.Errorf("no operation specified for the sync job")
+			return workermgr.JobSubmission{}, false, ErrUnknownJobOp
 		} else if segCount > 1 && j.Request.GetSync().Operation == beesync.SyncJob_UPLOAD {
 			uploadID, err = client.CreateUpload()
 			if err != nil {

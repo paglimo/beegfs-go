@@ -6,6 +6,7 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/thinkparq/bee-remote/internal/job"
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
@@ -88,27 +89,11 @@ func (c *AppConfig) ValidateConfig() error {
 //
 // The methodology adopted here draws inspiration from:
 // https://sagikazarmark.hu/blog/decoding-custom-formats-with-viper/.
+//
+// IMPORTANT: When a new RST type is added to `beegfs.proto` it must also be
+// added to rst.SupportedRSTTypes before configuration for the new RST type will
+// be unmarshalled from the AppConfig.
 func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
-
-	// supportedRSTTypes allows us work with multiple RST types without writing
-	// repetitive code. The map contains the all lowercase string identifier of
-	// the prefix key of the TOML table used to indicate the configuration
-	// options for a particular RST type. For each RST type a function must be
-	// returned that can be used to construct the actual structs that will be
-	// set to the Type field. The first return value is a new struct that
-	// satisfies the isRemoteStorageTarget_Type interface. The second return
-	// value is the address of the struct that is a named field of the first
-	// return struct and contains the actual message fields for that RST type.
-	// Note returning the address is important otherwise you will get an
-	// initialized but empty struct of the correct type.
-	//
-	// IMPORTANT: When a new RST type is added to `beegfs.proto` it must also be
-	// added to supportedRSTTypes before configuration for the new RST type will
-	// be unmarshalled from the AppConfig.
-	var supportedRSTTypes = map[string]func() (any, any){
-		"s3":    func() (any, any) { t := new(flex.RemoteStorageTarget_S3_); return t, &t.S3 },
-		"azure": func() (any, any) { t := new(flex.RemoteStorageTarget_Azure_); return t, &t.Azure },
-	}
 
 	return func(
 		f reflect.Type, // data type
@@ -121,7 +106,7 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 			case reflect.Map:
 				if tmpData, ok := data.(map[string]interface{}); ok {
 					for key, config := range tmpData {
-						if constructor, exists := supportedRSTTypes[key]; exists {
+						if constructor, exists := rst.SupportedRSTTypes[key]; exists {
 							newType, newTypeField := constructor()
 							if _, alreadyExists := tmpData["Type"]; alreadyExists {
 								return nil, fmt.Errorf("configuration for different types of Remote Storage Targets was found on the same target")

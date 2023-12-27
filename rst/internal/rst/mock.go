@@ -2,11 +2,19 @@ package rst
 
 import "github.com/stretchr/testify/mock"
 
-// MockClient can be used to mock the behavior of any real client type by
-// specifying the client type when setting up the expectations. For example:
+// MockClient can be used to mock the behavior of any real client type.
 //
+// To test directly (for example the RST package tests):
 // rstClient := &rst.MockClient{}
-// mockClient.On("RecommendedSegments", fileSize).Return(rst.S3, segmentCount, partsPerSegment)
+// mockClient.On("RecommendedSegments",fileSize).Return(rst.S3, segmentCount, partsPerSegment)
+//
+// To test indirectly use the Mock RST type when initializing WorkerMgr:
+// rsts := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{}}}
+// wm, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, rsts)
+//
+// Then use type assertion to get at the underlying mock client to setup expectations:
+// mockClient, _ := workerManager.RemoteStorageTargets["0"].(*rst.MockClient)
+// mockClient.On("RecommendedSegments", int64(1<<20)).Return(rst.S3, 4, 2)
 type MockClient struct {
 	mock.Mock
 }

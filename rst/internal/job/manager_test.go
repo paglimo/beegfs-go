@@ -1,6 +1,7 @@
 package job
 
 import (
+	"io/fs"
 	"testing"
 	"time"
 
@@ -8,9 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/thinkparq/bee-remote/internal/filesystem"
+	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
+	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap/zaptest"
 )
@@ -73,8 +77,9 @@ func TestManage(t *testing.T) {
 			},
 		},
 	}
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}, {Id: "1"}}
-	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -96,7 +101,7 @@ func TestManage(t *testing.T) {
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
 	}
 
-	_, err := jobManager.SubmitJobRequest(&testJobRequest)
+	_, err = jobManager.SubmitJobRequest(&testJobRequest)
 	require.NoError(t, err)
 
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
@@ -230,8 +235,9 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 			},
 		},
 	}
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}, {Id: "1"}}
-	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -259,7 +265,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2, Rst: "1"}},
 	}
 
-	_, err := jobManager.SubmitJobRequest(&testJobRequest1)
+	_, err = jobManager.SubmitJobRequest(&testJobRequest1)
 	require.NoError(t, err)
 
 	// We only interact with the second job request by its job ID:
@@ -382,6 +388,19 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	getJobsResponse2, err := jobManager.GetJobs(getJobRequestsByID)
 	assert.ErrorIs(t, err, badger.ErrKeyNotFound)
 	assert.Nil(t, getJobsResponse2)
+
+	////////////////////////////////
+	// Test deleting completed jobs:
+	////////////////////////////////
+
+	response, err := jobManager.SubmitJobRequest(&testJobRequest1)
+	require.NoError(t, err)
+	require.NotNil(t, response)
+
+	// TODO: Add tests once we handle completed jobs.
+	// Test deleting jobs by path skips completed jobs silently unless deleteCompletedJobs==true.
+	// Test deleting jobs by ID skips completed jobs not affecting the job status message, but the response is !ok.
+
 }
 
 // Test fault conditions
@@ -444,8 +463,9 @@ func TestManageErrorHandling(t *testing.T) {
 		},
 	}
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0"}}
-	workerManager := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
@@ -582,4 +602,60 @@ func TestManageErrorHandling(t *testing.T) {
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, flex.RequestStatus_CANCELLED, updateJobResponse.Responses[0].Job.Metadata.Status.Status)
+}
+
+func TestAllocationFailure(t *testing.T) {
+	// Set setup:
+	testMode = true
+	path := "/foo/bar"
+	fileSize := int64(1 << 20)
+	logger := zaptest.NewLogger(t)
+
+	// We don't need a full worker manager for this test.
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	workerManager, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets)
+	require.NoError(t, err)
+
+	mockClient, ok := workerManager.RemoteStorageTargets["1"].(*rst.MockClient)
+	require.True(t, ok, "likely a change in the test broke this check")
+	mockClient.On("RecommendedSegments", fileSize).Return(rst.S3, 4, 2)
+
+	jobMgrConfig := Config{
+		PathDBPath:         mapStoreTestPath,
+		PathDBCacheSize:    1024,
+		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBCacheSize: 1024,
+		JournalPath:        journalDBTestPath,
+	}
+
+	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	require.NoError(t, jobManager.Start())
+
+	filesystem.MountPoint, err = filesystem.New("mock")
+	// Start with no files in the MockFS:
+
+	require.NoError(t, err)
+	jobRequest := &beeremote.JobRequest{
+		Path: path,
+		Type: &beeremote.JobRequest_Sync{
+			Sync: &beesync.SyncJob{
+				Operation:           beesync.SyncJob_UNKNOWN,
+				RemoteStorageTarget: "1",
+			},
+		},
+	}
+
+	// Submit a job request for a file that doesn't exist:
+	response, err := jobManager.SubmitJobRequest(jobRequest)
+	assert.Error(t, err)
+	var pathError *fs.PathError
+	assert.ErrorAs(t, err, &pathError)
+	assert.Nil(t, response)
+
+	// Now create the file and we should get a different error:
+	filesystem.MountPoint.CreateWriteClose(path, make([]byte, fileSize)) // 20MB
+	response, err = jobManager.SubmitJobRequest(jobRequest)
+	assert.ErrorIs(t, err, ErrUnknownJobOp)
+	assert.Nil(t, response)
+
 }

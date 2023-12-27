@@ -113,7 +113,11 @@ Using environment variables:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
-	workerManager := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets)
+	if err != nil {
+		logger.Fatal("unable to initialize worker manager", zap.Error(err))
+	}
+
 	err = workerManager.Start()
 	if err != nil {
 		logger.Fatal("unable to start worker manager", zap.Error(err))
