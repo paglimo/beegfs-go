@@ -71,6 +71,10 @@ func (j *baseJob) Get() *beeremote.Job {
 	return j.Job
 }
 
+func (j *baseJob) GetRSTID() string {
+	return j.GetRequest().RemoteStorageTarget
+}
+
 // GetPath returns the path to the BeeGFS entry this job is running against.
 func (j *baseJob) GetPath() string {
 	return j.Request.GetPath()

@@ -18,11 +18,11 @@ func getTestSyncJob(path string, operation beesync.SyncJob_Operation) SyncJob {
 		baseJob: &baseJob{
 			&beeremote.Job{
 				Request: &beeremote.JobRequest{
-					Path: path,
+					Path:                path,
+					RemoteStorageTarget: "1",
 					Type: &beeremote.JobRequest_Sync{
 						Sync: &beesync.SyncJob{
-							Operation:           operation,
-							RemoteStorageTarget: "1",
+							Operation: operation,
 						},
 					},
 				},
@@ -149,12 +149,12 @@ func TestAllocateS3(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, e.offsetStart, sr.Segment.OffsetStart)
 			assert.Equal(t, e.offsetStop, sr.Segment.OffsetStop)
-			assert.Equal(t, e.partsStart, sr.Segment.GetS3().PartsStart)
-			assert.Equal(t, e.partsStop, sr.Segment.GetS3().PartsStop)
+			assert.Equal(t, e.partsStart, sr.Segment.PartsStart)
+			assert.Equal(t, e.partsStop, sr.Segment.PartsStop)
 			if test.operation == beesync.SyncJob_UPLOAD {
-				assert.Equal(t, "mpartid", sr.Segment.GetS3().MultipartId)
+				assert.Equal(t, "mpartid", sr.Segment.GetS3().UploadId)
 			} else {
-				assert.Equal(t, "", sr.Segment.GetS3().MultipartId)
+				assert.Equal(t, "", sr.Segment.GetS3().UploadId)
 			}
 		}
 		filesystem.MountPoint.Remove(path)

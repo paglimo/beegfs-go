@@ -28,10 +28,6 @@ type SyncJob struct {
 // Verify SyncJob implements the Job interface.
 var _ Job = &SyncJob{}
 
-func (j *SyncJob) GetRSTID() string {
-	return j.GetRequest().GetSync().RemoteStorageTarget
-}
-
 func (j *SyncJob) GetWorkRequests() string {
 
 	var output string
@@ -82,7 +78,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		if j.Request.GetSync().Operation == beesync.SyncJob_UNKNOWN {
 			return workermgr.JobSubmission{}, false, ErrUnknownJobOp
 		} else if segCount > 1 && j.Request.GetSync().Operation == beesync.SyncJob_UPLOAD {
-			uploadID, err = client.CreateUpload()
+			uploadID, err = client.CreateUpload(j.GetPath())
 			if err != nil {
 				return workermgr.JobSubmission{}, true, err
 			}
@@ -110,15 +106,15 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 				segment: beesync.Segment{
 					OffsetStart: i64 * bytesPerSegment,
 					OffsetStop:  offsetStop,
+					PartsStart:  (i32-1)*partsPerSegment + 1,
+					PartsStop:   i32 * partsPerSegment,
 				},
 			}
 			switch rstType {
 			case rst.S3:
 				segment.segment.Method = &beesync.Segment_S3_{
 					S3: &beesync.Segment_S3{
-						MultipartId: uploadID,
-						PartsStart:  (i32-1)*partsPerSegment + 1,
-						PartsStop:   i32 * partsPerSegment,
+						UploadId: uploadID,
 					},
 				}
 			default:

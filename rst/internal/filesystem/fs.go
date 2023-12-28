@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/afero"
@@ -23,6 +24,7 @@ type Filesystem interface {
 	Stat(name string) (os.FileInfo, error)
 	CreateWriteClose(name string, buf []byte) error
 	Remove(name string) error
+	Open(name string) (io.ReadCloser, error)
 }
 
 func New(mountPoint string) (Filesystem, error) {
@@ -66,6 +68,10 @@ func (fs BeeGFS) Remove(name string) error {
 	return fmt.Errorf("Remove should only be used with MockFS")
 }
 
+func (fs BeeGFS) Open(name string) (io.ReadCloser, error) {
+	return os.Open(name)
+}
+
 type MockFS struct {
 	Fs afero.Fs
 }
@@ -90,4 +96,8 @@ func (fs MockFS) CreateWriteClose(name string, buf []byte) error {
 
 func (fs MockFS) Remove(name string) error {
 	return fs.Fs.Remove(name)
+}
+
+func (fs MockFS) Open(name string) (io.ReadCloser, error) {
+	return fs.Fs.Open(name)
 }

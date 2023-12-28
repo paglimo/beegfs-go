@@ -636,11 +636,11 @@ func TestAllocationFailure(t *testing.T) {
 
 	require.NoError(t, err)
 	jobRequest := &beeremote.JobRequest{
-		Path: path,
+		Path:                path,
+		RemoteStorageTarget: "1",
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &beesync.SyncJob{
-				Operation:           beesync.SyncJob_UNKNOWN,
-				RemoteStorageTarget: "1",
+				Operation: beesync.SyncJob_UNKNOWN,
 			},
 		},
 	}

@@ -1,6 +1,9 @@
 package rst
 
-import "github.com/stretchr/testify/mock"
+import (
+	"github.com/stretchr/testify/mock"
+	"github.com/thinkparq/protobuf/go/flex"
+)
 
 // MockClient can be used to mock the behavior of any real client type.
 //
@@ -32,12 +35,22 @@ func (rst *MockClient) RecommendedSegments(fileSize int64) (Type, int64, int32) 
 	return clientType, int64(args.Int(1)), int32(args.Int(2))
 }
 
-func (rst *MockClient) CreateUpload() (uploadID string, err error) {
+func (rst *MockClient) CreateUpload(path string) (uploadID string, err error) {
 	args := rst.Called()
 	return args.String(0), args.Error(1)
 }
 
-func (rst *MockClient) FinishUpload() error {
+func (rst *MockClient) AbortUpload(uploadID string, path string) error {
 	args := rst.Called()
 	return args.Error(1)
+}
+
+func (rst *MockClient) FinishUpload(uploadID string, path string, parts []*flex.WorkResponse_Part) error {
+	args := rst.Called()
+	return args.Error(1)
+}
+
+func (rst *MockClient) UploadPart(uploadID string, part int32, path string) (string, error) {
+	args := rst.Called()
+	return args.String(0), args.Error(2)
 }
