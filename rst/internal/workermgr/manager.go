@@ -135,6 +135,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		// WorkerID will be empty if an error happens.
 		workerID := ""
 
+		var workResult worker.WorkResult
 		// If an error occurs return it as the message in the work response status.
 		var err error
 
@@ -164,24 +165,27 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 			// buffered channel and the size of the channel determines how
 			// many outstanding work requests we'll allow.
 			if err != nil {
-				workRequest.SetStatus(flex.RequestStatus_UNASSIGNED, err.Error())
+				// If there was a failure assemble a minimal work response.
 				allScheduled = false
+				workResult.WorkResponse = &flex.WorkResponse{
+					JobId:     workRequest.GetJobID(),
+					RequestId: workRequest.GetRequestID(),
+					Status: &flex.RequestStatus{
+						Status:  flex.RequestStatus_UNASSIGNED,
+						Message: err.Error(),
+					},
+				}
 			} else {
-				workRequest.SetStatus(workResponse.Status.GetStatus(), workResponse.GetStatus().Message)
 				if workResponse.Status.Status != flex.RequestStatus_SCHEDULED {
 					allScheduled = false
 				}
+				workResult.WorkResponse = workResponse
 			}
 		}
 
-		workResult := worker.WorkResult{
-			RequestID:    workRequest.GetRequestID(),
-			Status:       workRequest.GetStatus().Status,
-			Message:      workRequest.GetStatus().Message,
-			AssignedNode: workerID,
-			AssignedPool: workRequest.GetNodeType(),
-		}
-		workResults[workResult.RequestID] = workResult
+		workResult.AssignedNode = workerID
+		workResult.AssignedPool = workRequest.GetNodeType()
+		workResults[workResult.WorkResponse.RequestId] = workResult
 	}
 
 	var status flex.RequestStatus
@@ -228,44 +232,42 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 	// any node to the requested state, allUpdated is set to false.
 	allUpdated := true
 
-	for _, workResult := range jobUpdate.WorkResults {
+	for reqID, workResult := range jobUpdate.WorkResults {
 
 		// If the WR was never assigned we can just cancel it.
 		if workResult.AssignedPool == "" || workResult.AssignedNode == "" {
-			workResult.Status = flex.RequestStatus_CANCELLED
-			workResult.Message = workResult.Message + "; cancelling because the request is not assigned to a pool or node"
-			newResults[workResult.RequestID] = workResult
+			workResult.Status().Status = flex.RequestStatus_CANCELLED
+			workResult.Status().Message = workResult.Status().Message + "; cancelling because the request is not assigned to a pool or node"
+			newResults[reqID] = workResult
 			continue
 		}
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status = flex.RequestStatus_UNKNOWN
-			workResult.Message = workResult.Message + "; " + ErrNoPoolsForNodeType.Error()
-			newResults[workResult.RequestID] = workResult
+			workResult.Status().Status = flex.RequestStatus_UNKNOWN
+			workResult.Status().Message = workResult.Status().Message + "; " + ErrNoPoolsForNodeType.Error()
+			newResults[reqID] = workResult
 			allUpdated = false
-			newResults[workResult.RequestID] = workResult
 			continue
 		}
 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
-			workResult.Status = flex.RequestStatus_UNKNOWN
-			workResult.Message = workResult.Message + "; " + err.Error()
-			newResults[workResult.RequestID] = workResult
+			workResult.Status().Status = flex.RequestStatus_UNKNOWN
+			workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
+			newResults[reqID] = workResult
 			allUpdated = false
-			newResults[workResult.RequestID] = workResult
 			continue
 		}
 
-		workResult.Status = resp.Status.Status
-		workResult.Message = workResult.Message + "; " + resp.Status.GetMessage()
+		workResult.Status().Status = resp.Status.Status
+		workResult.Status().Message = workResult.Status().Message + "; " + resp.Status.GetMessage()
 
-		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status != flex.RequestStatus_CANCELLED {
+		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status().Status != flex.RequestStatus_CANCELLED {
 			allUpdated = false
 		}
 
-		newResults[workResult.RequestID] = workResult
+		newResults[reqID] = workResult
 	}
 	return newResults, allUpdated
 }

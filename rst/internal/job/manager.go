@@ -99,6 +99,7 @@ type Manager struct {
 	// jobResultsStore is the store where the entries for jobs with work
 	// requests currently being handled by WorkerMgr are kept. This store keeps
 	// a mapping of JobIDs to to their WorkResult(s) (i.e., a JobResult).
+	// Note the inner map is a map of work request IDs to their results.
 	jobResultsStore *kvstore.MapStore[worker.WorkResult]
 	jobIDGenerator  *badger.Sequence
 	// A pointer to an initialized/started worker manager.
@@ -316,9 +317,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		workResults := []*beeremote.JobResponse_WorkResult{}
 
 		if request.GetIncludeWorkResults() {
-			for _, wr := range resultsEntry.Value {
+			for reqID, wr := range resultsEntry.Value {
 				workResult := &beeremote.JobResponse_WorkResult{
-					RequestId:    wr.RequestID,
+					RequestId:    reqID,
 					Status:       wr.GetStatus(),
 					AssignedNode: wr.AssignedNode,
 					AssignedPool: string(wr.AssignedPool),
@@ -361,9 +362,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 					return nil, err
 				}
 
-				for _, wr := range resultsEntry.Value {
+				for reqID, wr := range resultsEntry.Value {
 					workResult := &beeremote.JobResponse_WorkResult{
-						RequestId:    wr.RequestID,
+						RequestId:    reqID,
 						Status:       wr.GetStatus(),
 						AssignedNode: wr.AssignedNode,
 						AssignedPool: string(wr.AssignedPool),
@@ -410,9 +411,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 						return nil, err
 					}
 
-					for _, wr := range resultsEntry.Value {
+					for reqID, wr := range resultsEntry.Value {
 						workResult := &beeremote.JobResponse_WorkResult{
-							RequestId:    wr.RequestID,
+							RequestId:    reqID,
 							Status:       wr.GetStatus(),
 							AssignedNode: wr.AssignedNode,
 							AssignedPool: string(wr.AssignedPool),

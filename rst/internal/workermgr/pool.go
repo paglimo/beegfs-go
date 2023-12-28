@@ -134,7 +134,7 @@ func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResul
 
 	updateRequest := &flex.UpdateWorkRequest{
 		JobID:     jobID,
-		RequestID: workResult.RequestID,
+		RequestID: workResult.WorkResponse.RequestId,
 		NewState:  newState,
 	}
 

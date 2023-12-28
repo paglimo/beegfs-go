@@ -14,18 +14,26 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 
 	testMap := map[string]worker.WorkResult{
 		"0": {
-			RequestID:    "0",
-			Status:       5,
-			Message:      "message0",
 			AssignedNode: "node0",
 			AssignedPool: worker.BeeSync,
+			WorkResponse: &flex.WorkResponse{
+				RequestId: "0",
+				Status: &flex.RequestStatus{
+					Status:  5,
+					Message: "message0",
+				},
+			},
 		},
 		"1": {
-			RequestID:    "1",
-			Status:       6,
-			Message:      "message1",
 			AssignedNode: "node1",
 			AssignedPool: worker.BeeSync,
+			WorkResponse: &flex.WorkResponse{
+				RequestId: "1",
+				Status: &flex.RequestStatus{
+					Status:  6,
+					Message: "message1",
+				},
+			},
 		},
 	}
 

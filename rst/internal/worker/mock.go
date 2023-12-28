@@ -76,11 +76,18 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 	}
 
 	// Echo the work response back to the caller with whatever status was set
-	// using MockExpectations.
+	// using MockExpectations. It is very very important we copy the status here
+	// and return a pointer to a new status (not reuse the status from the
+	// expectation), otherwise all test requests will share the same status
+	// which causes very confusing test failures.
+	status := &flex.RequestStatus{
+		Status:  args.Get(0).(*flex.RequestStatus).GetStatus(),
+		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
+	}
 	return &flex.WorkResponse{
 		JobId:     updateRequest.GetJobID(),
 		RequestId: updateRequest.GetRequestID(),
-		Status:    args.Get(0).(*flex.RequestStatus),
+		Status:    status,
 	}, args.Error(1)
 }
 
