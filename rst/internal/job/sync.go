@@ -13,6 +13,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -60,6 +61,17 @@ func (j *SyncJob) GetWorkRequests() string {
 func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, error) {
 
 	if j.Segments == nil {
+		op := j.Request.GetSync().Operation
+		if op != beesync.SyncJob_UPLOAD && op != beesync.SyncJob_DOWNLOAD {
+			return workermgr.JobSubmission{}, false, fmt.Errorf("unable to allocate job: %w", ErrUnknownJobOp)
+		}
+
+		switch client.GetType() {
+		case rst.S3:
+		default:
+			return workermgr.JobSubmission{}, false, fmt.Errorf("unable to allocate job: %w", ErrIncompatibleNodeAndRST)
+		}
+
 		stat, err := filesystem.MountPoint.Stat(j.GetPath())
 		if err != nil {
 			// The most likely reason for an error is the path wasn't found because
@@ -72,16 +84,13 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		}
 		fileSize := stat.Size()
 
-		uploadID := ""
-		rstType, segCount, partsPerSegment := client.RecommendedSegments(fileSize)
-
-		if j.Request.GetSync().Operation == beesync.SyncJob_UNKNOWN {
-			return workermgr.JobSubmission{}, false, ErrUnknownJobOp
-		} else if segCount > 1 && j.Request.GetSync().Operation == beesync.SyncJob_UPLOAD {
-			uploadID, err = client.CreateUpload(j.GetPath())
+		segCount, partsPerSegment := client.RecommendedSegments(fileSize)
+		if segCount > 1 && op == beesync.SyncJob_UPLOAD {
+			uploadID, err := client.CreateUpload(j.GetPath())
 			if err != nil {
 				return workermgr.JobSubmission{}, true, err
 			}
+			j.Metadata.ExternalId = uploadID
 		}
 
 		bytesPerSegment := fileSize / segCount
@@ -110,16 +119,6 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 					PartsStop:   i32 * partsPerSegment,
 				},
 			}
-			switch rstType {
-			case rst.S3:
-				segment.segment.Method = &beesync.Segment_S3_{
-					S3: &beesync.Segment_S3{
-						UploadId: uploadID,
-					},
-				}
-			default:
-				return workermgr.JobSubmission{}, false, fmt.Errorf("BeeSync nodes do not support %s remote storage targets", rstType)
-			}
 			j.Segments = append(j.Segments, segment)
 		}
 	}
@@ -130,7 +129,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		wr := worker.SyncRequest{
 			SyncRequest: &beesync.SyncRequest{
 				RequestId: strconv.Itoa(i),
-				Metadata:  j.GetMetadata(),
+				Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata),
 				Path:      j.GetPath(),
 				Job:       j.Request.GetSync(),
 				Segment:   &s.segment,
@@ -142,6 +141,40 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		JobID:        j.Metadata.GetId(),
 		WorkRequests: workRequests,
 	}, false, nil
+}
+
+func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error {
+
+	op := j.Request.GetSync().Operation
+	if op != beesync.SyncJob_UPLOAD && op != beesync.SyncJob_DOWNLOAD {
+		return fmt.Errorf("unable to complete job: %w", ErrUnknownJobOp)
+	}
+
+	switch client.GetType() {
+	case rst.S3:
+	default:
+		return fmt.Errorf("unable to complete job: %w", ErrIncompatibleNodeAndRST)
+	}
+
+	if op == beesync.SyncJob_UPLOAD && j.Metadata.ExternalId != "" {
+		if abort {
+			return client.AbortUpload(j.Metadata.ExternalId, j.GetPath())
+		}
+		// TODO: There could be lots of parts. Look for ways to optimize this.
+		// Like if we could determine the total number of parts and make an
+		// appropriately sized slice up front. Or if we could just pass the RST
+		// method the unmodified map since it potentially has to iterate over
+		// the slice to convert it to the type it expects anyway. The drawback
+		// with the latter approach is the RST package would import a BeeRemote
+		// package and the goal has been to break this out into a standalone
+		// package to reuse for BeeSync.
+		partsToFinish := make([]*flex.WorkResponse_Part, 0)
+		for _, r := range results {
+			partsToFinish = append(partsToFinish, r.WorkResponse.CompletedParts...)
+		}
+		return client.FinishUpload(j.Metadata.ExternalId, j.GetPath(), partsToFinish)
+	}
+	return nil // Nothing to do.
 }
 
 // GobEncode encodes the SyncJob into a byte slice for gob serialization. The

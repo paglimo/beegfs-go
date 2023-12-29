@@ -11,9 +11,13 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
+	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
+// MockJob does not currently incorporate mock.Mock but rather simply returns
+// static responses to most calls except allocate which generates TestSegments
+// based on the Mock RSTs NumTestSegments configuration parameter.
 type MockJob struct {
 	*baseJob
 	TestSegments []string
@@ -43,7 +47,7 @@ func (j *MockJob) Allocate(rst rst.Client) (workermgr.JobSubmission, bool, error
 	for i, s := range j.TestSegments {
 		wr := worker.MockRequest{
 			RequestID: strconv.Itoa(i),
-			Metadata:  j.GetMetadata(),
+			Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata),
 			Path:      j.GetPath(),
 			Segment:   s,
 		}
@@ -54,6 +58,10 @@ func (j *MockJob) Allocate(rst rst.Client) (workermgr.JobSubmission, bool, error
 		JobID:        j.Metadata.GetId(),
 		WorkRequests: workRequests,
 	}, false, nil
+}
+
+func (j *MockJob) Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error {
+	return nil
 }
 
 func (j *MockJob) GetWorkRequests() string {

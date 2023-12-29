@@ -5,6 +5,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/rst"
+	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -19,6 +20,13 @@ type Job interface {
 	// ephemeral issue occurred, typically an issue contacting the RST to setup
 	// any prerequisites such as creating a multipart upload.
 	Allocate(rst.Client) (jobSubmission workermgr.JobSubmission, retry bool, err error)
+	// Complete should always be called before moving the job status to a
+	// terminal state. If the job completed successfully and all work results
+	// are complete then abort should be false, otherwise it can be set to true
+	// to cancel the job. The actions it takes depends on the job and RST type.
+	// For example completing or aborting a multipart upload for a sync job to
+	// an S3 target.
+	Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error
 	// GetPath should return the BeeGFS path typically used as the key when
 	// retrieving Jobs from the DB.
 	GetPath() string
@@ -94,7 +102,8 @@ func (j *baseJob) SetStatus(status *flex.RequestStatus) {
 }
 
 // InTerminalState() indicates the job is no longer active, cannot be restarted,
-// and will not conflict with a new job.
+// and will not conflict with a new job. This should mirror the
+// InTerminalState() method for WorkResults.
 func (j *baseJob) InTerminalState() bool {
 	status := j.GetStatus()
 	return status.Status == flex.RequestStatus_COMPLETED || status.Status == flex.RequestStatus_CANCELLED

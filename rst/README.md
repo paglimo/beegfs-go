@@ -18,3 +18,12 @@ types.
 ## Logging
 
 Most job/work requests happen asynchronously and do not immediately return results/errors to the caller. If an error occurs updating a job the error/warning should be logged at the debug level and any relevant details (such as the error) added to the status message of the relevant job and/or job results entry. The only time it is appropriate to log errors or warnings is if the entry cannot be retrieved or updated for some reason.
+
+## Gotchas
+
+### Protocol Buffers and Pointers
+While working with pointers inherently carries certain risks, these are further accentuated in our project due to the extensive use of structs defined by protocol buffers. In Go, protocol buffer messages are represented as structs, and messages containing other messages are implemented via fields pointing to structs of the corresponding message types. A common example in our case is the Metadata message, which is used by various message types to convey status information. When creating a new message based on an existing one, an easy mistake is to inadvertently copy references to shared fields (like Metadata) from the original struct. This can lead to unintended side effects, as modifications in the new message could inadvertently affect the original message. To prevent such issues, it's crucial to create independent copies of messages, ensuring that each message is isolated and modifications do not have unintended consequences on other parts of the system.
+
+For example when creating a `SyncRequest` for a Job simply doing `SyncRequest.Metadata: j.Metadata` or `SyncRequest.Metadata: j.GetMetadata()` (which still returns a pointer to the other message) would copy a reference to the Job's metadata. This would mean all `SyncRequests` for that job would share the same status, so changes to one would affect all statuses which is not desired. Ensure to create a new instance with values from the old field where appropriate, or use the `proto.Clone()` function (e.g., `Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata)`). 
+
+Note in some cases it may actually be desirable to do this, for example if you are creating `SyncRequests` for the same job if you are 100% certain the referenced message (like `j.Request.GetSync()`) is static and won't change, you may wish to reuse an existing message instead of allocating a new one.

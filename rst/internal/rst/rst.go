@@ -51,10 +51,11 @@ var SupportedRSTTypes = map[string]func() (any, any){
 }
 
 type Client interface {
+	GetType() Type
 	CreateUpload(path string) (uploadID string, err error)
 	AbortUpload(uploadID string, path string) error
 	FinishUpload(uploadID string, path string, parts []*flex.WorkResponse_Part) error
-	RecommendedSegments(fileSize int64) (segType Type, numberOfSegments int64, partsPerSegment int32)
+	RecommendedSegments(fileSize int64) (numberOfSegments int64, partsPerSegment int32)
 	UploadPart(uploadID string, part int32, path string) (string, error)
 }
 

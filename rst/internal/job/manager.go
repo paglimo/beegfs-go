@@ -270,8 +270,15 @@ func (m *Manager) Start() error {
 					m.log.Debug("updated job request", zap.Any("response", response))
 				}
 			case workResponse := <-m.workResponses:
-				// TODO: Update jobs in the DB based on work responses.
-				m.log.Info("workResponse", zap.Any("workResponse", workResponse))
+				err := m.updateJobResults(workResponse)
+				// TODO: Once we are using a journal to keep track of job
+				// results, it needs to be updated depending if the update was
+				// successful or not.
+				if err != nil {
+					m.log.Error("error updating job results", zap.Error(err), zap.Any("workResponse", workResponse))
+				} else {
+					m.log.Debug("processed work response", zap.Any("workResponse", workResponse))
+				}
 			}
 		}
 	}()
@@ -296,7 +303,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		}
 		exactPath, ok := resultsEntry.Metadata["path"]
 		if !ok {
-			return nil, fmt.Errorf("found job results for job ID %s but the entry's metadata doesn't contain the path (unable to perform reverse lookup of job in path store)", query.JobID)
+			return nil, fmt.Errorf("found job results for job ID %s but the entry's metadata doesn't contain the path to perform reverse lookup of job in path store (likely this indicates a bug elsewhere related to job creation))", query.JobID)
 		}
 
 		pathEntry, err := m.pathStore.GetEntry(exactPath)
@@ -320,7 +327,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			for reqID, wr := range resultsEntry.Value {
 				workResult := &beeremote.JobResponse_WorkResult{
 					RequestId:    reqID,
-					Status:       wr.GetStatus(),
+					Status:       wr.Status(),
 					AssignedNode: wr.AssignedNode,
 					AssignedPool: string(wr.AssignedPool),
 				}
@@ -365,7 +372,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 				for reqID, wr := range resultsEntry.Value {
 					workResult := &beeremote.JobResponse_WorkResult{
 						RequestId:    reqID,
-						Status:       wr.GetStatus(),
+						Status:       wr.Status(),
 						AssignedNode: wr.AssignedNode,
 						AssignedPool: string(wr.AssignedPool),
 					}
@@ -414,7 +421,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 					for reqID, wr := range resultsEntry.Value {
 						workResult := &beeremote.JobResponse_WorkResult{
 							RequestId:    reqID,
-							Status:       wr.GetStatus(),
+							Status:       wr.Status(),
 							AssignedNode: wr.AssignedNode,
 							AssignedPool: string(wr.AssignedPool),
 						}
@@ -826,7 +833,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 		path, ok := resultsEntry.Metadata["path"]
 		if !ok {
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("found job results for job ID %s but the entry's metadata doesn't contain the path (unable to perform reverse lookup of job in path store)", jobID))
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("found job results for job ID %s but the entry's metadata doesn't contain the path to perform reverse lookup of job in path store (likely this indicates a bug elsewhere related to job creation)", jobID))
 			if err := releaseResultsEntry(); err != nil {
 				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("an error occurred while releasing the results entry for job ID %s: %w", jobID, err))
 			}
@@ -964,6 +971,10 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // the job and resultsEntry. It returns true only if the new state was
 // definitively applied. If it returns false the status and message of the job
 // and its results should be inspected for additional details.
+//
+// IMPORTANT: This should only be used when the state of a job's work requests
+// need to be modified on the assigned worker nodes. To update the job state in
+// reaction to job results returned by a worker node use updateJobResults().
 func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worker.WorkResult], newState flex.NewState) bool {
 
 	ju := workermgr.JobUpdate{
@@ -994,6 +1005,114 @@ func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worke
 	}
 
 	return ok
+}
+
+// updateJobResults processes work responses from worker nodes for outstanding
+// work requests and handles updating the job results. Once all work requests
+// have reached a terminal state, it handles moving the overall job state to a
+// terminal state, including finishing the job by completing or cancelling
+// multipart uploads (or equivalent for the specified job type). It only returns
+// an error if there was an internal problem updating the results or job,
+// otherwise the result of the update are reflected in the Job status and
+// message. It may update the job status and also return an error for some
+// corner cases.
+func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
+
+	resultsEntry, commitAndReleaseJobResults, err := m.jobResultsStore.GetAndLockEntry(workResponse.JobId)
+	if err != nil {
+		return err
+	}
+	defer commitAndReleaseJobResults()
+
+	// Update the results entry.
+	e, ok := resultsEntry.Value[workResponse.RequestId]
+	if !ok {
+		return fmt.Errorf("received a work response for an unknown work request: %s", workResponse)
+	}
+	e.WorkResponse = workResponse
+	resultsEntry.Value[workResponse.RequestId] = e
+
+	allSameStatus := true
+	for _, workResult := range resultsEntry.Value {
+		if !workResult.InTerminalState() {
+			// Don't do anything else if all work requests haven't reached a terminal state.
+			return nil
+		}
+		// Verify all work requests have reached the same terminal state.
+		// We'll compare against the work response we just received.
+		if e.Status().Status != workResult.Status().Status {
+			allSameStatus = false
+		}
+	}
+
+	path, ok := resultsEntry.Metadata["path"]
+	if !ok {
+		return fmt.Errorf("updated job results for job ID %s but the entry's metadata doesn't contain the path to perform a reverse lookup to update the Job (likely this indicates a bug elsewhere related to job creation)", workResponse.JobId)
+	}
+
+	pathEntry, commitAndReleasePathEntry, err := m.pathStore.GetAndLockEntry(path)
+	if err != nil {
+		return err
+	}
+	defer commitAndReleasePathEntry()
+
+	job, ok := pathEntry.Value[workResponse.JobId]
+	if !ok {
+		return fmt.Errorf("updated job results for job ID %s but this job ID doesn't exist for the expected path %s (this likely indicates a bug)", workResponse.JobId, path)
+	}
+
+	// TODO: Consider the scenarios where all work requests are in a terminal
+	// state, but they aren't in the same state. Depending on how worker nodes
+	// are implemented this could be possible if some WRs completed, then a user
+	// cancelled the job. Perhaps we treat the overall job state as cancelled in
+	// this scenario?
+	if !allSameStatus {
+		job.GetStatus().Status = flex.RequestStatus_FAILED
+		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
+		return nil
+	}
+
+	rst, ok := m.workerManager.RemoteStorageTargets[job.GetRSTID()]
+	if !ok {
+		return fmt.Errorf("unable to complete job because the RST does not exist: %s", job.GetRSTID())
+	}
+
+	switch e.Status().Status {
+	case flex.RequestStatus_CANCELLED:
+		if err := job.Complete(rst, resultsEntry.Value, true); err != nil {
+			job.SetStatus(&flex.RequestStatus{
+				Status:  flex.RequestStatus_FAILED,
+				Message: "error cancelling job " + err.Error(),
+			})
+		} else {
+			job.SetStatus(&flex.RequestStatus{
+				Status:  flex.RequestStatus_CANCELLED,
+				Message: "successfully cancelled job",
+			})
+		}
+	case flex.RequestStatus_COMPLETED:
+		if err := job.Complete(rst, resultsEntry.Value, false); err != nil {
+			job.SetStatus(&flex.RequestStatus{
+				Status:  flex.RequestStatus_FAILED,
+				Message: "error completing job " + err.Error(),
+			})
+		} else {
+			job.SetStatus(&flex.RequestStatus{
+				Status:  flex.RequestStatus_COMPLETED,
+				Message: "successfully completed job",
+			})
+		}
+	default:
+		job.GetStatus().Status = e.Status().Status
+		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
+		// We return an error here because this is an internal problem that
+		// shouldn't happen and hopefully a test will catch it. Most likely some
+		// new terminal states were added and this function needs to be updated.
+		// Since we have valid entries and all work requests are in the same
+		// state it makes sense to update the job state to reflect this as well.
+		return fmt.Errorf("all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)")
+	}
+	return nil
 }
 
 func (m *Manager) Stop() {

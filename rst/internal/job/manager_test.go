@@ -29,7 +29,6 @@ func TestManage(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
-	workResponsesChan := make(chan *flex.WorkResponse)
 	workerConfigs := []worker.Config{
 		{
 			ID:                  "0",
@@ -63,11 +62,6 @@ func TestManage(t *testing.T) {
 							},
 							nil,
 						},
-					},
-					{
-						MethodName: "NodeStream",
-						Args:       []interface{}{mock.Anything},
-						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
 						MethodName: "disconnect",
@@ -187,7 +181,6 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
-	workResponsesChan := make(chan *flex.WorkResponse)
 	workerConfigs := []worker.Config{
 		{
 			ID:                  "0",
@@ -221,11 +214,6 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 							},
 							nil,
 						},
-					},
-					{
-						MethodName: "NodeStream",
-						Args:       []interface{}{mock.Anything},
-						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
 						MethodName: "disconnect",
@@ -412,7 +400,6 @@ func TestManageErrorHandling(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
-	workResponsesChan := make(chan *flex.WorkResponse)
 
 	// This allows us to modify the expected status to what we expect in
 	// different steps of the test after we initialize worker manager.
@@ -448,11 +435,6 @@ func TestManageErrorHandling(t *testing.T) {
 							expectedStatus,
 							nil,
 						},
-					},
-					{
-						MethodName: "NodeStream",
-						Args:       []interface{}{mock.Anything},
-						ReturnArgs: []interface{}{workResponsesChan},
 					},
 					{
 						MethodName: "disconnect",
@@ -618,7 +600,8 @@ func TestAllocationFailure(t *testing.T) {
 
 	mockClient, ok := workerManager.RemoteStorageTargets["1"].(*rst.MockClient)
 	require.True(t, ok, "likely a change in the test broke this check")
-	mockClient.On("RecommendedSegments", fileSize).Return(rst.S3, 4, 2)
+	mockClient.On("GetType").Return(rst.S3)
+	mockClient.On("RecommendedSegments", fileSize).Return(4, 2)
 
 	jobMgrConfig := Config{
 		PathDBPath:         mapStoreTestPath,
@@ -645,17 +628,186 @@ func TestAllocationFailure(t *testing.T) {
 		},
 	}
 
-	// Submit a job request for a file that doesn't exist:
+	// Submit a request for an unknown operation:
 	response, err := jobManager.SubmitJobRequest(jobRequest)
+	assert.ErrorIs(t, err, ErrUnknownJobOp)
+	assert.Nil(t, response)
+
+	// Fix the operation:
+	jobRequest.GetSync().Operation = beesync.SyncJob_UPLOAD
+
+	// Submit a job request for a file that doesn't exist:
+	response, err = jobManager.SubmitJobRequest(jobRequest)
 	assert.Error(t, err)
 	var pathError *fs.PathError
 	assert.ErrorAs(t, err, &pathError)
 	assert.Nil(t, response)
+}
 
-	// Now create the file and we should get a different error:
-	filesystem.MountPoint.CreateWriteClose(path, make([]byte, fileSize)) // 20MB
-	response, err = jobManager.SubmitJobRequest(jobRequest)
-	assert.ErrorIs(t, err, ErrUnknownJobOp)
-	assert.Nil(t, response)
+func TestUpdateJobResults(t *testing.T) {
+	testMode = true
+
+	logger := zaptest.NewLogger(t)
+	workerMgrConfig := workermgr.Config{}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	workerConfigs := []worker.Config{
+		{
+			ID:                  "0",
+			Name:                "test-node-0",
+			Type:                worker.Mock,
+			MaxReconnectBackOff: 5,
+			MockConfig: worker.MockConfig{
+				Expectations: []worker.MockExpectation{
+					{
+						MethodName: "connect",
+						ReturnArgs: []interface{}{false, nil},
+					},
+					{
+						MethodName: "SubmitWorkRequest",
+						Args:       []interface{}{mock.Anything},
+						ReturnArgs: []interface{}{
+							&flex.RequestStatus{
+								Status:  flex.RequestStatus_SCHEDULED,
+								Message: "test expects a scheduled request",
+							},
+							nil,
+						},
+					},
+					{
+						MethodName: "disconnect",
+						ReturnArgs: []interface{}{nil},
+					},
+				},
+			},
+		},
+	}
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	require.NoError(t, err)
+	require.NoError(t, workerManager.Start())
+
+	jobMgrConfig := Config{
+		PathDBPath:         mapStoreTestPath,
+		PathDBCacheSize:    1024,
+		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBCacheSize: 1024,
+		JournalPath:        journalDBTestPath,
+	}
+
+	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	require.NoError(t, jobManager.Start())
+
+	testJobRequest := &beeremote.JobRequest{
+		Path:     "/test/myfile",
+		Name:     "test job 1",
+		Priority: 3,
+		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2, Rst: "0"}},
+	}
+
+	// Verify once all WRs are in the same terminal state the job state
+	// transitions correctly:
+	for _, expectedStatus := range []flex.RequestStatus_Status{flex.RequestStatus_COMPLETED, flex.RequestStatus_CANCELLED} {
+
+		js, err := jobManager.SubmitJobRequest(testJobRequest)
+		require.NoError(t, err)
+
+		// The first response should not finish the job:
+		workResponse1 := &flex.WorkResponse{
+			JobId:     js.Job.Metadata.GetId(),
+			RequestId: "0",
+			Status: &flex.RequestStatus{
+				Status:  expectedStatus,
+				Message: expectedStatus.String(),
+			},
+			RemainingParts: 0,
+			CompletedParts: []*flex.WorkResponse_Part{},
+		}
+
+		err = jobManager.updateJobResults(workResponse1)
+		require.NoError(t, err)
+
+		getJobsRequest := &beeremote.GetJobsRequest{
+			Query: &beeremote.GetJobsRequest_JobID{
+				JobID: js.Job.Metadata.GetId(),
+			},
+			IncludeWorkRequests: false,
+			IncludeWorkResults:  true,
+		}
+		resp, err := jobManager.GetJobs(getJobsRequest)
+		require.NoError(t, err)
+
+		// Work result order is not guaranteed...
+		for _, wr := range resp.Response[0].WorkResults {
+			if wr.RequestId == "0" {
+				require.Equal(t, expectedStatus, wr.Status.GetStatus())
+			} else {
+				require.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.GetStatus())
+			}
+		}
+		require.Equal(t, flex.RequestStatus_SCHEDULED, resp.Response[0].Job.Metadata.Status.GetStatus())
+
+		// The second response should finish the job:
+		workResponse2 := &flex.WorkResponse{
+			JobId:     js.Job.Metadata.GetId(),
+			RequestId: "1",
+			Status: &flex.RequestStatus{
+				Status:  expectedStatus,
+				Message: expectedStatus.String(),
+			},
+			RemainingParts: 0,
+			CompletedParts: []*flex.WorkResponse_Part{},
+		}
+		err = jobManager.updateJobResults(workResponse2)
+		require.NoError(t, err)
+
+		resp, err = jobManager.GetJobs(getJobsRequest)
+		require.NoError(t, err)
+		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[0].Status.GetStatus())
+		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[1].Status.GetStatus())
+		require.Equal(t, expectedStatus, resp.Response[0].Job.Metadata.Status.GetStatus())
+	}
+
+	// Test if all WRs are in a terminal state but there is a mismatch the job
+	// is failed:
+	js, err := jobManager.SubmitJobRequest(testJobRequest)
+	require.NoError(t, err)
+
+	workResponse1 := &flex.WorkResponse{
+		JobId:     js.Job.Metadata.GetId(),
+		RequestId: "0",
+		Status: &flex.RequestStatus{
+			Status:  flex.RequestStatus_COMPLETED,
+			Message: flex.RequestStatus_COMPLETED.String(),
+		},
+		RemainingParts: 0,
+		CompletedParts: []*flex.WorkResponse_Part{},
+	}
+
+	workResponse2 := &flex.WorkResponse{
+		JobId:     js.Job.Metadata.GetId(),
+		RequestId: "1",
+		Status: &flex.RequestStatus{
+			Status:  flex.RequestStatus_CANCELLED,
+			Message: flex.RequestStatus_CANCELLED.String(),
+		},
+		RemainingParts: 0,
+		CompletedParts: []*flex.WorkResponse_Part{},
+	}
+
+	err = jobManager.updateJobResults(workResponse1)
+	require.NoError(t, err)
+	err = jobManager.updateJobResults(workResponse2)
+	require.NoError(t, err)
+
+	getJobsRequest := &beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_JobID{
+			JobID: js.Job.Metadata.GetId(),
+		},
+		IncludeWorkRequests: false,
+		IncludeWorkResults:  true,
+	}
+
+	resp, err := jobManager.GetJobs(getJobsRequest)
+	require.NoError(t, err)
+	require.Equal(t, flex.RequestStatus_FAILED, resp.Response[0].Job.Metadata.Status.GetStatus())
 
 }

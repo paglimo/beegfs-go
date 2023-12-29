@@ -52,3 +52,10 @@ type WorkResult struct {
 func (wr *WorkResult) Status() *flex.RequestStatus {
 	return wr.WorkResponse.GetStatus()
 }
+
+// InTerminalState() indicates the work request is no longer active, cannot be
+// restarted, and will not conflict with a new work request. This should mirror
+// the InTerminalState() method for jobs.
+func (wr *WorkResult) InTerminalState() bool {
+	return wr.Status().Status == flex.RequestStatus_COMPLETED || wr.Status().Status == flex.RequestStatus_CANCELLED
+}

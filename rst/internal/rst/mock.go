@@ -24,15 +24,22 @@ type MockClient struct {
 
 var _ Client = &MockClient{}
 
-func (rst *MockClient) RecommendedSegments(fileSize int64) (Type, int64, int32) {
-	args := rst.Called(fileSize)
-
+func (rst *MockClient) GetType() Type {
+	args := rst.Called()
+	// Any string type could also be used here even if it isn't one of the typed
+	// constants. This is useful if you want to mock an RST type that doesn't
+	// exist for some tests.
 	clientType, ok := args.Get(0).(Type)
 	if !ok {
 		panic("client type used for test is invalid")
 	}
+	return clientType
+}
 
-	return clientType, int64(args.Int(1)), int32(args.Int(2))
+func (rst *MockClient) RecommendedSegments(fileSize int64) (int64, int32) {
+	args := rst.Called(fileSize)
+
+	return int64(args.Int(0)), int32(args.Int(1))
 }
 
 func (rst *MockClient) CreateUpload(path string) (uploadID string, err error) {
@@ -42,15 +49,15 @@ func (rst *MockClient) CreateUpload(path string) (uploadID string, err error) {
 
 func (rst *MockClient) AbortUpload(uploadID string, path string) error {
 	args := rst.Called()
-	return args.Error(1)
+	return args.Error(0)
 }
 
 func (rst *MockClient) FinishUpload(uploadID string, path string, parts []*flex.WorkResponse_Part) error {
 	args := rst.Called()
-	return args.Error(1)
+	return args.Error(0)
 }
 
 func (rst *MockClient) UploadPart(uploadID string, part int32, path string) (string, error) {
 	args := rst.Called()
-	return args.String(0), args.Error(2)
+	return args.String(0), args.Error(1)
 }

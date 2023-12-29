@@ -11,18 +11,20 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 )
 
-func getTestSyncJob(path string, operation beesync.SyncJob_Operation) SyncJob {
+func getTestSyncJob(path string) SyncJob {
 	return SyncJob{
 		baseJob: &baseJob{
 			&beeremote.Job{
+				Metadata: &flex.JobMetadata{},
 				Request: &beeremote.JobRequest{
 					Path:                path,
 					RemoteStorageTarget: "1",
 					Type: &beeremote.JobRequest_Sync{
 						Sync: &beesync.SyncJob{
-							Operation: operation,
+							Operation: beesync.SyncJob_UNKNOWN,
 						},
 					},
 				},
@@ -31,22 +33,22 @@ func getTestSyncJob(path string, operation beesync.SyncJob_Operation) SyncJob {
 	}
 }
 
-type test struct {
-	fileSize        int64
-	segmentCount    int
-	partsPerSegment int
-	operation       beesync.SyncJob_Operation
-	expectations    map[string]expectation
-}
-
-type expectation struct {
-	offsetStart int64
-	offsetStop  int64
-	partsStart  int32
-	partsStop   int32
-}
-
 func TestAllocateS3(t *testing.T) {
+
+	type expectation struct {
+		offsetStart int64
+		offsetStop  int64
+		partsStart  int32
+		partsStop   int32
+	}
+
+	type test struct {
+		fileSize        int64
+		segmentCount    int
+		partsPerSegment int
+		operation       beesync.SyncJob_Operation
+		expectations    map[string]expectation
+	}
 
 	// Test setup:
 	var err error
@@ -129,14 +131,22 @@ func TestAllocateS3(t *testing.T) {
 		if test.operation == beesync.SyncJob_UPLOAD {
 			rstClient.On("CreateUpload").Return("mpartid", nil)
 		}
-		rstClient.On("RecommendedSegments", test.fileSize).Return(rst.S3, test.segmentCount, test.partsPerSegment)
+		rstClient.On("GetType").Return(rst.S3)
+		rstClient.On("RecommendedSegments", test.fileSize).Return(test.segmentCount, test.partsPerSegment)
 
-		syncJob := getTestSyncJob(path, test.operation)
+		syncJob := getTestSyncJob(path)
+		syncJob.Request.GetSync().Operation = test.operation
 
 		js, retry, err := syncJob.Allocate(rstClient)
 		assert.NoError(t, err)
 		assert.False(t, retry)
 		assert.Len(t, js.WorkRequests, test.segmentCount)
+
+		if test.operation == beesync.SyncJob_UPLOAD {
+			assert.Equal(t, "mpartid", syncJob.Metadata.ExternalId)
+		} else {
+			assert.Equal(t, "", syncJob.Metadata.ExternalId)
+		}
 
 		for _, wr := range js.WorkRequests {
 
@@ -152,11 +162,97 @@ func TestAllocateS3(t *testing.T) {
 			assert.Equal(t, e.partsStart, sr.Segment.PartsStart)
 			assert.Equal(t, e.partsStop, sr.Segment.PartsStop)
 			if test.operation == beesync.SyncJob_UPLOAD {
-				assert.Equal(t, "mpartid", sr.Segment.GetS3().UploadId)
+				assert.Equal(t, "mpartid", sr.Metadata.ExternalId)
 			} else {
-				assert.Equal(t, "", sr.Segment.GetS3().UploadId)
+				assert.Equal(t, "", sr.Metadata.ExternalId)
 			}
 		}
 		filesystem.MountPoint.Remove(path)
+	}
+}
+
+func TestComplete(t *testing.T) {
+	type test struct {
+		operation      beesync.SyncJob_Operation
+		rstType        rst.Type
+		rstCall        string
+		rstReturn      any
+		externalID     string
+		abort          bool
+		expectedResult error
+	}
+
+	tests := []test{
+		{
+			operation:      beesync.SyncJob_UNKNOWN,
+			expectedResult: ErrUnknownJobOp,
+		},
+		{
+			rstType:        "invalid",
+			operation:      beesync.SyncJob_UPLOAD,
+			expectedResult: ErrIncompatibleNodeAndRST,
+		},
+		{
+			operation:      beesync.SyncJob_UPLOAD,
+			rstType:        rst.S3,
+			rstCall:        "FinishUpload",
+			rstReturn:      nil,
+			externalID:     "123",
+			abort:          false,
+			expectedResult: nil,
+		},
+		{
+			// Aborted jobs should call AbortUpload
+			operation:      beesync.SyncJob_UPLOAD,
+			rstType:        rst.S3,
+			rstCall:        "AbortUpload",
+			rstReturn:      nil,
+			externalID:     "123",
+			abort:          true,
+			expectedResult: nil,
+		},
+		{
+			// If there isn't an external ID then FinishUpload shouldn't be called.
+			operation:      beesync.SyncJob_UPLOAD,
+			rstType:        rst.S3,
+			rstCall:        "",
+			rstReturn:      nil,
+			externalID:     "",
+			abort:          false,
+			expectedResult: nil,
+		},
+		{
+			// Even if there is an external ID or the job is aborted we don't do anything to complete downloads.
+			operation:      beesync.SyncJob_DOWNLOAD,
+			rstType:        rst.S3,
+			rstCall:        "",
+			rstReturn:      nil,
+			externalID:     "123",
+			abort:          true,
+			expectedResult: nil,
+		},
+	}
+
+	for _, test := range tests {
+		rstClient := &rst.MockClient{}
+		if test.rstType != "" {
+			rstClient.On("GetType").Return(test.rstType)
+		}
+		if test.rstCall != "" {
+			rstClient.On(test.rstCall).Return(test.rstReturn)
+		}
+
+		syncJob := getTestSyncJob("/foo/bar")
+		syncJob.Request.GetSync().Operation = test.operation
+		syncJob.Metadata.ExternalId = test.externalID
+
+		err := syncJob.Complete(rstClient, make(map[string]worker.WorkResult), test.abort)
+		if test.expectedResult != nil {
+			assert.ErrorIs(t, err, test.expectedResult)
+		} else {
+			assert.NoError(t, err)
+		}
+
+		rstClient.AssertExpectations(t)
 	}
 }

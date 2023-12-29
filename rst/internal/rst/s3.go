@@ -48,13 +48,18 @@ func newS3(rstConfig *flex.RemoteStorageTarget) (Client, error) {
 
 	return rst, nil
 }
-func (rst *S3Client) RecommendedSegments(fileSize int64) (Type, int64, int32) {
+
+func (rst *S3Client) GetType() Type {
+	return S3
+}
+
+func (rst *S3Client) RecommendedSegments(fileSize int64) (int64, int32) {
 	if rst.config.Policies.FastStartMaxSize <= fileSize {
-		return S3, 1, 0
+		return 1, 0
 	}
 	// TODO: Arbitrary selection for now. We should be smarter and take int
 	// consideration file size and number of workers for this RST type.
-	return S3, 4, 0
+	return 4, 0
 }
 
 func (rst *S3Client) CreateUpload(path string) (uploadID string, err error) {
@@ -106,20 +111,16 @@ func (rst *S3Client) FinishUpload(uploadID string, path string, parts []*flex.Wo
 	return err
 }
 
+// TODO: This is a WIP used for initial testing. For example it doesn't take
+// into account what offset in the file should be uploaded. Ideally this just
+// takes a segment instead of part if we can make it a common type.
 func (rst *S3Client) UploadPart(uploadID string, part int32, path string) (string, error) {
-
-	// TODO: Probably upload part should just take a segment once it is a common type.
 
 	file, err := filesystem.MountPoint.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
-
-	// data, err := io.ReadAll(file)
-	// if err != nil {
-	// 	return "", err
-	// }
 
 	uploadPartReq := &s3.UploadPartInput{
 		Bucket:     &rst.config.GetS3().Bucket,
