@@ -101,7 +101,8 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 		data interface{}, // raw data
 	) (interface{}, error) {
 
-		if t.String() == "beegfs.RemoteStorageTarget" {
+		// If the name of the flex package ever changes this will need to be updated.
+		if t.String() == "flex.RemoteStorageTarget" {
 			switch f.Kind() {
 			case reflect.Map:
 				if tmpData, ok := data.(map[string]interface{}); ok {

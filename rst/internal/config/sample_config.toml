@@ -2,17 +2,20 @@
 id = "1"
 name = "rst1"
 policies = { localflock = true, remoteflock = true, keepdirstructure = true, keepbeegfsmetadata = true }
+s3.endpointUrl = "localhost:9000"
+s3.partitionId = "test_partition"
+s3.region = "test_region"
 s3.bucket = "s3bucket"
-s3.region = "s3region"
+s3.accessKey = "access_key"
+s3.secretKey = "secret_key"
 
-
-[[remote_storage_target]]
-id = "2"
-name = "rst2"
-policies = { localflock = true, remoteflock = false, keepdirstructure = false, keepbeegfsmetadata = true }
-azure.account = "azure_account"
-azure.S3.bucket = "azure_bucket"
-azure.S3.region = "azure_region"
+# [[remote_storage_target]]
+# id = "2"
+# name = "rst2"
+# policies = { localflock = true, remoteflock = false, keepdirstructure = false, keepbeegfsmetadata = true }
+# azure.account = "azure_account"
+# azure.S3.bucket = "azure_bucket"
+# azure.S3.region = "azure_region"
 
 [[worker]]
 id = "1"

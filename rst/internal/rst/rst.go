@@ -70,8 +70,11 @@ func New(config *flex.RemoteStorageTarget) (Client, error) {
 		// calls to Allocate()) then expectations must be setup (see mock.go).
 		return &MockClient{}, nil
 	case nil:
-		return nil, fmt.Errorf("no RST type not specified")
+		return nil, fmt.Errorf("unable to determine RST type from configuration (did you include configuration for a specific RST type? is that type supported yet?): %s", config)
 	default:
-		return nil, fmt.Errorf("specified RST type is unknown or not yet supported: %T", config.Type)
+		// This means we got a valid RST type that was unmarshalled from a TOML
+		// file base on SupportedRSTTypes or directly provided to us in a test,
+		// but New() doesn't know about it yet.
+		return nil, fmt.Errorf("specified RST type is unknown (most likely this is a bug): %T", config.Type)
 	}
 }
