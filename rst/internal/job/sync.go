@@ -90,7 +90,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 			if err != nil {
 				return workermgr.JobSubmission{}, true, err
 			}
-			j.Metadata.ExternalId = uploadID
+			j.ExternalId = uploadID
 		}
 
 		bytesPerSegment := fileSize / segCount
@@ -129,16 +129,20 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		wr := worker.SyncRequest{
 			SyncRequest: &beesync.SyncRequest{
 				RequestId: strconv.Itoa(i),
-				Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata),
-				Path:      j.GetPath(),
-				Job:       j.Request.GetSync(),
-				Segment:   &s.segment,
+				Metadata: &flex.JobMetadata{
+					Id:         j.GetID(),
+					Status:     proto.Clone(j.Status()).(*flex.RequestStatus),
+					ExternalId: j.ExternalId,
+				},
+				Path:    j.GetPath(),
+				Job:     j.Request.GetSync(),
+				Segment: &s.segment,
 			},
 		}
 		workRequests = append(workRequests, &wr)
 	}
 	return workermgr.JobSubmission{
-		JobID:        j.Metadata.GetId(),
+		JobID:        j.GetId(),
 		WorkRequests: workRequests,
 	}, false, nil
 }
@@ -156,9 +160,9 @@ func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResu
 		return fmt.Errorf("unable to complete job: %w", ErrIncompatibleNodeAndRST)
 	}
 
-	if op == beesync.SyncJob_UPLOAD && j.Metadata.ExternalId != "" {
+	if op == beesync.SyncJob_UPLOAD && j.ExternalId != "" {
 		if abort {
-			return client.AbortUpload(j.Metadata.ExternalId, j.GetPath())
+			return client.AbortUpload(j.ExternalId, j.GetPath())
 		}
 		// TODO: There could be lots of parts. Look for ways to optimize this.
 		// Like if we could determine the total number of parts and make an
@@ -172,7 +176,7 @@ func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResu
 		for _, r := range results {
 			partsToFinish = append(partsToFinish, r.WorkResponse.CompletedParts...)
 		}
-		return client.FinishUpload(j.Metadata.ExternalId, j.GetPath(), partsToFinish)
+		return client.FinishUpload(j.ExternalId, j.GetPath(), partsToFinish)
 	}
 	return nil // Nothing to do.
 }

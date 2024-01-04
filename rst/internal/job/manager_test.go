@@ -107,14 +107,14 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err := jobManager.GetJobs(getJobRequestsByPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse.Response[0].Job.Status.State)
 
 	assert.Len(t, getJobsResponse.Response[0].WorkResults, 4)
 	for _, wr := range getJobsResponse.Response[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.State)
 	}
 
-	scheduledJobID := getJobsResponse.Response[0].Job.Metadata.Id
+	scheduledJobID := getJobsResponse.Response[0].Job.Id
 
 	// If we try to submit another job for the same path with the same RST an error should be returned:
 	jr, err := jobManager.SubmitJobRequest(&testJobRequest)
@@ -130,7 +130,7 @@ func TestManage(t *testing.T) {
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByPath)
 	require.NoError(t, err)
 	assert.Len(t, getJobsResponse.Response, 1)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, getJobsResponse.Response[0].Job.Status.State)
 
 	// If we schedule a job for a different RST it should be scheduled:
 	testJobRequest2 := beeremote.JobRequest{
@@ -141,7 +141,7 @@ func TestManage(t *testing.T) {
 	}
 	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
 	assert.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, jr.Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, jr.Job.Status.State)
 
 	// If we cancel a job the state of the job and work requests should update:
 	updateJobRequest := beeremote.UpdateJobRequest{
@@ -162,7 +162,7 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Response[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.State)
@@ -274,8 +274,8 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, err)                     // Only internal errors should return an error.
 	assert.False(t, deleteJobByPathResponse.Ok) // Response should not be okay.
 
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, deleteJobByPathResponse.Responses[0].Job.Metadata.Status.State)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", deleteJobByPathResponse.Responses[0].Job.Metadata.Status.Message)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, deleteJobByPathResponse.Responses[0].Job.Status.State)
+	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", deleteJobByPathResponse.Responses[0].Job.Status.Message)
 
 	// Work results should all still be scheduled:
 	assert.Len(t, deleteJobByPathResponse.Responses[0].WorkResults, 4)
@@ -304,7 +304,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	deleteJobByPathResponse, err = jobManager.UpdateJob(&deleteJobByPathRequest)
 	assert.NoError(t, err)
 	assert.True(t, deleteJobByPathResponse.Ok)
-	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.Responses[0].Job.Metadata.Status.Message)
+	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.Responses[0].Job.Status.Message)
 
 	// Verify the job was fully deleted:
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
@@ -325,7 +325,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
 	deleteJobByIDRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: submitJobResponse2.Job.Metadata.Id,
+			JobID: submitJobResponse2.Job.Id,
 		},
 		NewState: flex.NewState_DELETE,
 	}
@@ -334,8 +334,8 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.False(t, updateJobByIDResponse.Ok) // However the response should not be okay.
 
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_SCHEDULED, updateJobByIDResponse.Responses[0].Job.Metadata.Status.State)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", updateJobByIDResponse.Responses[0].Job.Metadata.Status.Message)
+	assert.Equal(t, flex.RequestStatus_SCHEDULED, updateJobByIDResponse.Responses[0].Job.Status.State)
+	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", updateJobByIDResponse.Responses[0].Job.Status.Message)
 
 	assert.Len(t, updateJobByIDResponse.Responses[0].WorkResults, 2)
 	for _, wr := range updateJobByIDResponse.Responses[0].WorkResults {
@@ -345,7 +345,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	// Cancel the job:
 	cancelJobByIDRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: submitJobResponse2.Job.Metadata.Id,
+			JobID: submitJobResponse2.Job.Id,
 		},
 		NewState: flex.NewState_CANCEL,
 	}
@@ -363,12 +363,12 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	updateJobByIDResponse, err = jobManager.UpdateJob(&deleteJobByIDRequest)
 	assert.NoError(t, err)
 	assert.True(t, updateJobByIDResponse.Ok)
-	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.Responses[0].Job.Metadata.Status.Message)
+	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.Responses[0].Job.Status.Message)
 
 	// Verify the job was fully deleted:
 	getJobRequestsByID := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: submitJobResponse2.Job.Metadata.Id,
+			JobID: submitJobResponse2.Job.Id,
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -480,7 +480,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err := jobManager.GetJobs(getJobRequestsByPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
 
 	// JobMgr should have cancelled all outstanding requests:
 	assert.Len(t, getJobsResponse.Response[0].WorkResults, 4)
@@ -488,7 +488,7 @@ func TestManageErrorHandling(t *testing.T) {
 		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.State)
 	}
 
-	scheduledJobID := getJobsResponse.Response[0].Job.Metadata.Id
+	scheduledJobID := getJobsResponse.Response[0].Job.Id
 
 	// The following sequence of events is unlikely in real work scenarios, but
 	// verifies how JobMgr handles states. First try to cancel the already
@@ -516,7 +516,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_FAILED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_FAILED, getJobsResponse.Response[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Response[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_FAILED, wr.Status.State)
@@ -539,7 +539,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Response[0].WorkResults {
 		assert.Equal(t, flex.RequestStatus_CANCELLED, wr.Status.State)
@@ -552,8 +552,8 @@ func TestManageErrorHandling(t *testing.T) {
 
 	jobResponse, err := jobManager.SubmitJobRequest(&testJobRequest)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_FAILED, jobResponse.Job.Metadata.GetStatus().State)
-	jobID := jobResponse.GetJob().Metadata.Id
+	assert.Equal(t, flex.RequestStatus_FAILED, jobResponse.Job.GetStatus().State)
+	jobID := jobResponse.GetJob().Id
 
 	// We should not be able to delete failed jobs:
 	updateJobRequest = beeremote.UpdateJobRequest{
@@ -564,7 +564,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	updateJobResponse, err := jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_FAILED, updateJobResponse.Responses[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_FAILED, updateJobResponse.Responses[0].Job.Status.State)
 
 	// We should reject new jobs while there is a job in a failed state:
 	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
@@ -583,7 +583,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
-	assert.Equal(t, flex.RequestStatus_CANCELLED, updateJobResponse.Responses[0].Job.Metadata.Status.State)
+	assert.Equal(t, flex.RequestStatus_CANCELLED, updateJobResponse.Responses[0].Job.Status.State)
 }
 
 func TestAllocationFailure(t *testing.T) {
@@ -712,7 +712,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 		// The first response should not finish the job:
 		workResponse1 := &flex.WorkResponse{
-			JobId:     js.Job.Metadata.GetId(),
+			JobId:     js.Job.GetId(),
 			RequestId: "0",
 			Status: &flex.RequestStatus{
 				State:   expectedStatus,
@@ -727,7 +727,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 		getJobsRequest := &beeremote.GetJobsRequest{
 			Query: &beeremote.GetJobsRequest_JobID{
-				JobID: js.Job.Metadata.GetId(),
+				JobID: js.Job.GetId(),
 			},
 			IncludeWorkRequests: false,
 			IncludeWorkResults:  true,
@@ -743,11 +743,11 @@ func TestUpdateJobResults(t *testing.T) {
 				require.Equal(t, flex.RequestStatus_SCHEDULED, wr.Status.GetState())
 			}
 		}
-		require.Equal(t, flex.RequestStatus_SCHEDULED, resp.Response[0].Job.Metadata.Status.GetState())
+		require.Equal(t, flex.RequestStatus_SCHEDULED, resp.Response[0].Job.Status.GetState())
 
 		// The second response should finish the job:
 		workResponse2 := &flex.WorkResponse{
-			JobId:     js.Job.Metadata.GetId(),
+			JobId:     js.Job.GetId(),
 			RequestId: "1",
 			Status: &flex.RequestStatus{
 				State:   expectedStatus,
@@ -763,7 +763,7 @@ func TestUpdateJobResults(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[0].Status.GetState())
 		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[1].Status.GetState())
-		require.Equal(t, expectedStatus, resp.Response[0].Job.Metadata.Status.GetState())
+		require.Equal(t, expectedStatus, resp.Response[0].Job.Status.GetState())
 	}
 
 	// Test if all WRs are in a terminal state but there is a mismatch the job
@@ -772,7 +772,7 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, err)
 
 	workResponse1 := &flex.WorkResponse{
-		JobId:     js.Job.Metadata.GetId(),
+		JobId:     js.Job.GetId(),
 		RequestId: "0",
 		Status: &flex.RequestStatus{
 			State:   flex.RequestStatus_COMPLETED,
@@ -783,7 +783,7 @@ func TestUpdateJobResults(t *testing.T) {
 	}
 
 	workResponse2 := &flex.WorkResponse{
-		JobId:     js.Job.Metadata.GetId(),
+		JobId:     js.Job.GetId(),
 		RequestId: "1",
 		Status: &flex.RequestStatus{
 			State:   flex.RequestStatus_CANCELLED,
@@ -800,7 +800,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 	getJobsRequest := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: js.Job.Metadata.GetId(),
+			JobID: js.Job.GetId(),
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -808,6 +808,6 @@ func TestUpdateJobResults(t *testing.T) {
 
 	resp, err := jobManager.GetJobs(getJobsRequest)
 	require.NoError(t, err)
-	require.Equal(t, flex.RequestStatus_FAILED, resp.Response[0].Job.Metadata.Status.GetState())
+	require.Equal(t, flex.RequestStatus_FAILED, resp.Response[0].Job.Status.GetState())
 
 }

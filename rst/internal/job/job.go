@@ -88,11 +88,11 @@ func (j *baseJob) GetPath() string {
 
 // GetID returns the job ID.
 func (j *baseJob) GetID() string {
-	return j.Metadata.GetId()
+	return j.GetId()
 }
 
 func (j *baseJob) Status() *flex.RequestStatus {
-	return j.Metadata.GetStatus()
+	return j.GetStatus()
 }
 
 // InTerminalState() indicates the job is no longer active, cannot be restarted,
@@ -111,18 +111,14 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 		return nil, err
 	}
 
-	jobMetadata := &flex.JobMetadata{
-		Id: fmt.Sprint(jobID),
-		Status: &flex.RequestStatus{
-			State:   flex.RequestStatus_UNASSIGNED,
-			Message: "created",
-		},
-	}
-
 	baseJob := &baseJob{
 		Job: &beeremote.Job{
-			Request:  jobRequest,
-			Metadata: jobMetadata,
+			Id:      fmt.Sprint(jobID),
+			Request: jobRequest,
+			Status: &flex.RequestStatus{
+				State:   flex.RequestStatus_UNASSIGNED,
+				Message: "created",
+			},
 		},
 	}
 

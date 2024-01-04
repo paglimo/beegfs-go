@@ -12,10 +12,8 @@ func TestInTerminalState(t *testing.T) {
 	baseJob := &baseJob{
 		Job: &beeremote.Job{
 			Request: &beeremote.JobRequest{},
-			Metadata: &flex.JobMetadata{
-				Status: &flex.RequestStatus{
-					State: flex.RequestStatus_COMPLETED,
-				},
+			Status: &flex.RequestStatus{
+				State: flex.RequestStatus_COMPLETED,
 			},
 		},
 	}

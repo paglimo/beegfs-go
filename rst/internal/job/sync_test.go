@@ -11,14 +11,12 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/beesync"
-	"github.com/thinkparq/protobuf/go/flex"
 )
 
 func getTestSyncJob(path string) SyncJob {
 	return SyncJob{
 		baseJob: &baseJob{
 			&beeremote.Job{
-				Metadata: &flex.JobMetadata{},
 				Request: &beeremote.JobRequest{
 					Path:                path,
 					RemoteStorageTarget: "1",
@@ -143,9 +141,9 @@ func TestAllocateS3(t *testing.T) {
 		assert.Len(t, js.WorkRequests, test.segmentCount)
 
 		if test.operation == beesync.SyncJob_UPLOAD {
-			assert.Equal(t, "mpartid", syncJob.Metadata.ExternalId)
+			assert.Equal(t, "mpartid", syncJob.ExternalId)
 		} else {
-			assert.Equal(t, "", syncJob.Metadata.ExternalId)
+			assert.Equal(t, "", syncJob.ExternalId)
 		}
 
 		for _, wr := range js.WorkRequests {
@@ -244,7 +242,7 @@ func TestComplete(t *testing.T) {
 
 		syncJob := getTestSyncJob("/foo/bar")
 		syncJob.Request.GetSync().Operation = test.operation
-		syncJob.Metadata.ExternalId = test.externalID
+		syncJob.ExternalId = test.externalID
 
 		err := syncJob.Complete(rstClient, make(map[string]worker.WorkResult), test.abort)
 		if test.expectedResult != nil {

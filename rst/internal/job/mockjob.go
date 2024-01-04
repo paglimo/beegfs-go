@@ -47,15 +47,20 @@ func (j *MockJob) Allocate(rst rst.Client) (workermgr.JobSubmission, bool, error
 	for i, s := range j.TestSegments {
 		wr := worker.MockRequest{
 			RequestID: strconv.Itoa(i),
-			Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata),
-			Path:      j.GetPath(),
-			Segment:   s,
+			//Metadata:  proto.Clone(j.GetMetadata()).(*flex.JobMetadata),
+			Metadata: &flex.JobMetadata{
+				Id:         j.GetID(),
+				Status:     proto.Clone(j.Status()).(*flex.RequestStatus),
+				ExternalId: j.ExternalId,
+			},
+			Path:    j.GetPath(),
+			Segment: s,
 		}
 		workRequests = append(workRequests, &wr)
 	}
 
 	return workermgr.JobSubmission{
-		JobID:        j.Metadata.GetId(),
+		JobID:        j.GetId(),
 		WorkRequests: workRequests,
 	}, false, nil
 }
