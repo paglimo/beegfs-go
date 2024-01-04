@@ -125,8 +125,8 @@ func (wr *SyncRequest) GetRequestID() string {
 	return wr.GetRequestId()
 }
 
-func (r *SyncRequest) GetStatus() flex.RequestStatus {
-	return *r.Metadata.GetStatus()
+func (r *SyncRequest) Status() *flex.RequestStatus {
+	return r.Metadata.GetStatus()
 }
 
 func (r *SyncRequest) SetStatus(state flex.RequestStatus_State, message string) {

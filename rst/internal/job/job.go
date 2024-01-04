@@ -37,15 +37,13 @@ type Job interface {
 	// RST and should be rejected. An empty string should be returned
 	// if RST has no meaning for a particular job type.
 	GetRSTID() string
-	// GetStatus returns a pointer to the status of the overall job. Because it
-	// returns a pointer the status and/or message can be updated directly
-	// without using SetStatus(). This is helpful if you want to modify one but
-	// not the other field (commonly message can change but status should not).
-	GetStatus() *flex.RequestStatus
-	// SetStatus sets the overall status for the job. This should encompass the
-	// results for individual work requests. For example if some WRs are
-	// finished and others are still running the state would be RUNNING.
-	SetStatus(*flex.RequestStatus)
+	// Status returns a pointer to the status of the overall job. Because it
+	// returns a pointer the status and/or message can be updated directly. This
+	// allows you to modify one but not the other field (commonly message can
+	// change but status should not). The state should encompass the results for
+	// individual work requests. For example if some WRs are finished and others
+	// are still running the state would be RUNNING.
+	Status() *flex.RequestStatus
 	// InTerminalState returns true if the job has reached a state it would not
 	// continue without user interaction. Notably this indicates there are no active
 	// work requests and the job is safe to be deleted without leaving orphaned
@@ -93,19 +91,15 @@ func (j *baseJob) GetID() string {
 	return j.Metadata.GetId()
 }
 
-func (j *baseJob) GetStatus() *flex.RequestStatus {
+func (j *baseJob) Status() *flex.RequestStatus {
 	return j.Metadata.GetStatus()
-}
-
-func (j *baseJob) SetStatus(status *flex.RequestStatus) {
-	j.Metadata.Status = status
 }
 
 // InTerminalState() indicates the job is no longer active, cannot be restarted,
 // and will not conflict with a new job. This should mirror the
 // InTerminalState() method for WorkResults.
 func (j *baseJob) InTerminalState() bool {
-	status := j.GetStatus()
+	status := j.Status()
 	return status.State == flex.RequestStatus_COMPLETED || status.State == flex.RequestStatus_CANCELLED
 }
 

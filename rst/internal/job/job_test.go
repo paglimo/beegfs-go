@@ -22,13 +22,9 @@ func TestInTerminalState(t *testing.T) {
 	job := &MockJob{baseJob: baseJob}
 	assert.True(t, job.InTerminalState())
 
-	job.SetStatus(&flex.RequestStatus{
-		State: flex.RequestStatus_CANCELLED,
-	})
+	job.Status().State = flex.RequestStatus_CANCELLED
 	assert.True(t, job.InTerminalState())
 
-	job.SetStatus(&flex.RequestStatus{
-		State: flex.RequestStatus_RUNNING,
-	})
+	job.Status().State = flex.RequestStatus_RUNNING
 	assert.False(t, job.InTerminalState())
 }

@@ -10,10 +10,12 @@ type WorkRequest interface {
 	// GetRequestID() returns the request ID. Note request IDs are only
 	// guaranteed to be unique for a particular job.
 	GetRequestID() string
-	// GetStatus() returns the status of the request.
-	GetStatus() flex.RequestStatus
-	// SetStatus() sets the request status and message.
-	SetStatus(flex.RequestStatus_State, string)
+	// Used to access the status of the request. Because it returns a pointer
+	// the status and/or message can be updated directly without overwriting the
+	// entire status. This is helpful if you want to modify one but not the
+	// other field (commonly message can change but status should not, or we
+	// want to keep a message history).
+	Status() *flex.RequestStatus
 	// GetNodeType() returns the type of node this request should run on.
 	GetNodeType() Type
 }

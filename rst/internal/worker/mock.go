@@ -116,8 +116,8 @@ func (wr *MockRequest) GetRequestID() string {
 	return wr.RequestID
 }
 
-func (r *MockRequest) GetStatus() flex.RequestStatus {
-	return *r.Metadata.GetStatus()
+func (r *MockRequest) Status() *flex.RequestStatus {
+	return r.Metadata.GetStatus()
 }
 
 func (r *MockRequest) SetStatus(status flex.RequestStatus_State, message string) {

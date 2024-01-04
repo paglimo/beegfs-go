@@ -142,7 +142,9 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		pool, ok := m.nodePools[workRequest.GetNodeType()]
 		if !ok {
 			err := fmt.Errorf("%s: %w", workRequest.GetNodeType(), ErrNoPoolsForNodeType)
-			workRequest.SetStatus(flex.RequestStatus_FAILED, err.Error())
+			workRequest.Status().State = flex.RequestStatus_FAILED
+			workRequest.Status().Message = err.Error()
+
 			allScheduled = false
 		} else {
 			var workResponse *flex.WorkResponse

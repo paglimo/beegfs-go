@@ -579,11 +579,8 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	} else if err != nil {
 		// If an temporary error occurred that can be retried still go forward
 		// with creating the job and just leave the results empty.
-		newStatus := &flex.RequestStatus{
-			State:   flex.RequestStatus_ERROR,
-			Message: err.Error(),
-		}
-		job.SetStatus(newStatus)
+		job.Status().State = flex.RequestStatus_ERROR
+		job.Status().Message = err.Error()
 		pathEntry.Value[job.GetID()] = job
 		jobResultEntry.Metadata["path"] = job.GetPath()
 		workResults := make(map[string]worker.WorkResult)
@@ -615,7 +612,8 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	jobResultEntry.Metadata["path"] = job.GetPath()
 	jobResultEntry.Value = workResults
 
-	job.SetStatus(newStatus)
+	job.Status().State = newStatus.State
+	job.Status().Message = newStatus.Message
 	pathEntry.Value[job.GetID()] = job
 
 	return &beeremote.JobResponse{
@@ -697,9 +695,8 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 		for _, job := range pathEntry.Value {
 			if jobUpdate.NewState == flex.NewState_DELETE {
-				status := job.GetStatus()
 				if !job.InTerminalState() {
-					status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					job.Status().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
 					response.Ok = false
 
 					// Still get the results as it would be confusing to return empty results otherwise.
@@ -726,7 +723,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 				}
 
 				// By default only delete jobs in a terminal state other than completed:
-				if status.State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+				if job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
 					continue
 				}
 
@@ -740,7 +737,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 					continue
 				}
 				jobsSafeToDelete = append(jobsSafeToDelete, job.GetID())
-				status.Message = "job scheduled for deletion"
+				job.Status().Message = "job scheduled for deletion"
 				response.Responses = append(response.Responses, &beeremote.JobResponse{
 					Job:          job.Get(),
 					WorkRequests: job.GetWorkRequests(),
@@ -862,18 +859,17 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		}
 
 		if jobUpdate.NewState == flex.NewState_DELETE {
-			status := job.GetStatus()
-			if !job.InTerminalState() || (status.State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs) {
+			if !job.InTerminalState() || (job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs) {
 
 				var responseMessage string
 
-				if status.State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+				if job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
 					// Note we don't set a message here to be consistent with how this is handled
 					// when updating jobs by path.
 					//status.Message = "refusing to delete completed job (deleted completed jobs flag is not set)"
 					responseMessage = "refusing to delete completed job (deleted completed jobs flag is not set)"
 				} else {
-					status.Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					job.Status().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
 					responseMessage = "unable to delete job that has not reached a terminal state (cancel it first)"
 				}
 
@@ -903,7 +899,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 			// We need to build the response before releasing anything.
 			// This is just discarded if anything goes wrong.
-			status.Message = "job scheduled for deletion"
+			job.Status().Message = "job scheduled for deletion"
 			response := &beeremote.UpdateJobResponse{
 				Ok:      true,
 				Message: "success",
@@ -990,16 +986,13 @@ func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worke
 		var updatedResults map[string]worker.WorkResult
 		updatedResults, ok = m.workerManager.UpdateJob(ju)
 
-		newStatus := &flex.RequestStatus{}
 		if !ok {
-			newStatus.State = flex.RequestStatus_FAILED
-			newStatus.Message = "error cancelling job (review work results for details)"
+			job.Status().State = flex.RequestStatus_FAILED
+			job.Status().Message = "error cancelling job (review work results for details)"
 		} else {
-			newStatus.State = flex.RequestStatus_CANCELLED
-			newStatus.Message = "job cancelled"
+			job.Status().State = flex.RequestStatus_CANCELLED
+			job.Status().Message = "job cancelled"
 		}
-
-		job.SetStatus(newStatus)
 		resultsEntry.Value = updatedResults
 		m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
 	}
@@ -1067,8 +1060,8 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	// cancelled the job. Perhaps we treat the overall job state as cancelled in
 	// this scenario?
 	if !allSameState {
-		job.GetStatus().State = flex.RequestStatus_FAILED
-		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
+		job.Status().State = flex.RequestStatus_FAILED
+		job.Status().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
 		return nil
 	}
 
@@ -1080,31 +1073,23 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	switch e.Status().State {
 	case flex.RequestStatus_CANCELLED:
 		if err := job.Complete(rst, resultsEntry.Value, true); err != nil {
-			job.SetStatus(&flex.RequestStatus{
-				State:   flex.RequestStatus_FAILED,
-				Message: "error cancelling job " + err.Error(),
-			})
+			job.Status().State = flex.RequestStatus_FAILED
+			job.Status().Message = "error cancelling job " + err.Error()
 		} else {
-			job.SetStatus(&flex.RequestStatus{
-				State:   flex.RequestStatus_CANCELLED,
-				Message: "successfully cancelled job",
-			})
+			job.Status().State = flex.RequestStatus_CANCELLED
+			job.Status().Message = "successfully cancelled job"
 		}
 	case flex.RequestStatus_COMPLETED:
 		if err := job.Complete(rst, resultsEntry.Value, false); err != nil {
-			job.SetStatus(&flex.RequestStatus{
-				State:   flex.RequestStatus_FAILED,
-				Message: "error completing job " + err.Error(),
-			})
+			job.Status().State = flex.RequestStatus_FAILED
+			job.Status().Message = "error completing job " + err.Error()
 		} else {
-			job.SetStatus(&flex.RequestStatus{
-				State:   flex.RequestStatus_COMPLETED,
-				Message: "successfully completed job",
-			})
+			job.Status().State = flex.RequestStatus_COMPLETED
+			job.Status().Message = "successfully completed job"
 		}
 	default:
-		job.GetStatus().State = e.Status().State
-		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
+		job.Status().State = e.Status().State
+		job.Status().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
 		// We return an error here because this is an internal problem that
 		// shouldn't happen and hopefully a test will catch it. Most likely some
 		// new terminal states were added and this function needs to be updated.
