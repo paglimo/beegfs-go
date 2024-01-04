@@ -118,25 +118,15 @@ type SyncRequest struct {
 var _ WorkRequest = &SyncRequest{}
 
 func (wr *SyncRequest) GetJobID() string {
-	return wr.Metadata.GetId()
+	return wr.Base.JobId
 }
 
 func (wr *SyncRequest) GetRequestID() string {
-	return wr.GetRequestId()
+	return wr.Base.RequestId
 }
 
 func (r *SyncRequest) Status() *flex.RequestStatus {
-	return r.Metadata.GetStatus()
-}
-
-func (r *SyncRequest) SetStatus(state flex.RequestStatus_State, message string) {
-
-	newStatus := &flex.RequestStatus{
-		State:   state,
-		Message: message,
-	}
-
-	r.Metadata.Status = newStatus
+	return r.Base.GetStatus()
 }
 
 func (r *SyncRequest) GetNodeType() Type {

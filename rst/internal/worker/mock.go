@@ -100,34 +100,22 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 }
 
 type MockRequest struct {
-	RequestID string
-	Path      string
-	Segment   string
-	Metadata  *flex.JobMetadata
+	Base    *flex.WorkRequest
+	Segment string
 }
 
 var _ WorkRequest = &MockRequest{}
 
 func (wr *MockRequest) GetJobID() string {
-	return wr.Metadata.GetId()
+	return wr.Base.JobId
 }
 
 func (wr *MockRequest) GetRequestID() string {
-	return wr.RequestID
+	return wr.Base.RequestId
 }
 
 func (r *MockRequest) Status() *flex.RequestStatus {
-	return r.Metadata.GetStatus()
-}
-
-func (r *MockRequest) SetStatus(status flex.RequestStatus_State, message string) {
-
-	newStatus := &flex.RequestStatus{
-		State:   status,
-		Message: message,
-	}
-
-	r.Metadata.Status = newStatus
+	return r.Base.GetStatus()
 }
 
 func (r *MockRequest) GetNodeType() Type {

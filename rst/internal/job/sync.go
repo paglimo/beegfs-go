@@ -128,13 +128,13 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 	for i, s := range j.Segments {
 		wr := worker.SyncRequest{
 			SyncRequest: &beesync.SyncRequest{
-				RequestId: strconv.Itoa(i),
-				Metadata: &flex.JobMetadata{
-					Id:         j.GetID(),
+				Base: &flex.WorkRequest{
+					JobId:      j.GetID(),
+					RequestId:  strconv.Itoa(i),
 					Status:     proto.Clone(j.Status()).(*flex.RequestStatus),
 					ExternalId: j.ExternalId,
+					Path:       j.GetPath(),
 				},
-				Path:    j.GetPath(),
 				Job:     j.Request.GetSync(),
 				Segment: &s.segment,
 			},

@@ -153,16 +153,16 @@ func TestAllocateS3(t *testing.T) {
 				panic("unexpected work request in test")
 			}
 
-			e, ok := test.expectations[sr.RequestId]
+			e, ok := test.expectations[sr.Base.RequestId]
 			require.True(t, ok)
 			assert.Equal(t, e.offsetStart, sr.Segment.OffsetStart)
 			assert.Equal(t, e.offsetStop, sr.Segment.OffsetStop)
 			assert.Equal(t, e.partsStart, sr.Segment.PartsStart)
 			assert.Equal(t, e.partsStop, sr.Segment.PartsStop)
 			if test.operation == beesync.SyncJob_UPLOAD {
-				assert.Equal(t, "mpartid", sr.Metadata.ExternalId)
+				assert.Equal(t, "mpartid", sr.Base.ExternalId)
 			} else {
-				assert.Equal(t, "", sr.Metadata.ExternalId)
+				assert.Equal(t, "", sr.Base.ExternalId)
 			}
 		}
 		filesystem.MountPoint.Remove(path)
