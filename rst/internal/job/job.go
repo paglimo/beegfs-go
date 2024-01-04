@@ -106,7 +106,7 @@ func (j *baseJob) SetStatus(status *flex.RequestStatus) {
 // InTerminalState() method for WorkResults.
 func (j *baseJob) InTerminalState() bool {
 	status := j.GetStatus()
-	return status.Status == flex.RequestStatus_COMPLETED || status.Status == flex.RequestStatus_CANCELLED
+	return status.State == flex.RequestStatus_COMPLETED || status.State == flex.RequestStatus_CANCELLED
 }
 
 // New is the standard way to generate a Job from a JobRequest.
@@ -120,7 +120,7 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 	jobMetadata := &flex.JobMetadata{
 		Id: fmt.Sprint(jobID),
 		Status: &flex.RequestStatus{
-			Status:  flex.RequestStatus_UNASSIGNED,
+			State:   flex.RequestStatus_UNASSIGNED,
 			Message: "created",
 		},
 	}

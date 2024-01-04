@@ -24,7 +24,7 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 			JobId:     "1",
 			RequestId: "2",
 			Status: &flex.RequestStatus{
-				Status:  flex.RequestStatus_COMPLETED,
+				State:   flex.RequestStatus_COMPLETED,
 				Message: "test message",
 			},
 			CompletedParts: []*flex.WorkResponse_Part{

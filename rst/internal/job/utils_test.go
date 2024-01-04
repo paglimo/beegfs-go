@@ -19,7 +19,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			WorkResponse: &flex.WorkResponse{
 				RequestId: "0",
 				Status: &flex.RequestStatus{
-					Status:  5,
+					State:   5,
 					Message: "message0",
 				},
 			},
@@ -30,7 +30,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			WorkResponse: &flex.WorkResponse{
 				RequestId: "1",
 				Status: &flex.RequestStatus{
-					Status:  6,
+					State:   6,
 					Message: "message1",
 				},
 			},
@@ -41,9 +41,9 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 
 		reqID, err := strconv.Atoi(r.RequestId)
 		require.NoError(t, err)
-		expectedStatus := flex.RequestStatus_Status(reqID + 5)
+		expectedStatus := flex.RequestStatus_State(reqID + 5)
 
-		assert.Equal(t, expectedStatus, r.Status.Status)
+		assert.Equal(t, expectedStatus, r.Status.State)
 		assert.Equal(t, "message"+r.RequestId, r.Status.Message)
 		assert.Equal(t, "node"+r.RequestId, r.AssignedNode)
 		assert.Equal(t, r.AssignedPool, string(worker.BeeSync))

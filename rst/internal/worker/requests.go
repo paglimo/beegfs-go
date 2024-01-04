@@ -13,7 +13,7 @@ type WorkRequest interface {
 	// GetStatus() returns the status of the request.
 	GetStatus() flex.RequestStatus
 	// SetStatus() sets the request status and message.
-	SetStatus(flex.RequestStatus_Status, string)
+	SetStatus(flex.RequestStatus_State, string)
 	// GetNodeType() returns the type of node this request should run on.
 	GetNodeType() Type
 }
@@ -57,5 +57,5 @@ func (wr *WorkResult) Status() *flex.RequestStatus {
 // restarted, and will not conflict with a new work request. This should mirror
 // the InTerminalState() method for jobs.
 func (wr *WorkResult) InTerminalState() bool {
-	return wr.Status().Status == flex.RequestStatus_COMPLETED || wr.Status().Status == flex.RequestStatus_CANCELLED
+	return wr.Status().State == flex.RequestStatus_COMPLETED || wr.Status().State == flex.RequestStatus_CANCELLED
 }

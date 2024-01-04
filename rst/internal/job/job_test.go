@@ -14,7 +14,7 @@ func TestInTerminalState(t *testing.T) {
 			Request: &beeremote.JobRequest{},
 			Metadata: &flex.JobMetadata{
 				Status: &flex.RequestStatus{
-					Status: flex.RequestStatus_COMPLETED,
+					State: flex.RequestStatus_COMPLETED,
 				},
 			},
 		},
@@ -23,12 +23,12 @@ func TestInTerminalState(t *testing.T) {
 	assert.True(t, job.InTerminalState())
 
 	job.SetStatus(&flex.RequestStatus{
-		Status: flex.RequestStatus_CANCELLED,
+		State: flex.RequestStatus_CANCELLED,
 	})
 	assert.True(t, job.InTerminalState())
 
 	job.SetStatus(&flex.RequestStatus{
-		Status: flex.RequestStatus_RUNNING,
+		State: flex.RequestStatus_RUNNING,
 	})
 	assert.False(t, job.InTerminalState())
 }

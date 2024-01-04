@@ -171,12 +171,12 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 					JobId:     workRequest.GetJobID(),
 					RequestId: workRequest.GetRequestID(),
 					Status: &flex.RequestStatus{
-						Status:  flex.RequestStatus_UNASSIGNED,
+						State:   flex.RequestStatus_UNASSIGNED,
 						Message: err.Error(),
 					},
 				}
 			} else {
-				if workResponse.Status.Status != flex.RequestStatus_SCHEDULED {
+				if workResponse.Status.State != flex.RequestStatus_SCHEDULED {
 					allScheduled = false
 				}
 				workResult.WorkResponse = workResponse
@@ -191,7 +191,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 	var status flex.RequestStatus
 
 	if !allScheduled {
-		status.Status = flex.RequestStatus_CANCELLED
+		status.State = flex.RequestStatus_CANCELLED
 		status.Message = "cancelled because one or more work requests could not be scheduled"
 
 		jobUpdate := JobUpdate{
@@ -202,11 +202,11 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		var allCancelled bool
 		workResults, allCancelled = m.UpdateJob(jobUpdate)
 		if !allCancelled {
-			status.Status = flex.RequestStatus_FAILED
+			status.State = flex.RequestStatus_FAILED
 			status.Message = "failed because one or more work requests could not be cancelled after initial scheduling failure"
 		}
 	} else {
-		status.Status = flex.RequestStatus_SCHEDULED
+		status.State = flex.RequestStatus_SCHEDULED
 		status.Message = "finished scheduling work requests"
 	}
 	return workResults, &status
@@ -236,7 +236,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		// If the WR was never assigned we can just cancel it.
 		if workResult.AssignedPool == "" || workResult.AssignedNode == "" {
-			workResult.Status().Status = flex.RequestStatus_CANCELLED
+			workResult.Status().State = flex.RequestStatus_CANCELLED
 			workResult.Status().Message = workResult.Status().Message + "; cancelling because the request is not assigned to a pool or node"
 			newResults[reqID] = workResult
 			continue
@@ -244,7 +244,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status().Status = flex.RequestStatus_UNKNOWN
+			workResult.Status().State = flex.RequestStatus_UNKNOWN
 			workResult.Status().Message = workResult.Status().Message + "; " + ErrNoPoolsForNodeType.Error()
 			newResults[reqID] = workResult
 			allUpdated = false
@@ -253,17 +253,17 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
-			workResult.Status().Status = flex.RequestStatus_UNKNOWN
+			workResult.Status().State = flex.RequestStatus_UNKNOWN
 			workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
 			newResults[reqID] = workResult
 			allUpdated = false
 			continue
 		}
 
-		workResult.Status().Status = resp.Status.Status
+		workResult.Status().State = resp.Status.State
 		workResult.Status().Message = workResult.Status().Message + "; " + resp.Status.GetMessage()
 
-		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status().Status != flex.RequestStatus_CANCELLED {
+		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status().State != flex.RequestStatus_CANCELLED {
 			allUpdated = false
 		}
 

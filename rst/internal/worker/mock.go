@@ -56,7 +56,7 @@ func (n *MockNode) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error)
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
 	status := &flex.RequestStatus{
-		Status:  args.Get(0).(*flex.RequestStatus).GetStatus(),
+		State:   args.Get(0).(*flex.RequestStatus).GetState(),
 		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
 	}
 
@@ -89,7 +89,7 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
 	status := &flex.RequestStatus{
-		Status:  args.Get(0).(*flex.RequestStatus).GetStatus(),
+		State:   args.Get(0).(*flex.RequestStatus).GetState(),
 		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
 	}
 	return &flex.WorkResponse{
@@ -120,10 +120,10 @@ func (r *MockRequest) GetStatus() flex.RequestStatus {
 	return *r.Metadata.GetStatus()
 }
 
-func (r *MockRequest) SetStatus(status flex.RequestStatus_Status, message string) {
+func (r *MockRequest) SetStatus(status flex.RequestStatus_State, message string) {
 
 	newStatus := &flex.RequestStatus{
-		Status:  status,
+		State:   status,
 		Message: message,
 	}
 

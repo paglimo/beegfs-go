@@ -129,10 +129,10 @@ func (r *SyncRequest) GetStatus() flex.RequestStatus {
 	return *r.Metadata.GetStatus()
 }
 
-func (r *SyncRequest) SetStatus(status flex.RequestStatus_Status, message string) {
+func (r *SyncRequest) SetStatus(state flex.RequestStatus_State, message string) {
 
 	newStatus := &flex.RequestStatus{
-		Status:  status,
+		State:   state,
 		Message: message,
 	}
 
