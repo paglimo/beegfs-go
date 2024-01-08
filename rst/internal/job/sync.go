@@ -74,7 +74,13 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 			j.ExternalId = uploadID
 		}
 
-		bytesPerSegment := fileSize / segCount
+		// If the file is empty then set bytesPerSegment to 1 so we don't have
+		// to do anything special to the logic below. If we don't do this then
+		// OffsetStop would be -1 which is confusing and may break elsewhere.
+		var bytesPerSegment int64 = 1
+		if fileSize != 0 {
+			bytesPerSegment = fileSize / segCount
+		}
 		extraBytesForLastSegment := fileSize % segCount
 		j.Segments = make([]*Segment, 0)
 

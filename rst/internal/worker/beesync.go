@@ -3,7 +3,6 @@ package worker
 import (
 	"fmt"
 
-	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc"
 )
@@ -11,7 +10,7 @@ import (
 type BeeSyncNode struct {
 	*baseNode
 	conn   *grpc.ClientConn
-	client beesync.BeeSyncClient
+	client flex.WorkerNodeClient
 }
 
 var _ Worker = &BeeSyncNode{}
@@ -31,7 +30,7 @@ func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *f
 		return false, err
 	}
 
-	n.client = beesync.NewBeeSyncClient(n.conn)
+	n.client = flex.NewWorkerNodeClient(n.conn)
 
 	configureResp, err := n.client.UpdateConfig(n.rpcCtx, config)
 	if err != nil {

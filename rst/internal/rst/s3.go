@@ -54,12 +54,12 @@ func (rst *S3Client) GetType() Type {
 }
 
 func (rst *S3Client) RecommendedSegments(fileSize int64) (int64, int32) {
-	if rst.config.Policies.FastStartMaxSize <= fileSize {
-		return 1, 0
+	if fileSize <= rst.config.Policies.FastStartMaxSize || rst.config.Policies.FastStartMaxSize == 0 {
+		return 1, 1
 	}
-	// TODO: Arbitrary selection for now. We should be smarter and take int
+	// TODO: Arbitrary selection for now. We should be smarter and take into
 	// consideration file size and number of workers for this RST type.
-	return 4, 0
+	return 4, 1
 }
 
 func (rst *S3Client) CreateUpload(path string) (uploadID string, err error) {

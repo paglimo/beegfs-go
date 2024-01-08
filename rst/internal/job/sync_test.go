@@ -40,9 +40,11 @@ func TestAllocateS3(t *testing.T) {
 	}
 
 	type test struct {
+		name            string
 		fileSize        int64
 		segmentCount    int
 		partsPerSegment int
+		multipart       bool
 		operation       flex.SyncJob_Operation
 		expectations    map[string]expectation
 	}
@@ -53,10 +55,26 @@ func TestAllocateS3(t *testing.T) {
 	require.NoError(t, err)
 	tests := []test{
 		{
-			// Test when the file size lets it be split into even segments:
+			name:            "test when the file is empty",
+			fileSize:        0,
+			segmentCount:    1,
+			partsPerSegment: 1,
+			multipart:       false, // Set true to expect a multipart upload to be generated.
+			operation:       flex.SyncJob_UPLOAD,
+			expectations: map[string]expectation{
+				"0": {
+					offsetStart: 0,
+					offsetStop:  0,
+					partsStart:  1,
+					partsStop:   1,
+				},
+			},
+		}, {
+			name:            "test when the file size lets it be split into even segments",
 			fileSize:        int64(1 << 20), // 20MB
 			segmentCount:    2,
 			partsPerSegment: 2,
+			multipart:       true,
 			operation:       flex.SyncJob_UPLOAD,
 			expectations: map[string]expectation{
 				"0": {
@@ -73,10 +91,11 @@ func TestAllocateS3(t *testing.T) {
 				},
 			},
 		}, {
-			// Test when the file size does not let it be split into even segments:
+			name:            "test when the file size does not let it be split into even segments",
 			fileSize:        int64(1 << 20), // 20MB
 			segmentCount:    6,
 			partsPerSegment: 4,
+			multipart:       false,
 			operation:       flex.SyncJob_DOWNLOAD,
 			expectations: map[string]expectation{
 				"0": {
@@ -121,11 +140,12 @@ func TestAllocateS3(t *testing.T) {
 
 	// Run tests:
 	for i, test := range tests {
+
 		path := "/foo/bar" + strconv.Itoa(i)
-		filesystem.MountPoint.CreateWriteClose(path, make([]byte, test.fileSize)) // 20MB
+		filesystem.MountPoint.CreateWriteClose(path, make([]byte, test.fileSize))
 
 		rstClient := &rst.MockClient{}
-		if test.operation == flex.SyncJob_UPLOAD {
+		if test.multipart {
 			rstClient.On("CreateUpload").Return("mpartid", nil)
 		}
 		rstClient.On("GetType").Return(rst.S3)
@@ -135,28 +155,28 @@ func TestAllocateS3(t *testing.T) {
 		syncJob.Request.GetSync().Operation = test.operation
 
 		js, retry, err := syncJob.Allocate(rstClient)
-		assert.NoError(t, err)
-		assert.False(t, retry)
-		assert.Len(t, js.WorkRequests, test.segmentCount)
+		assert.NoError(t, err, test.name)
+		assert.False(t, retry, test.name)
+		assert.Len(t, js.WorkRequests, test.segmentCount, test.name)
 
-		if test.operation == flex.SyncJob_UPLOAD {
-			assert.Equal(t, "mpartid", syncJob.ExternalId)
+		if test.multipart {
+			assert.Equal(t, "mpartid", syncJob.ExternalId, test.name)
 		} else {
-			assert.Equal(t, "", syncJob.ExternalId)
+			assert.Equal(t, "", syncJob.ExternalId, test.name)
 		}
 
 		for _, wr := range js.WorkRequests {
 			e, ok := test.expectations[wr.RequestId]
-			require.True(t, ok)
-			assert.IsType(t, &flex.WorkRequest_Sync{}, wr.GetType())
-			assert.Equal(t, e.offsetStart, wr.Segment.OffsetStart)
-			assert.Equal(t, e.offsetStop, wr.Segment.OffsetStop)
-			assert.Equal(t, e.partsStart, wr.Segment.PartsStart)
-			assert.Equal(t, e.partsStop, wr.Segment.PartsStop)
-			if test.operation == flex.SyncJob_UPLOAD {
-				assert.Equal(t, "mpartid", wr.ExternalId)
+			require.True(t, ok, test.name)
+			assert.IsType(t, &flex.WorkRequest_Sync{}, wr.GetType(), test.name)
+			assert.Equal(t, e.offsetStart, wr.Segment.OffsetStart, test.name)
+			assert.Equal(t, e.offsetStop, wr.Segment.OffsetStop, test.name)
+			assert.Equal(t, e.partsStart, wr.Segment.PartsStart, test.name)
+			assert.Equal(t, e.partsStop, wr.Segment.PartsStop, test.name)
+			if test.multipart {
+				assert.Equal(t, "mpartid", wr.ExternalId, test.name)
 			} else {
-				assert.Equal(t, "", wr.ExternalId)
+				assert.Equal(t, "", wr.ExternalId, test.name)
 			}
 		}
 		filesystem.MountPoint.Remove(path)

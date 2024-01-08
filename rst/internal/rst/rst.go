@@ -45,8 +45,9 @@ const (
 // Note returning the address is important otherwise you will get an initialized
 // but empty struct of the correct type.
 var SupportedRSTTypes = map[string]func() (any, any){
-	"s3":    func() (any, any) { t := new(flex.RemoteStorageTarget_S3_); return t, &t.S3 },
-	"azure": func() (any, any) { t := new(flex.RemoteStorageTarget_Azure_); return t, &t.Azure },
+	"s3": func() (any, any) { t := new(flex.RemoteStorageTarget_S3_); return t, &t.S3 },
+	// Azure is not currently supported, but this is how an Azure type could be added:
+	// "azure": func() (any, any) { t := new(flex.RemoteStorageTarget_Azure_); return t, &t.Azure },
 	// Mock could be included here if it ever made sense to allow configuring them using a file.
 }
 
