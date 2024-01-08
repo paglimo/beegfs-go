@@ -1,6 +1,9 @@
 package job
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -9,9 +12,13 @@ import (
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
+	"google.golang.org/protobuf/proto"
 )
 
 // Job represents an interface for tasks that can be managed by BeeRemote.
+// Common methods like Status() are implemented by baseJob. Methods that provide
+// functionality specific to a particular job type (like Allocate()) must be
+// implemented by the various concrete job types.
 type Job interface {
 	// Allocate creates a JobSubmission that can be executed by WorkerMgr on the
 	// appropriate work node(s) based on the job type. When an error occurs
@@ -20,6 +27,12 @@ type Job interface {
 	// ephemeral issue occurred, typically an issue contacting the RST to setup
 	// any prerequisites such as creating a multipart upload.
 	Allocate(rst.Client) (jobSubmission workermgr.JobSubmission, retry bool, err error)
+	// GetWorkRequests is used to generate work requests for a job based on its
+	// segments. Because WorkRequests duplicate a lot of the information
+	// contained in the Job they are not stored on-disk. Instead they are
+	// initially generated when Allocate() is called to create a JobSubmission,
+	// and can be subsequently recreated as needed for troubleshooting.
+	GetWorkRequests() []*flex.WorkRequest
 	// Complete should always be called before moving the job status to a
 	// terminal state. If the job completed successfully and all work results
 	// are complete then abort should be false, otherwise it can be set to true
@@ -51,26 +64,16 @@ type Job interface {
 	InTerminalState() bool
 	// Get returns the protocol buffer defined message representing a single Job.
 	Get() *beeremote.Job
-	// GetWorkRequests returns a string representation of the original work
-	// requests generated for this job. It is primarily intended for
-	// troubleshooting. This shouldn't just return all fields from the original
-	// work request, only whatever is unique for that particular work request
-	// type. For example even though work request for a SyncJob includes the
-	// path and other details needed to run the job, only the request ID and a
-	// particular segment need to be returned as the other fields can be
-	// determined by looking elsewhere in the JobResponse.
-	GetWorkRequests() string
 }
 
 // baseJob defines the fields and methods that apply to all job types.
-// Individual jobs should embed a pointer to baseJob so Jobs can be retrieved
-// from the database and updated directly using methods like
-// Manager.updateJobState() and baseJob.SetStatus() instead of making a copy and
-// having to remember to update the database entry with the updated Job.
+// Individual jobs should embed a pointer to baseJob.
 type baseJob struct {
 	// By directly storing the protobuf defined Job we can quickly return
 	// responses to users about the current status of their jobs.
 	*beeremote.Job
+	// Segments aren't populated until Allocate() is called.
+	Segments []*Segment
 }
 
 func (j *baseJob) Get() *beeremote.Job {
@@ -131,4 +134,108 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 		return job, nil
 	}
 	return nil, fmt.Errorf("bad job request")
+}
+
+// GobEncode encodes the job into a byte slice for gob serialization. The method
+// serializes the JobResponse using the protobuf marshaller and the Segments
+// slice field using gob and individual segments using the protobuf
+// unmarshaller. It prefixes the serialized Job field with its length to handle
+// variable-length slices during deserialization. It is primarily used when
+// storing jobs in the database.
+//
+// IMPORTANT: Concrete jobs (like SyncJobs) must still implement GobEncode and
+// GobDecode methods. However unless the job has additional fields that require
+// special handling these methods can simply call the GobEncode/GobDecode
+// methods of the base job. Don't forget the to update the Job package init()
+// function to add `gob.Register(&MyType{})` for any new types.
+func (j *baseJob) GobEncode() ([]byte, error) {
+
+	// We use the proto.Marshal function because gob doesn't work properly with
+	// the oneof type field in the Job.JobRequest message.
+	jobData, err := proto.Marshal(j.Job)
+	if err != nil {
+		return nil, err
+	}
+
+	// We use Gob to encode the slice of segments. The segment.GobEncode method
+	// will be called for each element to properly encode it using the protobuf
+	// marshaller.
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+
+	err = enc.Encode(j.Segments)
+	if err != nil {
+		return nil, err
+	}
+
+	segmentsData := buf.Bytes()
+
+	// Prefix the serialized jobData with the length as a uint16.
+	// We'll use this when decoding.
+	jobFieldLength := make([]byte, 2)
+	binary.BigEndian.PutUint16(jobFieldLength, uint16((len(jobData))))
+
+	combinedData := append(jobFieldLength, jobData...)
+	combinedData = append(combinedData, segmentsData...)
+	return combinedData, nil
+}
+
+// GobDecode decodes a byte slice into a baseJob. It first extracts the length
+// prefix to determine the size of the Job field. It then decodes the Job field
+// using the protobuf unmarshaller and Segments slice field using gob an
+// individual segments using the protobuf unmarshaller. It is primarily used
+// when retrieving Jobs from the database.
+//
+// IMPORTANT: Concrete jobs (like SyncJobs) must still implement GobEncode and
+// GobDecode methods. However unless the job has additional fields that require
+// special handling these methods can simply call the GobEncode/GobDecode
+// methods of the base job. Don't forget the to update the Job package init()
+// function to add `gob.Register(&MyType{})` for any new types.
+func (j *baseJob) GobDecode(data []byte) error {
+
+	jobFieldLength := binary.BigEndian.Uint16(data[:2])
+	jobData := data[2 : 2+jobFieldLength]
+	segmentsData := data[2+jobFieldLength:]
+
+	if j.Job == nil {
+		j.Job = &beeremote.Job{}
+	}
+
+	if j.Segments == nil {
+		j.Segments = make([]*Segment, 0)
+	}
+
+	err := proto.Unmarshal(jobData, j.Job)
+	if err != nil {
+		return err
+	}
+
+	dec := gob.NewDecoder(bytes.NewReader(segmentsData))
+	err = dec.Decode(&j.Segments)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Segment is a wrapper around the protobuf defined Segment type to
+// allow encoding/decoding to work properly through encoding/gob.
+type Segment struct {
+	segment flex.WorkRequest_Segment
+}
+
+func (s *Segment) GobEncode() ([]byte, error) {
+	segmentData, err := proto.Marshal(&s.segment)
+	if err != nil {
+		return nil, err
+	}
+
+	return segmentData, nil
+
+}
+
+func (s *Segment) GobDecode(data []byte) error {
+	err := proto.Unmarshal(data, &s.segment)
+
+	return err
 }

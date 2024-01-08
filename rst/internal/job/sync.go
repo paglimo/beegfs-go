@@ -1,9 +1,6 @@
 package job
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"strconv"
 
@@ -11,33 +8,17 @@ import (
 	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
-	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
-// SyncJob implements all methods needed for BeeRemote to handle sync jobs. Its
-// embeds all the protocol buffer define types needed for BeeRemote to associate
-// what work needs to be done with how it is being carried out.
+// SyncJob implements all methods needed for BeeRemote to handle sync jobs.
 type SyncJob struct {
 	*baseJob
-	// Segments aren't populated until Allocate() is called.
-	Segments []*SyncSegment
 }
 
 // Verify SyncJob implements the Job interface.
 var _ Job = &SyncJob{}
-
-func (j *SyncJob) GetWorkRequests() string {
-
-	var output string
-	for i, segment := range j.Segments {
-		output += fmt.Sprintf("{request_id: %d, segment: %s}", i, segment.segment.String())
-	}
-
-	return output
-}
 
 // Allocate breaks the file into segments taking into consideration file size,
 // operation type, and transfer method (S3, POSIX, etc.). It uses these segments
@@ -62,7 +43,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 
 	if j.Segments == nil {
 		op := j.Request.GetSync().Operation
-		if op != beesync.SyncJob_UPLOAD && op != beesync.SyncJob_DOWNLOAD {
+		if op != flex.SyncJob_UPLOAD && op != flex.SyncJob_DOWNLOAD {
 			return workermgr.JobSubmission{}, false, fmt.Errorf("unable to allocate job: %w", ErrUnknownJobOp)
 		}
 
@@ -85,7 +66,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		fileSize := stat.Size()
 
 		segCount, partsPerSegment := client.RecommendedSegments(fileSize)
-		if segCount > 1 && op == beesync.SyncJob_UPLOAD {
+		if segCount > 1 && op == flex.SyncJob_UPLOAD {
 			uploadID, err := client.CreateUpload(j.GetPath())
 			if err != nil {
 				return workermgr.JobSubmission{}, true, err
@@ -95,7 +76,7 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 
 		bytesPerSegment := fileSize / segCount
 		extraBytesForLastSegment := fileSize % segCount
-		j.Segments = make([]*SyncSegment, 0)
+		j.Segments = make([]*Segment, 0)
 
 		// Based on the RST type generate the appropriate BeeSync segments.
 		// We have to use a int64 counter for byte ranges inside the file
@@ -111,8 +92,8 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 				offsetStop += extraBytesForLastSegment
 			}
 
-			segment := &SyncSegment{
-				segment: beesync.Segment{
+			segment := &Segment{
+				segment: flex.WorkRequest_Segment{
 					OffsetStart: i64 * bytesPerSegment,
 					OffsetStop:  offsetStop,
 					PartsStart:  (i32-1)*partsPerSegment + 1,
@@ -123,34 +104,36 @@ func (j *SyncJob) Allocate(client rst.Client) (workermgr.JobSubmission, bool, er
 		}
 	}
 
-	workRequests := make([]worker.WorkRequest, 0)
+	return workermgr.JobSubmission{
+		JobID:        j.GetId(),
+		WorkRequests: j.GetWorkRequests(),
+	}, false, nil
+}
 
+func (j *SyncJob) GetWorkRequests() []*flex.WorkRequest {
+
+	workRequests := make([]*flex.WorkRequest, 0)
 	for i, s := range j.Segments {
-		wr := worker.SyncRequest{
-			SyncRequest: &beesync.SyncRequest{
-				Base: &flex.WorkRequest{
-					JobId:      j.GetID(),
-					RequestId:  strconv.Itoa(i),
-					Status:     proto.Clone(j.Status()).(*flex.RequestStatus),
-					ExternalId: j.ExternalId,
-					Path:       j.GetPath(),
-				},
-				Job:     j.Request.GetSync(),
-				Segment: &s.segment,
+		wr := flex.WorkRequest{
+			JobId:      j.GetID(),
+			RequestId:  strconv.Itoa(i),
+			ExternalId: j.ExternalId,
+			Path:       j.GetPath(),
+			Status:     proto.Clone(j.Status()).(*flex.RequestStatus),
+			Segment:    &s.segment,
+			Type: &flex.WorkRequest_Sync{
+				Sync: j.Request.GetSync(),
 			},
 		}
 		workRequests = append(workRequests, &wr)
 	}
-	return workermgr.JobSubmission{
-		JobID:        j.GetId(),
-		WorkRequests: workRequests,
-	}, false, nil
+	return workRequests
 }
 
 func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error {
 
 	op := j.Request.GetSync().Operation
-	if op != beesync.SyncJob_UPLOAD && op != beesync.SyncJob_DOWNLOAD {
+	if op != flex.SyncJob_UPLOAD && op != flex.SyncJob_DOWNLOAD {
 		return fmt.Errorf("unable to complete job: %w", ErrUnknownJobOp)
 	}
 
@@ -160,7 +143,7 @@ func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResu
 		return fmt.Errorf("unable to complete job: %w", ErrIncompatibleNodeAndRST)
 	}
 
-	if op == beesync.SyncJob_UPLOAD && j.ExternalId != "" {
+	if op == flex.SyncJob_UPLOAD && j.ExternalId != "" {
 		if abort {
 			return client.AbortUpload(j.ExternalId, j.GetPath())
 		}
@@ -181,100 +164,23 @@ func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResu
 	return nil // Nothing to do.
 }
 
-// GobEncode encodes the SyncJob into a byte slice for gob serialization. The
-// method serializes the JobResponse using the protobuf marshaller and the
-// Segments using gob. It prefixes the serialized JobResponse data with its
-// length to handle variable-length slices during deserialization. It is
-// primarily used when storing SyncJobs in the database.
-//
-// IMPORTANT: If you are using this as a reference to implement custom
-// encoding/decoding of a new type, don't forget the to update the package
-// init() function to add `gob.Register(&MyType{})`.
+// GobEncode encodes the SyncJob into a byte slice for gob serialization. Refer
+// to the GobEncode method on baseJob if you are implementing a new job type.
 func (j *SyncJob) GobEncode() ([]byte, error) {
 
-	// We use the proto.Marshal function because gob doesn't work properly with
-	// the oneof type field in the JobRequest struct.
-	jobResponseData, err := proto.Marshal(j.Job)
-	if err != nil {
-		return nil, err
+	if j.baseJob == nil {
+		return nil, fmt.Errorf("cannot encode a nil job (most likely this is a bug somewhere else)")
 	}
-
-	// TODO: Determine if we also need to use protobuf to encode the WorkRequests.
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-
-	err = enc.Encode(j.Segments)
-	if err != nil {
-		return nil, err
-	}
-
-	workRequestsData := buf.Bytes()
-
-	// Prefix the serialized JobResponseData with the length as a uint16.
-	// We'll use this when decoding.
-	jobResponseLength := make([]byte, 2)
-	binary.BigEndian.PutUint16(jobResponseLength, uint16((len(jobResponseData))))
-
-	combinedData := append(jobResponseLength, jobResponseData...)
-	combinedData = append(combinedData, workRequestsData...)
-	return combinedData, nil
+	return j.baseJob.GobEncode()
 }
 
-// GobDecode decodes a byte slice into the SyncJob. The method first extracts
-// the length prefix to determine the size of the JobResponse data. It then
-// decodes JobResponse using the protobuf unmarshaller and Segments using gob.
-// It is primarily used when retrieving SyncJobs from the database.
-//
-// IMPORTANT: If you are using this as a reference to implement custom
-// encoding/decoding of a new type, don't forget the to update the package
-// init() function to add `gob.Register(&MyType{})`.
+// GobDecode decodes a byte slice into the SyncJob. Refer to the GobDecode
+// method on baseJob if you are implementing a new job type.
 func (j *SyncJob) GobDecode(data []byte) error {
 
-	jobResponseLength := binary.BigEndian.Uint16(data[:2])
-	jobResponseData := data[2 : 2+jobResponseLength]
-	workRequestData := data[2+jobResponseLength:]
-
 	if j.baseJob == nil {
-		j.baseJob = &baseJob{
-			Job: &beeremote.Job{},
-		}
+		j.baseJob = &baseJob{}
 	}
 
-	if j.Segments == nil {
-		j.Segments = make([]*SyncSegment, 0)
-	}
-
-	err := proto.Unmarshal(jobResponseData, j.Job)
-	if err != nil {
-		return err
-	}
-
-	dec := gob.NewDecoder(bytes.NewReader(workRequestData))
-	err = dec.Decode(&j.Segments)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// SyncSegment is a wrapper around the protobuf defined BeeSync Segment type to
-// allow encoding/decoding to work properly through encoding/gob.
-type SyncSegment struct {
-	segment beesync.Segment
-}
-
-func (r *SyncSegment) GobEncode() ([]byte, error) {
-	segmentData, err := proto.Marshal(&r.segment)
-	if err != nil {
-		return nil, err
-	}
-
-	return segmentData, nil
-
-}
-
-func (r *SyncSegment) GobDecode(data []byte) error {
-	err := proto.Unmarshal(data, &r.segment)
-
-	return err
+	return j.baseJob.GobDecode(data)
 }

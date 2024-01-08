@@ -10,10 +10,19 @@ BeeSync nodes.
 
 ## Adding new job types and worker nodes
 
-The Mock job and Mock worker node added with [this
-commit](https://github.com/ThinkParQ/bee-remote/commit/4828d673f209c7260e69562a52bab6866e967546)
-give a good idea what changes are needed to add new job and/or worker node
-types.
+Flex Protos:
+* Add a new message that carries any fields specific to the new job type (e.g., `SyncJob`).
+* Add the new message to the `WorkRequest` oneof `Type` field.
+
+Job package updates:
+* Add a new job type that:
+  * Embeds baseJob
+  * Implements the Job interface
+  * Provides GobEncoding and GobDecoding methods.
+
+Worker package updates:
+* Add a new node type that embeds the baseNode and implements the Worker and gRPCClientHandler interfaces.
+* Update the switch statement in the manager.SubmitJob method to map the protobuf defined work request type to the new node type.
 
 ## Logging
 

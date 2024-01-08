@@ -23,7 +23,7 @@ type Worker interface {
 	Handle(*sync.WaitGroup, *flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests)
 	Stop()
 	// Implemented by specific node types:
-	SubmitWorkRequest(WorkRequest) (*flex.WorkResponse, error)
+	SubmitWorkRequest(*flex.WorkRequest) (*flex.WorkResponse, error)
 	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
 	// TODO: Require UpdateConfig() once dynamic configuration updates are supported.
 	//UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)

@@ -34,7 +34,7 @@ func (w *MockNode) disconnect() error {
 	return args.Error(1)
 }
 
-func (n *MockNode) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error) {
+func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
@@ -61,8 +61,8 @@ func (n *MockNode) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error)
 	}
 
 	return &flex.WorkResponse{
-		JobId:     wr.GetJobID(),
-		RequestId: wr.GetRequestID(),
+		JobId:     wr.GetJobId(),
+		RequestId: wr.GetRequestId(),
 		Status:    status,
 	}, args.Error(1)
 }
@@ -97,27 +97,4 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 		RequestId: updateRequest.GetRequestID(),
 		Status:    status,
 	}, args.Error(1)
-}
-
-type MockRequest struct {
-	Base    *flex.WorkRequest
-	Segment string
-}
-
-var _ WorkRequest = &MockRequest{}
-
-func (wr *MockRequest) GetJobID() string {
-	return wr.Base.JobId
-}
-
-func (wr *MockRequest) GetRequestID() string {
-	return wr.Base.RequestId
-}
-
-func (r *MockRequest) Status() *flex.RequestStatus {
-	return r.Base.GetStatus()
-}
-
-func (r *MockRequest) GetNodeType() Type {
-	return Mock
 }

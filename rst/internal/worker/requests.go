@@ -2,24 +2,6 @@ package worker
 
 import "github.com/thinkparq/protobuf/go/flex"
 
-// WorkRequest represents an interface for work requests that can be processed
-// by different types of worker nodes.
-type WorkRequest interface {
-	// GetJobID() returns the job id.
-	GetJobID() string
-	// GetRequestID() returns the request ID. Note request IDs are only
-	// guaranteed to be unique for a particular job.
-	GetRequestID() string
-	// Used to access the status of the request. Because it returns a pointer
-	// the status and/or message can be updated directly without overwriting the
-	// entire status. This is helpful if you want to modify one but not the
-	// other field (commonly message can change but status should not, or we
-	// want to keep a message history).
-	Status() *flex.RequestStatus
-	// GetNodeType() returns the type of node this request should run on.
-	GetNodeType() Type
-}
-
 // WorkResult carries status and node assignment for a particular WorkRequest.
 // It is setup so it can be copied when needed, either in JobResults or when
 // saving WorkResults to disk. The requests may not necessarily be completed and

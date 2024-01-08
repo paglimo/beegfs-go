@@ -24,8 +24,9 @@ import (
 // Register custom types for serialization/deserialization via Gob when the
 // package is initialized.
 func init() {
+	gob.Register(&baseJob{})
+	gob.Register(&Segment{})
 	gob.Register(&SyncJob{})
-	gob.Register(&SyncSegment{})
 	gob.Register(&MockJob{})
 }
 
@@ -316,7 +317,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			return nil, fmt.Errorf("found job results for job ID %s but there is no corresponding entry in the path store (perhaps the job finished and is being cleaned up?)", query.JobID)
 		}
 
-		workRequests := ""
+		workRequests := make([]*flex.WorkRequest, 0)
 		if request.GetIncludeWorkRequests() {
 			workRequests = job.GetWorkRequests()
 		}
@@ -358,7 +359,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		for jobID, job := range pathEntry.Value {
 			workResults := []*beeremote.JobResponse_WorkResult{}
 
-			workRequests := ""
+			workRequests := make([]*flex.WorkRequest, 0)
 			if request.GetIncludeWorkRequests() {
 				workRequests = job.GetWorkRequests()
 			}
@@ -407,7 +408,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			for jobID, job := range pathItem.Entry.Value {
 				workResults := []*beeremote.JobResponse_WorkResult{}
 
-				workRequests := ""
+				workRequests := make([]*flex.WorkRequest, 0)
 				if request.GetIncludeWorkRequests() {
 					workRequests = job.GetWorkRequests()
 				}

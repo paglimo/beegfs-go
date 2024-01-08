@@ -10,19 +10,18 @@ import (
 	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/beesync"
+	"github.com/thinkparq/protobuf/go/flex"
 )
 
 func getTestSyncJob(path string) SyncJob {
 	return SyncJob{
 		baseJob: &baseJob{
-			&beeremote.Job{
+			Job: &beeremote.Job{
 				Request: &beeremote.JobRequest{
-					Path:                path,
-					RemoteStorageTarget: "1",
+					Path: path,
 					Type: &beeremote.JobRequest_Sync{
-						Sync: &beesync.SyncJob{
-							Operation: beesync.SyncJob_UNKNOWN,
+						Sync: &flex.SyncJob{
+							Operation: flex.SyncJob_UNKNOWN,
 						},
 					},
 				},
@@ -44,7 +43,7 @@ func TestAllocateS3(t *testing.T) {
 		fileSize        int64
 		segmentCount    int
 		partsPerSegment int
-		operation       beesync.SyncJob_Operation
+		operation       flex.SyncJob_Operation
 		expectations    map[string]expectation
 	}
 
@@ -58,7 +57,7 @@ func TestAllocateS3(t *testing.T) {
 			fileSize:        int64(1 << 20), // 20MB
 			segmentCount:    2,
 			partsPerSegment: 2,
-			operation:       beesync.SyncJob_UPLOAD,
+			operation:       flex.SyncJob_UPLOAD,
 			expectations: map[string]expectation{
 				"0": {
 					offsetStart: 0,
@@ -78,7 +77,7 @@ func TestAllocateS3(t *testing.T) {
 			fileSize:        int64(1 << 20), // 20MB
 			segmentCount:    6,
 			partsPerSegment: 4,
-			operation:       beesync.SyncJob_DOWNLOAD,
+			operation:       flex.SyncJob_DOWNLOAD,
 			expectations: map[string]expectation{
 				"0": {
 					offsetStart: 0,
@@ -126,7 +125,7 @@ func TestAllocateS3(t *testing.T) {
 		filesystem.MountPoint.CreateWriteClose(path, make([]byte, test.fileSize)) // 20MB
 
 		rstClient := &rst.MockClient{}
-		if test.operation == beesync.SyncJob_UPLOAD {
+		if test.operation == flex.SyncJob_UPLOAD {
 			rstClient.On("CreateUpload").Return("mpartid", nil)
 		}
 		rstClient.On("GetType").Return(rst.S3)
@@ -140,29 +139,24 @@ func TestAllocateS3(t *testing.T) {
 		assert.False(t, retry)
 		assert.Len(t, js.WorkRequests, test.segmentCount)
 
-		if test.operation == beesync.SyncJob_UPLOAD {
+		if test.operation == flex.SyncJob_UPLOAD {
 			assert.Equal(t, "mpartid", syncJob.ExternalId)
 		} else {
 			assert.Equal(t, "", syncJob.ExternalId)
 		}
 
 		for _, wr := range js.WorkRequests {
-
-			sr, ok := wr.(*worker.SyncRequest)
-			if !ok {
-				panic("unexpected work request in test")
-			}
-
-			e, ok := test.expectations[sr.Base.RequestId]
+			e, ok := test.expectations[wr.RequestId]
 			require.True(t, ok)
-			assert.Equal(t, e.offsetStart, sr.Segment.OffsetStart)
-			assert.Equal(t, e.offsetStop, sr.Segment.OffsetStop)
-			assert.Equal(t, e.partsStart, sr.Segment.PartsStart)
-			assert.Equal(t, e.partsStop, sr.Segment.PartsStop)
-			if test.operation == beesync.SyncJob_UPLOAD {
-				assert.Equal(t, "mpartid", sr.Base.ExternalId)
+			assert.IsType(t, &flex.WorkRequest_Sync{}, wr.GetType())
+			assert.Equal(t, e.offsetStart, wr.Segment.OffsetStart)
+			assert.Equal(t, e.offsetStop, wr.Segment.OffsetStop)
+			assert.Equal(t, e.partsStart, wr.Segment.PartsStart)
+			assert.Equal(t, e.partsStop, wr.Segment.PartsStop)
+			if test.operation == flex.SyncJob_UPLOAD {
+				assert.Equal(t, "mpartid", wr.ExternalId)
 			} else {
-				assert.Equal(t, "", sr.Base.ExternalId)
+				assert.Equal(t, "", wr.ExternalId)
 			}
 		}
 		filesystem.MountPoint.Remove(path)
@@ -171,7 +165,7 @@ func TestAllocateS3(t *testing.T) {
 
 func TestComplete(t *testing.T) {
 	type test struct {
-		operation      beesync.SyncJob_Operation
+		operation      flex.SyncJob_Operation
 		rstType        rst.Type
 		rstCall        string
 		rstReturn      any
@@ -182,16 +176,16 @@ func TestComplete(t *testing.T) {
 
 	tests := []test{
 		{
-			operation:      beesync.SyncJob_UNKNOWN,
+			operation:      flex.SyncJob_UNKNOWN,
 			expectedResult: ErrUnknownJobOp,
 		},
 		{
 			rstType:        "invalid",
-			operation:      beesync.SyncJob_UPLOAD,
+			operation:      flex.SyncJob_UPLOAD,
 			expectedResult: ErrIncompatibleNodeAndRST,
 		},
 		{
-			operation:      beesync.SyncJob_UPLOAD,
+			operation:      flex.SyncJob_UPLOAD,
 			rstType:        rst.S3,
 			rstCall:        "FinishUpload",
 			rstReturn:      nil,
@@ -201,7 +195,7 @@ func TestComplete(t *testing.T) {
 		},
 		{
 			// Aborted jobs should call AbortUpload
-			operation:      beesync.SyncJob_UPLOAD,
+			operation:      flex.SyncJob_UPLOAD,
 			rstType:        rst.S3,
 			rstCall:        "AbortUpload",
 			rstReturn:      nil,
@@ -211,7 +205,7 @@ func TestComplete(t *testing.T) {
 		},
 		{
 			// If there isn't an external ID then FinishUpload shouldn't be called.
-			operation:      beesync.SyncJob_UPLOAD,
+			operation:      flex.SyncJob_UPLOAD,
 			rstType:        rst.S3,
 			rstCall:        "",
 			rstReturn:      nil,
@@ -221,7 +215,7 @@ func TestComplete(t *testing.T) {
 		},
 		{
 			// Even if there is an external ID or the job is aborted we don't do anything to complete downloads.
-			operation:      beesync.SyncJob_DOWNLOAD,
+			operation:      flex.SyncJob_DOWNLOAD,
 			rstType:        rst.S3,
 			rstCall:        "",
 			rstReturn:      nil,

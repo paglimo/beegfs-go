@@ -69,18 +69,14 @@ func (n *BeeSyncNode) disconnect() error {
 	return nil
 }
 
-func (n *BeeSyncNode) SubmitWorkRequest(wr WorkRequest) (*flex.WorkResponse, error) {
+func (n *BeeSyncNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
-	request, ok := wr.(*SyncRequest)
-	if !ok {
-		return nil, fmt.Errorf("received an invalid request for BeeSync node type: %s", request)
-	}
 
-	resp, err := n.client.SubmitWorkRequest(n.rpcCtx, request.SyncRequest)
+	resp, err := n.client.SubmitWorkRequest(n.rpcCtx, wr)
 	if err != nil {
 		select {
 		case n.rpcErr <- struct{}{}:
@@ -107,28 +103,4 @@ func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (
 		return nil, err
 	}
 	return resp, nil
-}
-
-// SyncRequests are handled by BeeSync nodes.
-type SyncRequest struct {
-	*beesync.SyncRequest
-}
-
-// SyncRequest satisfies the WorkRequest interface.
-var _ WorkRequest = &SyncRequest{}
-
-func (wr *SyncRequest) GetJobID() string {
-	return wr.Base.JobId
-}
-
-func (wr *SyncRequest) GetRequestID() string {
-	return wr.Base.RequestId
-}
-
-func (r *SyncRequest) Status() *flex.RequestStatus {
-	return r.Base.GetStatus()
-}
-
-func (r *SyncRequest) GetNodeType() Type {
-	return BeeSync
 }

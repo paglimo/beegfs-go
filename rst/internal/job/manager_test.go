@@ -14,7 +14,6 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/beesync"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap/zaptest"
 )
@@ -622,8 +621,8 @@ func TestAllocationFailure(t *testing.T) {
 		Path:                path,
 		RemoteStorageTarget: "1",
 		Type: &beeremote.JobRequest_Sync{
-			Sync: &beesync.SyncJob{
-				Operation: beesync.SyncJob_UNKNOWN,
+			Sync: &flex.SyncJob{
+				Operation: flex.SyncJob_UNKNOWN,
 			},
 		},
 	}
@@ -634,7 +633,7 @@ func TestAllocationFailure(t *testing.T) {
 	assert.Nil(t, response)
 
 	// Fix the operation:
-	jobRequest.GetSync().Operation = beesync.SyncJob_UPLOAD
+	jobRequest.GetSync().Operation = flex.SyncJob_UPLOAD
 
 	// Submit a job request for a file that doesn't exist:
 	response, err = jobManager.SubmitJobRequest(jobRequest)

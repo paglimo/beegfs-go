@@ -17,6 +17,7 @@ import (
 type Type string
 
 const (
+	Unknown Type = "unknown"
 	BeeSync Type = "beesync"
 	Mock    Type = "mock"
 )

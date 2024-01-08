@@ -47,7 +47,7 @@ type Manager struct {
 // ordered ahead of larger jobs.
 type JobSubmission struct {
 	JobID        string
-	WorkRequests []worker.WorkRequest
+	WorkRequests []*flex.WorkRequest
 }
 
 type JobUpdate struct {
@@ -139,11 +139,30 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		// If an error occurs return it as the message in the work response status.
 		var err error
 
-		pool, ok := m.nodePools[workRequest.GetNodeType()]
+		// Map work request types to worker nodes. If a new request type and
+		// worker node are added this should be updated.
+		var nodeType worker.Type
+		switch workRequest.Type.(type) {
+		case *flex.WorkRequest_Mock:
+			nodeType = worker.Mock
+		case *flex.WorkRequest_Sync:
+			nodeType = worker.BeeSync
+		default:
+			nodeType = worker.Unknown
+		}
+
+		pool, ok := m.nodePools[nodeType]
+
 		if !ok {
-			err := fmt.Errorf("%s: %w", workRequest.GetNodeType(), ErrNoPoolsForNodeType)
-			workRequest.Status().State = flex.RequestStatus_FAILED
-			workRequest.Status().Message = err.Error()
+			err = fmt.Errorf("%s: %w", nodeType, ErrNoPoolsForNodeType)
+			workResult.WorkResponse = &flex.WorkResponse{
+				JobId:     workRequest.GetJobId(),
+				RequestId: workRequest.GetRequestId(),
+				Status: &flex.RequestStatus{
+					State:   flex.RequestStatus_FAILED,
+					Message: err.Error(),
+				},
+			}
 
 			allScheduled = false
 		} else {
@@ -170,8 +189,8 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 				// If there was a failure assemble a minimal work response.
 				allScheduled = false
 				workResult.WorkResponse = &flex.WorkResponse{
-					JobId:     workRequest.GetJobID(),
-					RequestId: workRequest.GetRequestID(),
+					JobId:     workRequest.GetJobId(),
+					RequestId: workRequest.GetRequestId(),
 					Status: &flex.RequestStatus{
 						State:   flex.RequestStatus_UNASSIGNED,
 						Message: err.Error(),
@@ -186,8 +205,8 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		}
 
 		workResult.AssignedNode = workerID
-		workResult.AssignedPool = workRequest.GetNodeType()
-		workResults[workResult.WorkResponse.RequestId] = workResult
+		workResult.AssignedPool = nodeType
+		workResults[workRequest.RequestId] = workResult
 	}
 
 	var status flex.RequestStatus
