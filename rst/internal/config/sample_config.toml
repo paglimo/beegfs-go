@@ -22,19 +22,19 @@ id = "1"
 name = "beesync-01"
 type = "beesync"
 hostname = "localhost"
-port = 9050
+port = 9011
 allowInsecure = true
 selfSignedTLSCertPath = ""
-maxReconnectBackOff = 60
+maxReconnectBackOff = 10
 disconnectTimeout = 30
 
-[[worker]]
-id = "2"
-name = "beesync-02"
-type = "beesync"
-hostname = "localhost"
-port = 9051
-allowInsecure = true
-selfSignedTLSCertPath = ""
-maxReconnectBackOff = 60
-disconnectTimeout = 30
+# [[worker]]
+# id = "2"
+# name = "beesync-02"
+# type = "beesync"
+# hostname = "localhost"
+# port = 9012
+# allowInsecure = true
+# selfSignedTLSCertPath = ""
+# maxReconnectBackOff = 60
+# disconnectTimeout = 30

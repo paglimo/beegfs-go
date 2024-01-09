@@ -93,8 +93,8 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
 	}
 	return &flex.WorkResponse{
-		JobId:     updateRequest.GetJobID(),
-		RequestId: updateRequest.GetRequestID(),
+		JobId:     updateRequest.GetJobId(),
+		RequestId: updateRequest.GetRequestId(),
 		Status:    status,
 	}, args.Error(1)
 }

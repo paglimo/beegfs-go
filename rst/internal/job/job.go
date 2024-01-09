@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"

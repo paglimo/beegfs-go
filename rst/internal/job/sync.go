@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/thinkparq/bee-remote/internal/filesystem"
-	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/gobee/filesystem"
+	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )

@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )

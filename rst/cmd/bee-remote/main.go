@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/bee-remote/internal/config"
-	"github.com/thinkparq/bee-remote/internal/filesystem"
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/configmgr"
+	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
 )
@@ -31,12 +31,12 @@ func main() {
 	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When Remote Storage Targets are configured using a file, they can be updated without restarting the application.")
 	pflag.String("mountPoint", "", "The path where BeeGFS is mounted.")
 	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
-	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'log.file' (if needed the directory and all parent directories will be created).")
+	pflag.String("log.file", "/var/log/beeremote/beeremote.log", "The path to the desired log file when logType is 'log.file' (if needed the directory and all parent directories will be created).")
 	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
 	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
-	pflag.String("server.address", "127.0.0.1:9000", "The hostname:port where BeeRemote should listen for job requests.")
+	pflag.String("server.address", "127.0.0.1:9010", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
 	pflag.String("job.pathDBPath", "", "Path where the jobs database will be created/maintained.")
@@ -79,7 +79,7 @@ Using environment variables:
 	c := cfgMgr.Get()
 	initialCfg, ok := c.(*config.AppConfig)
 	if !ok {
-		log.Fatalf("configuration manager returned invalid configuration (expected BeeWatch application configuration)")
+		log.Fatalf("configuration manager returned invalid configuration (expected BeeRemote application configuration)")
 	}
 
 	if initialCfg.Developer.DumpConfig {
@@ -98,7 +98,7 @@ Using environment variables:
 		log.Fatalf("unable to initialize logger: %s", err)
 	}
 	defer logger.Sync()
-	logger.Info("<=== Application Initialized ===>")
+	logger.Info("<=== BeeRemote Initialized ===>")
 
 	// Determine if we should use a real or mock mount point:
 	filesystem.MountPoint, err = filesystem.New(initialCfg.MountPoint)

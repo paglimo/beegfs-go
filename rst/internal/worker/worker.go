@@ -66,9 +66,11 @@ type baseNode struct {
 	// happen the old node handler has finished shutting down before we swap out
 	// the node or delete it.
 	nodeMu sync.Mutex
-	// Context for the overall node. When cancelled the node will wait up to
-	// the DisconnectTimeout for any outstanding RPCs to complete before they
-	// are forcibly cancelled.
+	// Context for the overall node. When cancelled the node will wait up to the
+	// DisconnectTimeout for any outstanding RPCs to complete before they are
+	// forcibly cancelled. IMPORTANT: After the node context is cancelled the
+	// node must be recreated using newWorkerNodeFromConfig() before it can be
+	// used again.
 	nodeCtx    context.Context
 	nodeCancel context.CancelFunc
 	// When an RPC request is made the WG is incremented then deincremented
@@ -76,8 +78,14 @@ type baseNode struct {
 	// when a disconnect is requested, allowing us to wait up to the
 	// DisconnectTimeout for RPCs to complete before cancelling them.
 	rpcWG *sync.WaitGroup
-	// Context used for all RPCs. Can be cancelled to force outstanding RPCs
-	// to complete if the DisconnectTimeout is exceeded.
+	// Context used for all RPCs. Can be cancelled to force outstanding RPCs to
+	// complete if the DisconnectTimeout is exceeded. Note tis context is
+	// initialized when the node is created using newWorkerNodeFromConfig(),
+	// then also reinitialized every time connect is called otherwise we'd
+	// never be able to reconnect or call any RPCs after a disconnect. Note the
+	// initialization in newWorkerNodeFromConfig() shouldn't be required, but is
+	// done to avoid a segmentation fault if the handle method were to change in
+	// a way where the context could be cancelled before connect was called.
 	rpcCtx    context.Context
 	rpcCancel context.CancelFunc
 	// rpcErr is used by unary RPC functions to notify the handler in the event
@@ -205,6 +213,10 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.WorkerNodeConfigReque
 func (n *baseNode) connectLoop(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) bool {
 	n.log.Info("connecting to node")
 	var reconnectBackOff float64 = 1
+
+	// If a disconnect happened previously the RPC context would be cancelled.
+	// Ensure it is initialized when connecting.
+	n.rpcCtx, n.rpcCancel = context.WithCancel(context.Background())
 
 	for {
 		select {

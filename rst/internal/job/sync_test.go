@@ -6,9 +6,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/thinkparq/bee-remote/internal/filesystem"
-	"github.com/thinkparq/bee-remote/internal/rst"
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/gobee/filesystem"
+	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 )
