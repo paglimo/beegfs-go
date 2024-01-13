@@ -88,10 +88,11 @@ func TestManage(t *testing.T) {
 
 	// When we initially submit a job the state should be scheduled:
 	testJobRequest := beeremote.JobRequest{
-		Path:     "/test/myfile",
-		Name:     "test job 1",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
+		Path:                "/test/myfile",
+		Name:                "test job 1",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		RemoteStorageTarget: "0",
 	}
 
 	_, err = jobManager.SubmitJobRequest(&testJobRequest)
@@ -133,10 +134,11 @@ func TestManage(t *testing.T) {
 
 	// If we schedule a job for a different RST it should be scheduled:
 	testJobRequest2 := beeremote.JobRequest{
-		Path:     "/test/myfile",
-		Name:     "test job 1",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "1"}},
+		Path:                "/test/myfile",
+		Name:                "test job 1",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		RemoteStorageTarget: "1",
 	}
 	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
 	assert.NoError(t, err)
@@ -240,16 +242,18 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Submit two jobs for testing:
 	testJobRequest1 := beeremote.JobRequest{
-		Path:     "/test/myfile",
-		Name:     "test job 1",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
+		Path:                "/test/myfile",
+		Name:                "test job 1",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		RemoteStorageTarget: "0",
 	}
 	testJobRequest2 := beeremote.JobRequest{
-		Path:     "/test/myfile2",
-		Name:     "test job 2",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2, Rst: "1"}},
+		Path:                "/test/myfile2",
+		Name:                "test job 2",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
+		RemoteStorageTarget: "1",
 	}
 
 	_, err = jobManager.SubmitJobRequest(&testJobRequest1)
@@ -463,10 +467,11 @@ func TestManageErrorHandling(t *testing.T) {
 	// When we initially submit a job the state should be cancelled if any work
 	// requests aren't scheduled but were able to be cancelled:
 	testJobRequest := beeremote.JobRequest{
-		Path:     "/test/myfile",
-		Name:     "test job 1",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4, Rst: "0"}},
+		Path:                "/test/myfile",
+		Name:                "test job 1",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		RemoteStorageTarget: "0",
 	}
 	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
@@ -696,10 +701,11 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, jobManager.Start())
 
 	testJobRequest := &beeremote.JobRequest{
-		Path:     "/test/myfile",
-		Name:     "test job 1",
-		Priority: 3,
-		Type:     &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2, Rst: "0"}},
+		Path:                "/test/myfile",
+		Name:                "test job 1",
+		Priority:            3,
+		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
+		RemoteStorageTarget: "0",
 	}
 
 	// Verify once all WRs are in the same terminal state the job state

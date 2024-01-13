@@ -464,6 +464,12 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 // will indicate the error.
 func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
+	}
+
 	job, err := New(m.jobIDGenerator, jr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to generate job from job request: %w", err)
@@ -665,6 +671,12 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 // The status message field on a job will reflect if a request was made to move
 // a job to an invalid state.
 func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
+
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
+	}
 
 	if jobUpdate.NewState == flex.NewState_UNCHANGED {
 		return nil, fmt.Errorf("job update requested by the job state is unchanged (possibly this indicates a bug in the caller)")
@@ -1102,5 +1114,12 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 }
 
 func (m *Manager) Stop() {
+
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return // Nothing to do.
+	}
+
 	m.cancel()
 }

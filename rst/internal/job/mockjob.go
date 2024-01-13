@@ -20,10 +20,6 @@ type MockJob struct {
 
 var _ Job = &MockJob{}
 
-func (j *MockJob) GetRSTID() string {
-	return j.GetRequest().GetMock().Rst
-}
-
 func (j *MockJob) Allocate(rst rst.Client) (workermgr.JobSubmission, bool, error) {
 
 	if len(j.Segments) == 0 {
@@ -58,6 +54,7 @@ func (j *MockJob) GetWorkRequests() []*flex.WorkRequest {
 			Type: &flex.WorkRequest_Mock{
 				Mock: "mockjob",
 			},
+			RemoteStorageTarget: j.Request.RemoteStorageTarget,
 		}
 		workRequests = append(workRequests, &wr)
 	}

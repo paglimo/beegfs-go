@@ -130,6 +130,7 @@ func (j *SyncJob) GetWorkRequests() []*flex.WorkRequest {
 			Type: &flex.WorkRequest_Sync{
 				Sync: j.Request.GetSync(),
 			},
+			RemoteStorageTarget: j.Request.RemoteStorageTarget,
 		}
 		workRequests = append(workRequests, &wr)
 	}
