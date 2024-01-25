@@ -84,17 +84,22 @@ subscribers without restarting BeeWatch:
 
 4. Update the BeeGFS Metadata configuration so `sysFileEventLogTarget` points at
    the same path as the BeeWatch eventLogTarget setting (by default
-   `/run/beegfs/eventlog`) then start/restart the Metadata service. 
+   `/run/beegfs/eventlog`) then start/restart the Metadata service.
+    * Note the parent directory of `sysFileEventLogTarget` must be accessible by
+    the user executing BeeWatch.
 
-5. In the `/etc/beegfs/bee-watch.toml` file configure one or more subscribers
+5. On all BeeGFS clients configure the `sysFileEventLogMask` parameter to include
+   the event types you are interested in, then remount BeeGFS.
+
+6. In the `/etc/beegfs/bee-watch.toml` file configure one or more subscribers
    following the inline directions. 
 
-6. Reload the configuration by running `systemctl reload bee-watch`. 
+7. Reload the configuration by running `systemctl reload bee-watch`. 
 
-7. Verify the new configuration was applied successfully by looking at the
+8. Verify the new configuration was applied successfully by looking at the
    BeeWatch log at `/var/log/beegfs/bee-watch.log`. 
 
-8. If you want to uninstall/cleanup stop BeeWatch with `systemctl stop
+9.  If you want to uninstall/cleanup stop BeeWatch with `systemctl stop
    bee-watch` then use the package manager to remove it. For example on Ubuntu
    run `sudo dpkg -r bee-watch`. 
 
@@ -175,9 +180,21 @@ file provides flexibility when running BeeWatch in a container.
 
 ## For Developers
 
-*This section presumes you are not working with a prebuilt BeeWatch binary, and
-instead have cloned the repository locally and already have [Go
-installed](https://go.dev/doc/install).*
+This section presumes you are not working with a prebuilt BeeWatch binary, and
+instead have cloned the repository locally and already have the following
+prerequisites installed: 
+
+* A compatible version of [Go](https://go.dev/doc/install).
+  * Note if you want to build the project using the Makefile, you must have the
+    same version of Go installed that is listed in the `GO_BUILD_VERSION`
+    variable in `hack/check-go-version.sh`. Generally building the project with
+    a newer version of Go should never cause problems, and this check is mostly
+    to ensure when we build/release official packages using GitHub Actions we
+    know exactly what version of Go was used.
+* The [Go
+  Licenses](https://github.com/google/go-licenses?tab=readme-ov-file#installation)
+  tool must be installed and in your $PATH.
+  * Note this is only required to build using the Makefile.
 
 For BeeWatch to start it requires:
 
@@ -185,7 +202,9 @@ For BeeWatch to start it requires:
   system modification events (specified in `/etc/beegfs/beegfs-meta.conf` as
   `sysFileEventLogTarget`). This file doesn't have to exist before BeeWatch is
   started, and generally BeeWatch should be started before the metadata service
-  is actually sending events to the socket. 
+  is actually sending events to the socket.
+  * Note the parent directory of `sysFileEventLogTarget` must be accessible by
+    the user executing BeeWatch.
 * One of the following: 
   * One or more subscribers configured using command line flags or environment
     variables. 
