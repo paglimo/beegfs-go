@@ -2,6 +2,7 @@ package job
 
 import (
 	"io/fs"
+	"os"
 	"testing"
 	"time"
 
@@ -19,12 +20,39 @@ import (
 )
 
 const (
-	mapStoreTestPath  = "/tmp"
-	journalDBTestPath = "/tmp"
+	testDBBasePath = "/tmp"
 )
 
+// Helper function to create a temporary path for testing under the provided
+// path. Returns the full path that should be used for BadgerDB and a function
+// that should be called (usually with defer) to cleanup after the test. Will
+// fail the test if the cleanup function encounters any errors
+func tempPathForTesting(path string) (string, func(t require.TestingT), error) {
+	tempDBPath, err := os.MkdirTemp(path, "mapStoreTestMode")
+	if err != nil {
+		return "", nil, err
+	}
+
+	cleanup := func(t require.TestingT) {
+		require.NoError(t, os.RemoveAll(tempDBPath), "error cleaning up after test")
+	}
+
+	return tempDBPath, cleanup, nil
+
+}
+
 func TestManage(t *testing.T) {
-	testMode = true
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupResultsDBPath(t)
+
+	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupJournalDBPath(t)
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
@@ -76,11 +104,11 @@ func TestManage(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         mapStoreTestPath,
+		PathDBPath:         tmpPathDBPath,
 		PathDBCacheSize:    1024,
-		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBPath:      tmpResultsDBPath,
 		ResultsDBCacheSize: 1024,
-		JournalPath:        journalDBTestPath,
+		JournalPath:        tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -178,7 +206,17 @@ func TestManage(t *testing.T) {
 // TODO: Test updating multiple jobs, including when one job updates and the
 // other has a problem.
 func TestUpdateJobRequestDelete(t *testing.T) {
-	testMode = true
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupResultsDBPath(t)
+
+	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupJournalDBPath(t)
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
@@ -230,11 +268,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         mapStoreTestPath,
+		PathDBPath:         tmpPathDBPath,
 		PathDBCacheSize:    1024,
-		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBPath:      tmpResultsDBPath,
 		ResultsDBCacheSize: 1024,
-		JournalPath:        journalDBTestPath,
+		JournalPath:        tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -399,7 +437,17 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 // Cancel a job and one or more work request don't cancel == job should be failed.
 // Schedule a job and one or more work requests fail and refuse to cancel == job should be failed.
 func TestManageErrorHandling(t *testing.T) {
-	testMode = true
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupResultsDBPath(t)
+
+	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupJournalDBPath(t)
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
@@ -454,11 +502,11 @@ func TestManageErrorHandling(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         mapStoreTestPath,
+		PathDBPath:         tmpPathDBPath,
 		PathDBCacheSize:    1024,
-		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBPath:      tmpResultsDBPath,
 		ResultsDBCacheSize: 1024,
-		JournalPath:        journalDBTestPath,
+		JournalPath:        tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -592,7 +640,18 @@ func TestManageErrorHandling(t *testing.T) {
 
 func TestAllocationFailure(t *testing.T) {
 	// Set setup:
-	testMode = true
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupResultsDBPath(t)
+
+	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupJournalDBPath(t)
+
 	path := "/foo/bar"
 	fileSize := int64(1 << 20)
 	logger := zaptest.NewLogger(t)
@@ -608,11 +667,11 @@ func TestAllocationFailure(t *testing.T) {
 	mockClient.On("RecommendedSegments", fileSize).Return(4, 2)
 
 	jobMgrConfig := Config{
-		PathDBPath:         mapStoreTestPath,
+		PathDBPath:         tmpPathDBPath,
 		PathDBCacheSize:    1024,
-		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBPath:      tmpResultsDBPath,
 		ResultsDBCacheSize: 1024,
-		JournalPath:        journalDBTestPath,
+		JournalPath:        tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -649,7 +708,17 @@ func TestAllocationFailure(t *testing.T) {
 }
 
 func TestUpdateJobResults(t *testing.T) {
-	testMode = true
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupResultsDBPath(t)
+
+	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupJournalDBPath(t)
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
@@ -690,11 +759,11 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         mapStoreTestPath,
+		PathDBPath:         tmpPathDBPath,
 		PathDBCacheSize:    1024,
-		ResultsDBPath:      mapStoreTestPath,
+		ResultsDBPath:      tmpResultsDBPath,
 		ResultsDBCacheSize: 1024,
-		JournalPath:        journalDBTestPath,
+		JournalPath:        tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)

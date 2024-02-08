@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	"os"
 	"path"
 	"reflect"
 	"sort"
@@ -29,13 +28,6 @@ func init() {
 	gob.Register(&SyncJob{})
 	gob.Register(&MockJob{})
 }
-
-var (
-	// When running tests testMode can be set to true in individual test cases
-	// to allow on-disk artifacts such as databases to be automatically cleaned
-	// up after the test.
-	testMode = false
-)
 
 const (
 	// This many jobs for each RST configured on a particular path is guaranteed
@@ -96,12 +88,12 @@ type Manager struct {
 	// are kept. This store keeps a mapping of paths to Job(s). Note the inner
 	// map is a map of Job IDs to jobs (not RST IDs to jobs) so we can retain
 	// a configurable number of historical jobs for each path+RST combo.
-	pathStore *kvstore.MapStore[Job]
+	pathStore *kvstore.MapStore[map[string]Job]
 	// jobResultsStore is the store where the entries for jobs with work
 	// requests currently being handled by WorkerMgr are kept. This store keeps
 	// a mapping of JobIDs to to their WorkResult(s) (i.e., a JobResult).
 	// Note the inner map is a map of work request IDs to their results.
-	jobResultsStore *kvstore.MapStore[worker.WorkResult]
+	jobResultsStore *kvstore.MapStore[map[string]worker.WorkResult]
 	jobIDGenerator  *badger.Sequence
 	// A pointer to an initialized/started worker manager.
 	workerManager *workermgr.Manager
@@ -162,7 +154,7 @@ func (m *Manager) Start() error {
 	// We initialize databases in Manage() so we can ensure the DBs are closed properly when shutting down.
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
 	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
-	pathStore, closePathDB, err := kvstore.NewMapStore[Job](pathDBOpts, m.config.PathDBCacheSize, testMode)
+	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]Job](pathDBOpts, m.config.PathDBCacheSize)
 	if err != nil {
 		return fmt.Errorf("unable to setup paths DB: %w", err)
 	}
@@ -171,7 +163,7 @@ func (m *Manager) Start() error {
 
 	jobResultsDBOpts := badger.DefaultOptions(m.config.ResultsDBPath)
 	jobResultsDBOpts = jobResultsDBOpts.WithLogger(logger.NewBadgerLoggerBridge("jobResultsDB", m.log))
-	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[worker.WorkResult](jobResultsDBOpts, m.config.ResultsDBCacheSize, testMode)
+	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[map[string]worker.WorkResult](jobResultsDBOpts, m.config.ResultsDBCacheSize)
 	if err != nil {
 		return fmt.Errorf("unable to setup job results DB: %w", err)
 	}
@@ -182,42 +174,14 @@ func (m *Manager) Start() error {
 	// increasing integers we can use as job IDs. The journal should also be
 	// used to generate sequential job IDs.
 	// Ref: https://dgraph.io/docs/badger/get-started/#monotonically-increasing-integers
-
-	var journalDBPath string
-	if testMode {
-		journalDBPath, err = os.MkdirTemp(m.config.JournalPath, "journalDBTestMode")
-		if err != nil {
-			return err
-		}
-	} else {
-		journalDBPath = m.config.JournalPath
-	}
-
-	jobJournalDBOpts := badger.DefaultOptions(journalDBPath)
+	jobJournalDBOpts := badger.DefaultOptions(m.config.JournalPath)
 	jobJournalDBOpts = jobJournalDBOpts.WithLogger(logger.NewBadgerLoggerBridge("journalDB", m.log))
 	jobJournal, err := badger.Open(jobJournalDBOpts)
 	if err != nil {
 		return err
 	}
-	if testMode {
-		deferredFuncs = append(deferredFuncs, func() error {
-			var multiErr types.MultiError
-			err := jobJournal.Close()
-			if err != nil {
-				multiErr.Errors = append(multiErr.Errors, err)
-			}
-			err = os.RemoveAll(journalDBPath)
-			if err != nil {
-				multiErr.Errors = append(multiErr.Errors, err)
-			}
-			if len(multiErr.Errors) > 0 {
-				return &multiErr
-			}
-			return nil
-		})
-	} else {
-		deferredFuncs = append(deferredFuncs, func() error { return jobJournal.Close() })
-	}
+
+	deferredFuncs = append(deferredFuncs, func() error { return jobJournal.Close() })
 
 	// TODO: Evaluate if a bandwidth of 1000 is appropriate.
 	// Possibly this should be user configurable.
@@ -396,9 +360,24 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		// If we got a path prefix first get all jobs for that path prefix.
 		// If someone wanted to get all jobs they could provide a prefix of "/".
 
-		pathItems, err := m.pathStore.GetEntries(query.PathPrefix)
+		pathItems := make([]*kvstore.BadgerItem[map[string]Job], 0)
+		nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(query.PathPrefix))
 		if err != nil {
 			return nil, err
+		}
+		defer cleanupEntries()
+
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13 - If there were enough entries in
+		// the database that matched the path prefix we could run out of memory.
+		for {
+			entry, err := nextEntry()
+			if err != nil {
+				return nil, err
+			}
+			if entry == nil {
+				break
+			}
+			pathItems = append(pathItems, entry)
 		}
 
 		jobResponses := []*beeremote.JobResponse{}
@@ -486,6 +465,9 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("unable to create new entry for path %s while creating jobID %s: %w", job.GetPath(), job.GetID(), err)
+	} else {
+		// If we actually create the entry then we must initialize the value field.
+		pathEntry.Value = make(map[string]Job)
 	}
 	defer func() {
 		if err := commitAndReleasePath(); err != nil {
@@ -510,6 +492,9 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 			m.log.Error("unable to release job results", zap.Error(err))
 		}
 	}()
+
+	// We always create the jobResultEntry, so we always initialize its value field.
+	jobResultEntry.Value = make(map[string]worker.WorkResult)
 
 	// TODO: More complex handling of existing jobs for this path. In some cases
 	// we do support multiple jobs running for the same path. For example if the
@@ -800,7 +785,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			// We want to delete the entry before releasing the lock, otherwise its
 			// possible someone else slips in a new job for this path and we would
 			// loose it. This is why we use the DeleteEntry release flag here.
-			err = releasePathEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...)
+			err = releasePathEntry(kvstore.DeleteEntry)
 			if err != nil {
 				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to delete path entry: %w", err))
 				// If an error happens here we don't want to actually return the
@@ -925,7 +910,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 				},
 			}
 
-			if err := releaseResultsEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...); err != nil {
+			if err := releaseResultsEntry(kvstore.DeleteEntry); err != nil {
 				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error deleting results entry for job ID %s: %w", jobID, err))
 				if err := releasePathEntry(); err != nil {
 					multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error releasing entry for path %s: %w", path, err))
@@ -935,7 +920,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			delete(pathEntry.Value, jobID)
 			// Only clean up the path entry if there are no more jobs left for it:
 			if len(pathEntry.Value) == 0 {
-				if err = releasePathEntry([]kvstore.ReleaseFlag{kvstore.DeleteEntry}...); err != nil {
+				if err = releasePathEntry(kvstore.DeleteEntry); err != nil {
 					return nil, fmt.Errorf("error removing path %s after deleting job ID %s (no jobs remain for the path): %w", path, jobID, err)
 				}
 			} else {
@@ -984,7 +969,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // IMPORTANT: This should only be used when the state of a job's work requests
 // need to be modified on the assigned worker nodes. To update the job state in
 // reaction to job results returned by a worker node use updateJobResults().
-func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[worker.WorkResult], newState flex.NewState) bool {
+func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[map[string]worker.WorkResult], newState flex.NewState) bool {
 
 	ju := workermgr.JobUpdate{
 		JobID:       job.GetID(),
