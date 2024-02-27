@@ -34,7 +34,7 @@ type Manager struct {
 	// So we allocate a buffer once and reuse it.
 	buffer []byte
 	// Sequence IDs are not implemented yet in the meta service, so for now we'll have BeeWatch generate sequence IDs.
-	// TODO: https://linear.app/thinkparq/issue/BF-43/add-support-for-new-metadata-fields-and-event-types-to-beewatch
+	// TODO: https://github.com/ThinkParQ/bee-watch/issues/15
 	// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 	seqId uint64
 }

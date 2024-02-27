@@ -38,6 +38,20 @@ func deserialize(buf []byte, numBytes int) (*pb.Event, error) {
 	event.MissedSeq = binary.LittleEndian.Uint64(buf[16:24])
 	event.Type = pb.Event_Type(binary.LittleEndian.Uint32(buf[24:28]))
 
+	if event.FormatVersionMajor == 1 && event.FormatVersionMinor == 0 {
+		// Starting in BeeGFS v8 new event types were added and events now start at 1 with zero
+		// representing an invalid event. This allows backwards compatibility with the 1.0 events.
+		event.Type = event.Type + 1
+		if event.Type > 12 {
+			return &event, fmt.Errorf("received unknown event type for event version (major version: %d, minor version: %d): %d", event.GetFormatVersionMajor(), event.GetFormatVersionMinor(), event.Type)
+		}
+	} else if event.FormatVersionMajor != 2 || event.FormatVersionMinor != 0 {
+		return &event, fmt.Errorf("received unsupported event version (major version: %d, minor version: %d)", event.GetFormatVersionMajor(), event.GetFormatVersionMinor())
+	} else if event.Type == 0 {
+		// As of format version 2.0 we treat event type zero as invalid.
+		return &event, fmt.Errorf("received unknown event type: 0")
+	}
+
 	if numBytes < int(event.Size) {
 		// If the packet size we parsed is smaller than the buffer we were provided we should bail out to avoid a panic.
 		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", event.Size, numBytes)
