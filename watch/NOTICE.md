@@ -42,10 +42,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-## github.com/golang/protobuf
+## github.com/golang/protobuf/proto
 
 * License: BSD-3-Clause
-* Project URL: [github.com/golang/protobuf](https://github.com/golang/protobuf)
+* Project URL: [github.com/golang/protobuf/proto](https://github.com/golang/protobuf/proto)
 
 ### Original License
 ```
