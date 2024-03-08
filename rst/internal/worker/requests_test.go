@@ -27,7 +27,7 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 				State:   flex.RequestStatus_COMPLETED,
 				Message: "test message",
 			},
-			CompletedParts: []*flex.WorkResponse_Part{
+			Parts: []*flex.WorkResponse_Part{
 				{
 					PartNumber: 10,
 					EntityTag:  "etag10",
@@ -39,7 +39,6 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 					Checksum:   "checksum11",
 				},
 			},
-			RemainingParts: 100,
 		},
 	}
 

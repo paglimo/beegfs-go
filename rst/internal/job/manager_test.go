@@ -792,8 +792,7 @@ func TestUpdateJobResults(t *testing.T) {
 				State:   expectedStatus,
 				Message: expectedStatus.String(),
 			},
-			RemainingParts: 0,
-			CompletedParts: []*flex.WorkResponse_Part{},
+			Parts: []*flex.WorkResponse_Part{},
 		}
 
 		err = jobManager.updateJobResults(workResponse1)
@@ -827,8 +826,7 @@ func TestUpdateJobResults(t *testing.T) {
 				State:   expectedStatus,
 				Message: expectedStatus.String(),
 			},
-			RemainingParts: 0,
-			CompletedParts: []*flex.WorkResponse_Part{},
+			Parts: []*flex.WorkResponse_Part{},
 		}
 		err = jobManager.updateJobResults(workResponse2)
 		require.NoError(t, err)
@@ -852,8 +850,7 @@ func TestUpdateJobResults(t *testing.T) {
 			State:   flex.RequestStatus_COMPLETED,
 			Message: flex.RequestStatus_COMPLETED.String(),
 		},
-		RemainingParts: 0,
-		CompletedParts: []*flex.WorkResponse_Part{},
+		Parts: []*flex.WorkResponse_Part{},
 	}
 
 	workResponse2 := &flex.WorkResponse{
@@ -863,8 +860,7 @@ func TestUpdateJobResults(t *testing.T) {
 			State:   flex.RequestStatus_CANCELLED,
 			Message: flex.RequestStatus_CANCELLED.String(),
 		},
-		RemainingParts: 0,
-		CompletedParts: []*flex.WorkResponse_Part{},
+		Parts: []*flex.WorkResponse_Part{},
 	}
 
 	err = jobManager.updateJobResults(workResponse1)

@@ -164,7 +164,7 @@ func (j *SyncJob) Complete(client rst.Client, results map[string]worker.WorkResu
 		// package to reuse for BeeSync.
 		partsToFinish := make([]*flex.WorkResponse_Part, 0)
 		for _, r := range results {
-			partsToFinish = append(partsToFinish, r.WorkResponse.CompletedParts...)
+			partsToFinish = append(partsToFinish, r.WorkResponse.Parts...)
 		}
 		return client.FinishUpload(j.ExternalId, j.GetPath(), partsToFinish)
 	}
