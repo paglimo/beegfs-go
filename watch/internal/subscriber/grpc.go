@@ -26,8 +26,10 @@ type GRPCSubscriber struct {
 	client     pb.SubscriberClient
 	stream     pb.Subscriber_ReceiveEventsClient
 	recvStream chan *pb.Response
-	// recvMutex is used to ensure there is only ever one goroutine receiving responses.
-	recvMutex *sync.Mutex
+	// recvStreamActive is used to ensure there is only ever one goroutine receiving responses.
+	recvStreamActive bool
+	// recvStreamActiveMu coordinates access to recvStreamActive.
+	recvStreamActiveMu *sync.Mutex
 }
 
 var _ Interface = &GRPCSubscriber{} // Verify type satisfies interface.
@@ -41,8 +43,9 @@ func newGRPCSubscriber(config GrpcConfig) *GRPCSubscriber {
 	}
 
 	return &GRPCSubscriber{
-		GrpcConfig: config,
-		recvMutex:  &mutex,
+		GrpcConfig:         config,
+		recvStreamActive:   false,
+		recvStreamActiveMu: &mutex,
 	}
 }
 
@@ -115,7 +118,9 @@ func (s *GRPCSubscriber) Receive() (recvStream chan *pb.Response) {
 
 	// This is how we guarantee the method is idempotent and there is only one goroutine listening to responses.
 	// It also guarantees we don't try and reinitialize an in-use channel until it is closed.
-	if !s.recvMutex.TryLock() {
+	s.recvStreamActiveMu.Lock()
+	if s.recvStreamActive {
+		s.recvStreamActiveMu.Unlock()
 		// TODO: We don't have a logger on the subscribers anymore.
 		// Do we care enough about this to return it as a response somehow? Ideally as a specific error type?
 		// s.log.Warn("already listening for responses from this subscriber (returning existing receive stream channel)")
@@ -124,10 +129,17 @@ func (s *GRPCSubscriber) Receive() (recvStream chan *pb.Response) {
 
 	// If the channel was not yet initialized or closed we'll reinitialize it:
 	s.recvStream = make(chan *pb.Response)
+	s.recvStreamActive = true
+	s.recvStreamActiveMu.Unlock()
 
 	go func() {
 		defer close(s.recvStream)
-		defer s.recvMutex.Unlock()
+		defer func() {
+			s.recvStreamActiveMu.Lock()
+			s.recvStreamActive = false
+			s.recvStreamActiveMu.Unlock()
+		}()
+
 		for {
 			in, err := s.stream.Recv()
 			if err == io.EOF {
