@@ -14,6 +14,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/gobee/types"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -23,10 +24,8 @@ import (
 // Register custom types for serialization/deserialization via Gob when the
 // package is initialized.
 func init() {
-	gob.Register(&baseJob{})
+	gob.Register(&Job{})
 	gob.Register(&Segment{})
-	gob.Register(&SyncJob{})
-	gob.Register(&MockJob{})
 }
 
 const (
@@ -88,7 +87,7 @@ type Manager struct {
 	// are kept. This store keeps a mapping of paths to Job(s). Note the inner
 	// map is a map of Job IDs to jobs (not RST IDs to jobs) so we can retain
 	// a configurable number of historical jobs for each path+RST combo.
-	pathStore *kvstore.MapStore[map[string]Job]
+	pathStore *kvstore.MapStore[map[string]*Job]
 	// jobResultsStore is the store where the entries for jobs with work
 	// requests currently being handled by WorkerMgr are kept. This store keeps
 	// a mapping of JobIDs to to their WorkResult(s) (i.e., a JobResult).
@@ -154,7 +153,7 @@ func (m *Manager) Start() error {
 	// We initialize databases in Manage() so we can ensure the DBs are closed properly when shutting down.
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
 	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
-	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]Job](pathDBOpts, m.config.PathDBCacheSize)
+	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]*Job](pathDBOpts, m.config.PathDBCacheSize)
 	if err != nil {
 		return fmt.Errorf("unable to setup paths DB: %w", err)
 	}
@@ -283,7 +282,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 
 		workRequests := make([]*flex.WorkRequest, 0)
 		if request.GetIncludeWorkRequests() {
-			workRequests = job.GetWorkRequests()
+			workRequests = rst.RecreateWorkRequests(job.Get(), job.GetSegments())
 		}
 
 		workResults := []*beeremote.JobResponse_WorkResult{}
@@ -325,7 +324,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 
 			workRequests := make([]*flex.WorkRequest, 0)
 			if request.GetIncludeWorkRequests() {
-				workRequests = job.GetWorkRequests()
+				workRequests = rst.RecreateWorkRequests(job.Get(), job.GetSegments())
 			}
 
 			if request.GetIncludeWorkResults() {
@@ -360,7 +359,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		// If we got a path prefix first get all jobs for that path prefix.
 		// If someone wanted to get all jobs they could provide a prefix of "/".
 
-		pathItems := make([]*kvstore.BadgerItem[map[string]Job], 0)
+		pathItems := make([]*kvstore.BadgerItem[map[string]*Job], 0)
 		nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(query.PathPrefix))
 		if err != nil {
 			return nil, err
@@ -389,7 +388,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 
 				workRequests := make([]*flex.WorkRequest, 0)
 				if request.GetIncludeWorkRequests() {
-					workRequests = job.GetWorkRequests()
+					workRequests = rst.RecreateWorkRequests(job.Get(), job.GetSegments())
 				}
 
 				if request.GetIncludeWorkResults() {
@@ -457,17 +456,17 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	// TODO: Consider adding a CreateOrGetEntry method to the MapStore to
 	// simplify/optimize this. Or adding a flag to the existing method that will
 	// get the entry if it already exists.
-	pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(job.GetPath())
+	pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(job.Request.GetPath())
 	if err == kvstore.ErrEntryAlreadyExistsInDB || err == kvstore.ErrEntryAlreadyExistsInCache {
-		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.GetPath())
+		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.Request.GetPath())
 		if err != nil {
-			return nil, fmt.Errorf("unable to get existing entry for path %s while creating job ID %s: %w", job.GetPath(), job.GetID(), err)
+			return nil, fmt.Errorf("unable to get existing entry for path %s while creating job ID %s: %w", job.Request.GetPath(), job.GetId(), err)
 		}
 	} else if err != nil {
-		return nil, fmt.Errorf("unable to create new entry for path %s while creating jobID %s: %w", job.GetPath(), job.GetID(), err)
+		return nil, fmt.Errorf("unable to create new entry for path %s while creating jobID %s: %w", job.Request.GetPath(), job.GetId(), err)
 	} else {
 		// If we actually create the entry then we must initialize the value field.
-		pathEntry.Value = make(map[string]Job)
+		pathEntry.Value = make(map[string]*Job)
 	}
 	defer func() {
 		if err := commitAndReleasePath(); err != nil {
@@ -475,7 +474,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		}
 	}()
 
-	jobResultEntry, commitAndReleaseJobResults, err := m.jobResultsStore.CreateAndLockEntry(job.GetID())
+	jobResultEntry, commitAndReleaseJobResults, err := m.jobResultsStore.CreateAndLockEntry(job.GetId())
 	if err != nil {
 		// Mostly likely an error here either means there was an existing entry,
 		// or an issue accessing the DB. In theory we should never have an
@@ -485,7 +484,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		// right time as the deferred commitAndRelease funcs are being called).
 		// But whenever processNewJobRequest is called it always generated a new
 		// job ID. Either way something has gone horribly wrong, lets bail out.
-		return nil, fmt.Errorf("unable to create job result entry for job ID %s: %w", job.GetID(), err)
+		return nil, fmt.Errorf("unable to create job result entry for job ID %s: %w", job.GetId(), err)
 	}
 	defer func() {
 		if err := commitAndReleaseJobResults(); err != nil {
@@ -505,15 +504,15 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		jobConflict := false
 		// Add jobs in a terminal state to a map based on their RST ID.
 		// We limit the number of historical jobs kept for each RST.
-		terminalJobsByRST := make(map[string][]Job, 0)
+		terminalJobsByRST := make(map[string][]*Job, 0)
 
 		for _, existingJob := range pathEntry.Value {
-			if existingJob.GetRSTID() == job.GetRSTID() && !existingJob.InTerminalState() {
+			if existingJob.Request.GetRemoteStorageTarget() == job.Request.GetRemoteStorageTarget() && !existingJob.InTerminalState() {
 				// We found an active job for this RST. We shouldn't try to start a new job but we also shouldn't clean up the active job.
 				jobConflict = true
 			} else if existingJob.InTerminalState() {
 				// Found a job in a terminal state, add it to the list to check if it should be cleaned up:
-				terminalJobsByRST[existingJob.GetRSTID()] = append(terminalJobsByRST[existingJob.GetRSTID()], existingJob)
+				terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()] = append(terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()], existingJob)
 			}
 			// Otherwise we found a job for a different RST not in a terminal state. Don't touch it.
 		}
@@ -525,19 +524,19 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 			if len(jobsForRST) > maxJobEntriesPerRST {
 				// Sort the slice so we can delete old jobs based on the lowest
 				// job ID until we reach minJobEntriesPerRST.
-				sort.Slice(jobsForRST, func(i, j int) bool { return jobsForRST[i].GetID() < jobsForRST[j].GetID() })
+				sort.Slice(jobsForRST, func(i, j int) bool { return jobsForRST[i].GetId() < jobsForRST[j].GetId() })
 				for _, gcJob := range jobsForRST[:minJobEntriesPerRST+1] {
-					err := m.jobResultsStore.DeleteEntry(gcJob.GetID())
+					err := m.jobResultsStore.DeleteEntry(gcJob.GetId())
 					if err != nil {
 						// Warn and don't continue trying to run garbage
 						// collection if we get an error. Returning the error
 						// here could be confusing since this is an error
 						// cleaning up a different job while trying to create a
 						// new one.
-						m.log.Warn("error running garbage collection for job in terminal state (unable to remove results entry)", zap.Error(err), zap.Any("jobID", gcJob.GetID()))
+						m.log.Warn("error running garbage collection for job in terminal state (unable to remove results entry)", zap.Error(err), zap.Any("jobID", gcJob.GetId()))
 						break cleanupTerminalJobs
 					}
-					delete(pathEntry.Value, gcJob.GetID())
+					delete(pathEntry.Value, gcJob.GetId())
 				}
 			}
 		}
@@ -555,37 +554,37 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 			// with a higher ID that would be retained longer than the active
 			// job. We want the job with the highest ID for a particular RST
 			// to always be the latest job result for that path+RST combo.
-			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %s (cancel or wait for it to complete first)", job.GetPath(), job.GetRSTID())
+			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %s (cancel or wait for it to complete first)", job.Request.GetPath(), job.Request.GetRemoteStorageTarget())
 		}
 
 	}
 
-	rst, ok := m.workerManager.RemoteStorageTargets[job.GetRSTID()]
+	rstClient, ok := m.workerManager.RemoteStorageTargets[job.Request.GetRemoteStorageTarget()]
 	if !ok {
-		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.GetRSTID())
+		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.Request.GetRemoteStorageTarget())
 	}
 
-	jobSubmission, retry, err := job.Allocate(rst)
+	jobSubmission, retry, err := job.GenerateSubmission(rstClient)
 	if err != nil && !retry {
-		return nil, fmt.Errorf("unable to create job due to an unrecoverable error during allocation: %w", err)
+		return nil, fmt.Errorf("unable to create job due to an unrecoverable error generating the submission: %w", err)
 	} else if err != nil {
 		// If an temporary error occurred that can be retried still go forward
 		// with creating the job and just leave the results empty.
-		job.Status().State = flex.RequestStatus_ERROR
-		job.Status().Message = err.Error()
-		pathEntry.Value[job.GetID()] = job
-		jobResultEntry.Metadata["path"] = job.GetPath()
+		job.GetStatus().State = flex.RequestStatus_ERROR
+		job.GetStatus().Message = err.Error()
+		pathEntry.Value[job.GetId()] = job
+		jobResultEntry.Metadata["path"] = job.Request.GetPath()
 		workResults := make(map[string]worker.WorkResult)
 		jobResultEntry.Value = workResults
 		// TODO: Push to a queue of jobs that need to be periodically retried by
 		// a separate go routine. Note error is not considered a terminal state
 		// so subsequent job requests for the same path/RST will be rejected
 		// until this one is cancelled. This handler will need to periodically
-		// retry Allocate() until there is no error then submit the job
+		// retry GenerateSubmission() until there is no error then submit the job
 		// submission to worker manager.
 		return &beeremote.JobResponse{
 			Job:          job.Get(),
-			WorkRequests: job.GetWorkRequests(),
+			WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 			WorkResults:  getWorkResultsForResponse(workResults),
 		}, nil
 	}
@@ -593,7 +592,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	// At this point we have a properly formed job request that should be
 	// runnable barring any ephemeral issues. Errors from this point onwards
 	// should be indicated by the job status.
-	pathEntry.Value[job.GetID()] = job
+	pathEntry.Value[job.GetId()] = job
 	workResults, newStatus := m.workerManager.SubmitJob(jobSubmission)
 
 	// TODO: If we crashed here there could be WRs scheduled to worker nodes but
@@ -601,16 +600,16 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	// a crash we'll replay the request journal and broadcast to all workers
 	// they should cancel any work requests for jobs in the journal.
 
-	jobResultEntry.Metadata["path"] = job.GetPath()
+	jobResultEntry.Metadata["path"] = job.Request.GetPath()
 	jobResultEntry.Value = workResults
 
-	job.Status().State = newStatus.State
-	job.Status().Message = newStatus.Message
-	pathEntry.Value[job.GetID()] = job
+	job.GetStatus().State = newStatus.State
+	job.GetStatus().Message = newStatus.Message
+	pathEntry.Value[job.GetId()] = job
 
 	return &beeremote.JobResponse{
 		Job:          job.Get(),
-		WorkRequests: job.GetWorkRequests(),
+		WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 		WorkResults:  getWorkResultsForResponse(workResults),
 	}, nil
 }
@@ -694,34 +693,34 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		for _, job := range pathEntry.Value {
 			if jobUpdate.NewState == flex.NewState_DELETE {
 				if !job.InTerminalState() {
-					job.Status().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					job.GetStatus().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
 					response.Ok = false
 
 					// Still get the results as it would be confusing to return empty results otherwise.
 					// They may also be needed to troubleshoot why the job is not in a terminal state.
-					resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
+					resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetId())
 					if err != nil {
-						multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to update job ID %s due to an error retrieving job results: %w", job.GetID(), err))
+						multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to update job ID %s due to an error retrieving job results: %w", job.GetId(), err))
 						continue
 					}
 
 					workResults := getWorkResultsForResponse(resultsEntry.Value)
 					err = releaseResultsEntry()
 					if err != nil {
-						multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error committing and releasing results for job ID %s: %w", job.GetID(), err))
+						multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error committing and releasing results for job ID %s: %w", job.GetId(), err))
 						continue
 					}
 
 					response.Responses = append(response.Responses, &beeremote.JobResponse{
 						Job:          job.Get(),
-						WorkRequests: job.GetWorkRequests(),
+						WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 						WorkResults:  workResults,
 					})
 					continue
 				}
 
 				// By default only delete jobs in a terminal state other than completed:
-				if job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+				if job.GetStatus().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
 					continue
 				}
 
@@ -729,23 +728,23 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 				// flag on release because after we've reached a terminal state
 				// the resultsEntry for a particular job should only ever be
 				// modified by someone holding the lock on the job.
-				err := m.jobResultsStore.DeleteEntry(job.GetID())
+				err := m.jobResultsStore.DeleteEntry(job.GetId())
 				if err != nil {
-					multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to delete job ID %s due to an error cleaning up results: %w", job.GetID(), err))
+					multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to delete job ID %s due to an error cleaning up results: %w", job.GetId(), err))
 					continue
 				}
-				jobsSafeToDelete = append(jobsSafeToDelete, job.GetID())
-				job.Status().Message = "job scheduled for deletion"
+				jobsSafeToDelete = append(jobsSafeToDelete, job.GetId())
+				job.GetStatus().Message = "job scheduled for deletion"
 				response.Responses = append(response.Responses, &beeremote.JobResponse{
 					Job:          job.Get(),
-					WorkRequests: job.GetWorkRequests(),
+					WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 					WorkResults:  make([]*beeremote.JobResponse_WorkResult, 0),
 				})
 				continue
 			}
 
 			// Otherwise handle any other updates besides deletions:
-			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetID())
+			resultsEntry, releaseResultsEntry, err := m.jobResultsStore.GetAndLockEntry(job.GetId())
 			if err != nil {
 				// We may want to add special handling if the err was a
 				// badger.ErrKeyNotFound. There may be some corner cases where
@@ -753,7 +752,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 				// processNewJobRequest should always create a pathEntry and
 				// resultsEntry for every job. So until the need arises just
 				// return an error.
-				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to update job ID %s due to an error retrieving job results: %w", job.GetID(), err))
+				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to update job ID %s due to an error retrieving job results: %w", job.GetId(), err))
 				continue
 			}
 
@@ -766,12 +765,12 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			workResults := getWorkResultsForResponse(resultsEntry.Value)
 			err = releaseResultsEntry()
 			if err != nil {
-				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error committing and releasing results for job ID %s: %w", job.GetID(), err))
+				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("error committing and releasing results for job ID %s: %w", job.GetId(), err))
 				continue
 			}
 			response.Responses = append(response.Responses, &beeremote.JobResponse{
 				Job:          job.Get(),
-				WorkRequests: job.GetWorkRequests(),
+				WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 				WorkResults:  workResults,
 			})
 		}
@@ -857,17 +856,17 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		}
 
 		if jobUpdate.NewState == flex.NewState_DELETE {
-			if !job.InTerminalState() || (job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs) {
+			if !job.InTerminalState() || (job.GetStatus().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs) {
 
 				var responseMessage string
 
-				if job.Status().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
+				if job.GetStatus().State == flex.RequestStatus_COMPLETED && !jobUpdate.DeleteCompletedJobs {
 					// Note we don't set a message here to be consistent with how this is handled
 					// when updating jobs by path.
 					//status.Message = "refusing to delete completed job (deleted completed jobs flag is not set)"
 					responseMessage = "refusing to delete completed job (deleted completed jobs flag is not set)"
 				} else {
-					job.Status().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
+					job.GetStatus().Message = "unable to delete job that has not reached a terminal state (cancel it first)"
 					responseMessage = "unable to delete job that has not reached a terminal state (cancel it first)"
 				}
 
@@ -877,7 +876,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 					Responses: []*beeremote.JobResponse{
 						{
 							Job:          job.Get(),
-							WorkRequests: job.GetWorkRequests(),
+							WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 							WorkResults:  getWorkResultsForResponse(resultsEntry.Value),
 						},
 					},
@@ -897,14 +896,14 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 			// We need to build the response before releasing anything.
 			// This is just discarded if anything goes wrong.
-			job.Status().Message = "job scheduled for deletion"
+			job.GetStatus().Message = "job scheduled for deletion"
 			response := &beeremote.UpdateJobResponse{
 				Ok:      true,
 				Message: "success",
 				Responses: []*beeremote.JobResponse{
 					{
 						Job:          job.Get(),
-						WorkRequests: job.GetWorkRequests(),
+						WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 						WorkResults:  make([]*beeremote.JobResponse_WorkResult, 0),
 					},
 				},
@@ -948,7 +947,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			Responses: []*beeremote.JobResponse{
 				{
 					Job:          job.Get(),
-					WorkRequests: job.GetWorkRequests(),
+					WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 					WorkResults:  getWorkResultsForResponse(resultsEntry.Value),
 				},
 			},
@@ -969,10 +968,10 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // IMPORTANT: This should only be used when the state of a job's work requests
 // need to be modified on the assigned worker nodes. To update the job state in
 // reaction to job results returned by a worker node use updateJobResults().
-func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[map[string]worker.WorkResult], newState flex.NewState) bool {
+func (m *Manager) updateJobState(job *Job, resultsEntry *kvstore.CacheEntry[map[string]worker.WorkResult], newState flex.NewState) bool {
 
 	ju := workermgr.JobUpdate{
-		JobID:       job.GetID(),
+		JobID:       job.GetId(),
 		WorkResults: resultsEntry.Value,
 		NewState:    newState,
 	}
@@ -985,11 +984,11 @@ func (m *Manager) updateJobState(job Job, resultsEntry *kvstore.CacheEntry[map[s
 		updatedResults, ok = m.workerManager.UpdateJob(ju)
 
 		if !ok {
-			job.Status().State = flex.RequestStatus_FAILED
-			job.Status().Message = "error cancelling job (review work results for details)"
+			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().Message = "error cancelling job (review work results for details)"
 		} else {
-			job.Status().State = flex.RequestStatus_CANCELLED
-			job.Status().Message = "job cancelled"
+			job.GetStatus().State = flex.RequestStatus_CANCELLED
+			job.GetStatus().Message = "job cancelled"
 		}
 		resultsEntry.Value = updatedResults
 		m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
@@ -1058,36 +1057,36 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	// cancelled the job. Perhaps we treat the overall job state as cancelled in
 	// this scenario?
 	if !allSameState {
-		job.Status().State = flex.RequestStatus_FAILED
-		job.Status().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
+		job.GetStatus().State = flex.RequestStatus_FAILED
+		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
 		return nil
 	}
 
-	rst, ok := m.workerManager.RemoteStorageTargets[job.GetRSTID()]
+	rst, ok := m.workerManager.RemoteStorageTargets[job.Request.GetRemoteStorageTarget()]
 	if !ok {
-		return fmt.Errorf("unable to complete job because the RST does not exist: %s", job.GetRSTID())
+		return fmt.Errorf("unable to complete job because the RST does not exist: %s", job.Request.GetRemoteStorageTarget())
 	}
 
 	switch e.Status().State {
 	case flex.RequestStatus_CANCELLED:
 		if err := job.Complete(rst, resultsEntry.Value, true); err != nil {
-			job.Status().State = flex.RequestStatus_FAILED
-			job.Status().Message = "error cancelling job " + err.Error()
+			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().Message = "error cancelling job " + err.Error()
 		} else {
-			job.Status().State = flex.RequestStatus_CANCELLED
-			job.Status().Message = "successfully cancelled job"
+			job.GetStatus().State = flex.RequestStatus_CANCELLED
+			job.GetStatus().Message = "successfully cancelled job"
 		}
 	case flex.RequestStatus_COMPLETED:
 		if err := job.Complete(rst, resultsEntry.Value, false); err != nil {
-			job.Status().State = flex.RequestStatus_FAILED
-			job.Status().Message = "error completing job " + err.Error()
+			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().Message = "error completing job " + err.Error()
 		} else {
-			job.Status().State = flex.RequestStatus_COMPLETED
-			job.Status().Message = "successfully completed job"
+			job.GetStatus().State = flex.RequestStatus_COMPLETED
+			job.GetStatus().Message = "successfully completed job"
 		}
 	default:
-		job.Status().State = e.Status().State
-		job.Status().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
+		job.GetStatus().State = e.Status().State
+		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
 		// We return an error here because this is an internal problem that
 		// shouldn't happen and hopefully a test will catch it. Most likely some
 		// new terminal states were added and this function needs to be updated.

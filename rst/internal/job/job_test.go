@@ -9,7 +9,7 @@ import (
 )
 
 func TestInTerminalState(t *testing.T) {
-	baseJob := &baseJob{
+	job := &Job{
 		Job: &beeremote.Job{
 			Request: &beeremote.JobRequest{},
 			Status: &flex.RequestStatus{
@@ -17,12 +17,11 @@ func TestInTerminalState(t *testing.T) {
 			},
 		},
 	}
-	job := &MockJob{baseJob: baseJob}
 	assert.True(t, job.InTerminalState())
 
-	job.Status().State = flex.RequestStatus_CANCELLED
+	job.GetStatus().State = flex.RequestStatus_CANCELLED
 	assert.True(t, job.InTerminalState())
 
-	job.Status().State = flex.RequestStatus_RUNNING
+	job.GetStatus().State = flex.RequestStatus_RUNNING
 	assert.False(t, job.InTerminalState())
 }

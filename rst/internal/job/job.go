@@ -9,66 +9,15 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
 )
 
-// Job represents an interface for tasks that can be managed by BeeRemote.
-// Common methods like Status() are implemented by baseJob. Methods that provide
-// functionality specific to a particular job type (like Allocate()) must be
-// implemented by the various concrete job types.
-type Job interface {
-	// Allocate creates a JobSubmission that can be executed by WorkerMgr on the
-	// appropriate work node(s) based on the job type. When an error occurs
-	// retry will be false if the job request is invalid, typically because the
-	// RST and job type are incompatible. Otherwise it will be true if an
-	// ephemeral issue occurred, typically an issue contacting the RST to setup
-	// any prerequisites such as creating a multipart upload.
-	Allocate(rst.Client) (jobSubmission workermgr.JobSubmission, retry bool, err error)
-	// GetWorkRequests is used to generate work requests for a job based on its
-	// segments. Because WorkRequests duplicate a lot of the information
-	// contained in the Job they are not stored on-disk. Instead they are
-	// initially generated when Allocate() is called to create a JobSubmission,
-	// and can be subsequently recreated as needed for troubleshooting.
-	GetWorkRequests() []*flex.WorkRequest
-	// Complete should always be called before moving the job status to a
-	// terminal state. If the job completed successfully and all work results
-	// are complete then abort should be false, otherwise it can be set to true
-	// to cancel the job. The actions it takes depends on the job and RST type.
-	// For example completing or aborting a multipart upload for a sync job to
-	// an S3 target.
-	Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error
-	// GetPath should return the BeeGFS path typically used as the key when
-	// retrieving Jobs from the DB.
-	GetPath() string
-	// GetID should return the job ID generated when the job was created.
-	GetID() string
-	// GetRST should return the ID of the RST this job was created for.
-	// This is used to determine if a job already exists for a particular
-	// RST and should be rejected. An empty string should be returned
-	// if RST has no meaning for a particular job type.
-	GetRSTID() string
-	// Status returns a pointer to the status of the overall job. Because it
-	// returns a pointer the status and/or message can be updated directly. This
-	// allows you to modify one but not the other field (commonly message can
-	// change but status should not). The state should encompass the results for
-	// individual work requests. For example if some WRs are finished and others
-	// are still running the state would be RUNNING.
-	Status() *flex.RequestStatus
-	// InTerminalState returns true if the job has reached a state it would not
-	// continue without user interaction. Notably this indicates there are no active
-	// work requests and the job is safe to be deleted without leaving orphaned
-	// requests on worker nodes.
-	InTerminalState() bool
-	// Get returns the protocol buffer defined message representing a single Job.
-	Get() *beeremote.Job
-}
-
-// baseJob defines the fields and methods that apply to all job types.
-// Individual jobs should embed a pointer to baseJob.
-type baseJob struct {
+// Job represents a task that can be managed by BeeRemote.
+type Job struct {
 	// By directly storing the protobuf defined Job we can quickly return
 	// responses to users about the current status of their jobs.
 	*beeremote.Job
@@ -76,45 +25,122 @@ type baseJob struct {
 	Segments []*Segment
 }
 
-func (j *baseJob) Get() *beeremote.Job {
+// Get() returns the protocol buffer defined message representing a single Job.
+//
+// IMPORTANT: This method returns a reference to a Job instance. Modifying the returned object
+// directly affects the original Job. This approach should not be used when you need a deep copy of
+// the Job for modifications or initializations of individual fields on a new instance, such as
+// status of a derived work request. For those cases, use proto.Clone() to create a deep copy of the
+// Job or particular field (like status), ensuring that changes do not impact the original instance.
+func (j *Job) Get() *beeremote.Job {
 	return j.Job
 }
 
-func (j *baseJob) GetRSTID() string {
-	return j.GetRequest().RemoteStorageTarget
+// GetSegments() is used anywhere we need a slice of the protobuf defined segments. Notably for use
+// with rst.RecreateWorkRequests(). This is needed because in many places we can't directly use
+// j.Segments because the entries are the a wrapper type around WorkRequest_Segment so they can be
+// stored in the DB. It would be nice to optimize all of this, but for most jobs this should only
+// need to be called once when the job is created.
+func (j *Job) GetSegments() []*flex.WorkRequest_Segment {
+	segments := make([]*flex.WorkRequest_Segment, 0, len(j.Segments))
+	for _, s := range j.Segments {
+		segments = append(segments, s.segment)
+	}
+	return segments
 }
 
-// GetPath returns the path to the BeeGFS entry this job is running against.
-func (j *baseJob) GetPath() string {
-	return j.Request.GetPath()
-}
-
-// GetID returns the job ID.
-func (j *baseJob) GetID() string {
-	return j.GetId()
-}
-
-func (j *baseJob) Status() *flex.RequestStatus {
-	return j.GetStatus()
-}
-
-// InTerminalState() indicates the job is no longer active, cannot be restarted,
-// and will not conflict with a new job. This should mirror the
-// InTerminalState() method for WorkResults.
-func (j *baseJob) InTerminalState() bool {
-	status := j.Status()
+// InTerminalState() returns true the job cannot cannot be restarted, and there are no active work
+// requests that would conflict with a new job. Jobs in this state are safe to be deleted without
+// leaving orphaned requests on worker nodes. This should mirror the InTerminalState() method for
+// WorkResults.
+func (j *Job) InTerminalState() bool {
+	status := j.GetStatus()
 	return status.State == flex.RequestStatus_COMPLETED || status.State == flex.RequestStatus_CANCELLED
 }
 
+// GenerateSubmission creates a JobSubmission containing one or more work requests that can be
+// executed by WorkerMgr on the appropriate work node(s) based on the job type. Requests are
+// generated based on the RST taking into consideration file size, worker node availability,
+// operation type, and transfer method (S3, POSIX, etc.). When an error occurs retry will be false
+// if the job request is invalid, typically because the RST and job type are incompatible. Otherwise
+// it will be true if an ephemeral issue occurred, typically an issue contacting the RST to setup
+// any prerequisites such as creating a multipart upload.
+//
+// We intentionally don't store individual work requests requests on-disk as they contain a lot of
+// duplicate information (considering each BeeSync node needs a copy of the request). Instead we
+// just store the segments and ensure GenerateSubmission() is idempotent. As a result
+// GenerateSubmission() will not regenerate segments after they are initially generated and can be
+// used to regenerate the original WorkSubmission. This allows GenerateSubmission() to be called
+// multiple times to check on the status of outstanding work requests (e.g., after an app crash or
+// because a user requests this).
+//
+// IMPORTANT: After initially generating segments subsequent calls to GenerateSubmission will not
+// recheck the size of the file to determine if the generated segments are still valid, the original
+// segments will always be returned. This is to discourage misuse of the GenerateSubmission()
+// function as a method to determine if a file has changed and it is safe to resume a job or if it
+// should be cancelled. It also ensures even if the file changes the original job submission can be
+// recreated for troubleshooting.
+func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission, bool, error) {
+
+	var workRequests []*flex.WorkRequest
+
+	if j.Segments == nil {
+		stat, err := filesystem.MountPoint.Stat(j.Request.GetPath())
+		if err != nil {
+			// The most likely reason for an error is the path wasn't found because
+			// we got a job request for a file in BeeGFS that didn't exist or was
+			// removed after the job request was submitted. Less likely there was
+			// some transient network/other issue preventing us from talking to
+			// BeeGFS that could actually be retried. Until there is a reason to add
+			// more complex error handling lets just treat all stat errors as fatal.
+			return workermgr.JobSubmission{}, false, err
+		}
+		fileSize := stat.Size()
+		var canRetry bool
+		j.ExternalId, workRequests, canRetry, err = rstClient.GenerateRequests(j.Get(), fileSize, 0)
+		if err != nil {
+			return workermgr.JobSubmission{}, canRetry, err
+		}
+
+		j.Segments = make([]*Segment, 0, len(workRequests))
+		for _, wr := range workRequests {
+			seg := proto.Clone(wr.Segment).(*flex.WorkRequest_Segment)
+			j.Segments = append(j.Segments, &Segment{segment: seg})
+		}
+
+	} else {
+		workRequests = rst.RecreateWorkRequests(j.Get(), j.GetSegments())
+	}
+
+	return workermgr.JobSubmission{
+		JobID:        j.GetId(),
+		WorkRequests: workRequests,
+	}, false, nil
+}
+
+// Complete should always be called before moving the job status to a terminal state. If the job
+// completed successfully and all work results are complete then abort should be false, otherwise it
+// can be set to true to cancel the job. The actions it takes depends on the job and RST type. For
+// example completing or aborting a multipart upload for a sync job to an S3 target. Note this is
+// largely just a wrapper around the rst.Client CompleteRequests method to handle converting between
+// data types used by the Job and the RST packages.
+func (j *Job) Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error {
+	workResponses := make([]*flex.WorkResponse, 0, len(results))
+	for _, r := range results {
+		workResponses = append(workResponses, r.WorkResponse)
+	}
+	return client.CompleteRequests(j.Get(), workResponses, abort)
+}
+
 // New is the standard way to generate a Job from a JobRequest.
-func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error) {
+func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error) {
 
 	jobID, err := jobSeq.Next()
 	if err != nil {
 		return nil, err
 	}
 
-	baseJob := &baseJob{
+	newJob := &Job{
 		Job: &beeremote.Job{
 			Id:      fmt.Sprint(jobID),
 			Request: jobRequest,
@@ -127,11 +153,9 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 
 	switch jobRequest.Type.(type) {
 	case *beeremote.JobRequest_Sync:
-		job := &SyncJob{baseJob: baseJob}
-		return job, nil
+		return newJob, nil
 	case *beeremote.JobRequest_Mock:
-		job := &MockJob{baseJob: baseJob}
-		return job, nil
+		return newJob, nil
 	}
 	return nil, fmt.Errorf("bad job request")
 }
@@ -148,7 +172,7 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (Job, error)
 // special handling these methods can simply call the GobEncode/GobDecode
 // methods of the base job. Don't forget the to update the Job package init()
 // function to add `gob.Register(&MyType{})` for any new types.
-func (j *baseJob) GobEncode() ([]byte, error) {
+func (j *Job) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
 	// the oneof type field in the Job.JobRequest message.
@@ -191,7 +215,7 @@ func (j *baseJob) GobEncode() ([]byte, error) {
 // special handling these methods can simply call the GobEncode/GobDecode
 // methods of the base job. Don't forget the to update the Job package init()
 // function to add `gob.Register(&MyType{})` for any new types.
-func (j *baseJob) GobDecode(data []byte) error {
+func (j *Job) GobDecode(data []byte) error {
 
 	jobFieldLength := binary.BigEndian.Uint16(data[:2])
 	jobData := data[2 : 2+jobFieldLength]
@@ -221,11 +245,11 @@ func (j *baseJob) GobDecode(data []byte) error {
 // Segment is a wrapper around the protobuf defined Segment type to
 // allow encoding/decoding to work properly through encoding/gob.
 type Segment struct {
-	segment flex.WorkRequest_Segment
+	segment *flex.WorkRequest_Segment
 }
 
 func (s *Segment) GobEncode() ([]byte, error) {
-	segmentData, err := proto.Marshal(&s.segment)
+	segmentData, err := proto.Marshal(s.segment)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +259,11 @@ func (s *Segment) GobEncode() ([]byte, error) {
 }
 
 func (s *Segment) GobDecode(data []byte) error {
-	err := proto.Unmarshal(data, &s.segment)
+	if s.segment == nil {
+		s.segment = &flex.WorkRequest_Segment{}
+	}
+
+	err := proto.Unmarshal(data, s.segment)
 
 	return err
 }

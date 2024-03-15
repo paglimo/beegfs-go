@@ -13,7 +13,6 @@ import (
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/filesystem"
-	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap/zaptest"
@@ -114,12 +113,16 @@ func TestManage(t *testing.T) {
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
 	require.NoError(t, jobManager.Start())
 
+	filesystem.MountPoint, err = filesystem.New("mock")
+	require.NoError(t, err)
+	filesystem.MountPoint.CreateWriteClose("/test/myfile", make([]byte, 0))
+
 	// When we initially submit a job the state should be scheduled:
 	testJobRequest := beeremote.JobRequest{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
 		RemoteStorageTarget: "0",
 	}
 
@@ -165,7 +168,7 @@ func TestManage(t *testing.T) {
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
 		RemoteStorageTarget: "1",
 	}
 	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
@@ -278,19 +281,24 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
 	require.NoError(t, jobManager.Start())
 
+	filesystem.MountPoint, err = filesystem.New("mock")
+	require.NoError(t, err)
+	filesystem.MountPoint.CreateWriteClose("/test/myfile", make([]byte, 10))
+	filesystem.MountPoint.CreateWriteClose("/test/myfile2", make([]byte, 20))
+
 	// Submit two jobs for testing:
 	testJobRequest1 := beeremote.JobRequest{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
 		RemoteStorageTarget: "0",
 	}
 	testJobRequest2 := beeremote.JobRequest{
 		Path:                "/test/myfile2",
 		Name:                "test job 2",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 2}},
 		RemoteStorageTarget: "1",
 	}
 
@@ -512,13 +520,17 @@ func TestManageErrorHandling(t *testing.T) {
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
 	require.NoError(t, jobManager.Start())
 
+	filesystem.MountPoint, err = filesystem.New("mock")
+	require.NoError(t, err)
+	filesystem.MountPoint.CreateWriteClose("/test/myfile", make([]byte, 30))
+
 	// When we initially submit a job the state should be cancelled if any work
 	// requests aren't scheduled but were able to be cancelled:
 	testJobRequest := beeremote.JobRequest{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 4}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
 		RemoteStorageTarget: "0",
 	}
 	jobManager.JobRequests <- &testJobRequest
@@ -638,7 +650,7 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Equal(t, flex.RequestStatus_CANCELLED, updateJobResponse.Responses[0].Job.Status.State)
 }
 
-func TestAllocationFailure(t *testing.T) {
+func TestGenerateSubmissionFailure(t *testing.T) {
 	// Set setup:
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
@@ -652,19 +664,12 @@ func TestAllocationFailure(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupJournalDBPath(t)
 
-	path := "/foo/bar"
-	fileSize := int64(1 << 20)
 	logger := zaptest.NewLogger(t)
 
 	// We don't need a full worker manager for this test.
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
 	workerManager, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets)
 	require.NoError(t, err)
-
-	mockClient, ok := workerManager.RemoteStorageTargets["1"].(*rst.MockClient)
-	require.True(t, ok, "likely a change in the test broke this check")
-	mockClient.On("GetType").Return(rst.S3)
-	mockClient.On("RecommendedSegments", fileSize).Return(4, 2)
 
 	jobMgrConfig := Config{
 		PathDBPath:         tmpPathDBPath,
@@ -678,11 +683,11 @@ func TestAllocationFailure(t *testing.T) {
 	require.NoError(t, jobManager.Start())
 
 	filesystem.MountPoint, err = filesystem.New("mock")
-	// Start with no files in the MockFS:
+	// Intentionally don't create any files in the MockFS.
 
 	require.NoError(t, err)
 	jobRequest := &beeremote.JobRequest{
-		Path:                path,
+		Path:                "/foo/bar",
 		RemoteStorageTarget: "1",
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &flex.SyncJob{
@@ -691,16 +696,8 @@ func TestAllocationFailure(t *testing.T) {
 		},
 	}
 
-	// Submit a request for an unknown operation:
-	response, err := jobManager.SubmitJobRequest(jobRequest)
-	assert.ErrorIs(t, err, ErrUnknownJobOp)
-	assert.Nil(t, response)
-
-	// Fix the operation:
-	jobRequest.GetSync().Operation = flex.SyncJob_UPLOAD
-
 	// Submit a job request for a file that doesn't exist:
-	response, err = jobManager.SubmitJobRequest(jobRequest)
+	response, err := jobManager.SubmitJobRequest(jobRequest)
 	assert.Error(t, err)
 	var pathError *fs.PathError
 	assert.ErrorAs(t, err, &pathError)
@@ -769,11 +766,15 @@ func TestUpdateJobResults(t *testing.T) {
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
 	require.NoError(t, jobManager.Start())
 
+	filesystem.MountPoint, err = filesystem.New("mock")
+	require.NoError(t, err)
+	filesystem.MountPoint.CreateWriteClose("/test/myfile", make([]byte, 15))
+
 	testJobRequest := &beeremote.JobRequest{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: &beeremote.MockJob{NumTestSegments: 2}},
+		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 2}},
 		RemoteStorageTarget: "0",
 	}
 
