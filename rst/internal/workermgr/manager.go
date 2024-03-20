@@ -1,6 +1,7 @@
 package workermgr
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"reflect"
@@ -56,7 +57,7 @@ type JobUpdate struct {
 	NewState    flex.NewState
 }
 
-func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget) (*Manager, error) {
+func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode) (*Manager, error) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	rstMap := make(map[string]rst.Client)
@@ -82,10 +83,10 @@ func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Co
 				nodeMap:  map[string]worker.Worker{},
 				next:     0,
 				mu:       new(sync.Mutex),
-				// TODO: If/when we allow dynamic configuration this won't work.
-				// We would need to pass a reference to the actual RST clients
-				// and provide methods to get their configuration.
-				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rstConfigs},
+				// TODO: If/when we allow dynamic configuration this won't work. We would need to
+				// pass a reference to the actual RST clients and provide methods to get their
+				// configuration. The ClientStore will likely make this easy to update.
+				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rstConfigs, BeeRemote: beeRmtConfig},
 			}
 		}
 		nodePools[n.GetNodeType()].nodeMap[n.GetID()] = n
@@ -193,7 +194,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 					RequestId: workRequest.GetRequestId(),
 					Status: &flex.RequestStatus{
 						State:   flex.RequestStatus_UNASSIGNED,
-						Message: err.Error(),
+						Message: "error communicating to node: " + err.Error(),
 					},
 				}
 			} else {
@@ -274,10 +275,15 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
-			workResult.Status().State = flex.RequestStatus_UNKNOWN
-			workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
+			if errors.Is(err, worker.ErrWorkRequestNotFound) {
+				workResult.Status().State = flex.RequestStatus_CANCELLED
+				workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
+			} else {
+				workResult.Status().State = flex.RequestStatus_UNKNOWN
+				workResult.Status().Message = "error communicating to node: " + err.Error()
+				allUpdated = false
+			}
 			newResults[reqID] = workResult
-			allUpdated = false
 			continue
 		}
 

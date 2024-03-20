@@ -98,7 +98,7 @@ func TestManage(t *testing.T) {
 		},
 	}
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -266,7 +266,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		},
 	}
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -505,7 +505,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -668,7 +668,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 
 	// We don't need a full worker manager for this test.
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 
 	jobMgrConfig := Config{
@@ -751,7 +751,7 @@ func TestUpdateJobResults(t *testing.T) {
 			},
 		},
 	}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 

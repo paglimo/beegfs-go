@@ -15,11 +15,14 @@ import (
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
 
 const (
 	envVarPrefix = "BEEREMOTE_"
+	// Note the concept of a BeeRemote nodeID will be used to support multiple BeeRemote nodes in the future.
+	nodeID = "0"
 )
 
 func main() {
@@ -113,7 +116,10 @@ Using environment variables:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
-	workerManager, err := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets)
+	workerManager, err := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
+		Id:      nodeID,
+		Address: initialCfg.Server.Address,
+	})
 	if err != nil {
 		logger.Fatal("unable to initialize worker manager", zap.Error(err))
 	}

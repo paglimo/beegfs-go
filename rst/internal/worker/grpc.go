@@ -30,7 +30,7 @@ func getGRPCClientConnection(config Config) (*grpc.ClientConn, error) {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
 		// By default we'll use the system-wide store of trusted root
-		// certificates on the system running BeeWatch. This requires the
+		// certificates on the system running the application. This requires the
 		// certificate the subscriber is using to have been signed by a trusted
 		// root CA. Or the certificate would have needed to been added manually
 		// as a trusted certificate.

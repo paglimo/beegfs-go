@@ -49,6 +49,7 @@ type Worker interface {
 // multiple times.
 type grpcClientHandler interface {
 	connect(*flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests) (retry bool, err error)
+	heartbeat(*flex.HeartbeatRequest) (*flex.HeartbeatResponse, error)
 	disconnect() error
 }
 
@@ -98,7 +99,7 @@ type baseNode struct {
 	// blocked and ensures after the node reconnects an RPC that was previously
 	// blocked doesn't send a stale offline notification which would make the
 	// node offline again.
-	rpcErr chan struct{}
+	rpcErr chan error
 }
 
 // While gRPC handles most aspects of managing connections with worker nodes,
@@ -159,12 +160,42 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.WorkerNodeConfigReque
 		if n.GetState() == OFFLINE {
 			if n.connectLoop(config, wrUpdates) {
 				n.setState(ONLINE)
-				select {
-				case <-n.nodeCtx.Done():
-					n.log.Debug("node is shutting down because its context was cancelled")
-					done = true
-				case <-n.rpcErr:
-					n.log.Error("placing node offline due to an error")
+				ticker := time.NewTicker(10 * time.Second)
+				defer ticker.Stop()
+			connectedLoop:
+				for {
+					select {
+					case <-n.nodeCtx.Done():
+						n.log.Debug("node is shutting down because its context was cancelled")
+						done = true
+						break connectedLoop
+					case err := <-n.rpcErr:
+						n.log.Error("placing node offline due to an error", zap.Error(err))
+						break connectedLoop
+					case <-ticker.C:
+						// When worker nodes start up they wait for BeeRemote to configure them and
+						// tell what to do with any outstanding requests (in case they were
+						// cancelled while the node was offline). Because BeeRemote and worker nodes
+						// communicate using unary RPCs, unless requests are actively being assigned
+						// to this worker, it is possible for the worker to reboot and BeeRemote to
+						// never notice. This is because BeeRemote doesn't poll the status of
+						// requests once they are assigned to a node, and worker nodes don't know
+						// where to reach BeeRemote until it tells them. While it is not important
+						// we immediately detect when a node is offline or rebooted (because unary
+						// RPCs will trigger a reconnect and retry automatically), the heartbeat
+						// mechanism ensures worker nodes aren't stuck indefinitely waiting for
+						// configuration from BeeRemote.
+						resp, err := n.heartbeat(&flex.HeartbeatRequest{})
+						if err != nil {
+							n.log.Error("failed to receive heartbeat response from node, placing offline and attempting to reconnect", zap.Error(err))
+							break connectedLoop
+						} else if !resp.IsReady {
+							n.log.Error("received a heartbeat response but the node is not ready, placing offline and attempting to update its configuration")
+							break connectedLoop
+						}
+						n.log.Debug("received heartbeat from worker node", zap.Any("response", resp))
+						// Otherwise continue.
+					}
 				}
 			}
 		}

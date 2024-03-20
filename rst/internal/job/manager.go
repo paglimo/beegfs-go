@@ -153,6 +153,7 @@ func (m *Manager) Start() error {
 	// We initialize databases in Manage() so we can ensure the DBs are closed properly when shutting down.
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
 	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
+	pathDBOpts = pathDBOpts.WithLoggingLevel(badger.INFO)
 	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]*Job](pathDBOpts, m.config.PathDBCacheSize)
 	if err != nil {
 		return fmt.Errorf("unable to setup paths DB: %w", err)
@@ -162,6 +163,7 @@ func (m *Manager) Start() error {
 
 	jobResultsDBOpts := badger.DefaultOptions(m.config.ResultsDBPath)
 	jobResultsDBOpts = jobResultsDBOpts.WithLogger(logger.NewBadgerLoggerBridge("jobResultsDB", m.log))
+	jobResultsDBOpts = jobResultsDBOpts.WithLoggingLevel(badger.INFO)
 	jobResultsStore, closeJobResultsStoreDB, err := kvstore.NewMapStore[map[string]worker.WorkResult](jobResultsDBOpts, m.config.ResultsDBCacheSize)
 	if err != nil {
 		return fmt.Errorf("unable to setup job results DB: %w", err)
@@ -175,6 +177,7 @@ func (m *Manager) Start() error {
 	// Ref: https://dgraph.io/docs/badger/get-started/#monotonically-increasing-integers
 	jobJournalDBOpts := badger.DefaultOptions(m.config.JournalPath)
 	jobJournalDBOpts = jobJournalDBOpts.WithLogger(logger.NewBadgerLoggerBridge("journalDB", m.log))
+	jobJournalDBOpts = jobJournalDBOpts.WithLoggingLevel(badger.INFO)
 	jobJournal, err := badger.Open(jobJournalDBOpts)
 	if err != nil {
 		return err
@@ -607,6 +610,8 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	job.GetStatus().Message = newStatus.Message
 	pathEntry.Value[job.GetId()] = job
 
+	m.log.Debug("created job", zap.Any("job", job.Get()), zap.Any("jobResults", jobResultEntry.Value))
+
 	return &beeremote.JobResponse{
 		Job:          job.Get(),
 		WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
@@ -1024,8 +1029,8 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 
 	allSameState := true
 	for _, workResult := range resultsEntry.Value {
-		if !workResult.InTerminalState() {
-			// Don't do anything else if all work requests haven't reached a terminal state.
+		if !workResult.InTerminalState() && !workResult.RequiresUserIntervention() {
+			// Don't do anything else if all work requests haven't reached a terminal state or aren't failed.
 			return nil
 		}
 		// Verify all work requests have reached the same terminal state.
@@ -1071,7 +1076,7 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	case flex.RequestStatus_CANCELLED:
 		if err := job.Complete(rst, resultsEntry.Value, true); err != nil {
 			job.GetStatus().State = flex.RequestStatus_FAILED
-			job.GetStatus().Message = "error cancelling job " + err.Error()
+			job.GetStatus().Message = "error cancelling job: " + err.Error()
 		} else {
 			job.GetStatus().State = flex.RequestStatus_CANCELLED
 			job.GetStatus().Message = "successfully cancelled job"
@@ -1079,11 +1084,21 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	case flex.RequestStatus_COMPLETED:
 		if err := job.Complete(rst, resultsEntry.Value, false); err != nil {
 			job.GetStatus().State = flex.RequestStatus_FAILED
-			job.GetStatus().Message = "error completing job " + err.Error()
+			job.GetStatus().Message = "error completing job: " + err.Error()
 		} else {
 			job.GetStatus().State = flex.RequestStatus_COMPLETED
 			job.GetStatus().Message = "successfully completed job"
 		}
+	case flex.RequestStatus_ERROR:
+		// TODO: Automatically retry errors (also requires changing RequiresUserIntervention()). For
+		// now treat jobs with an error the same as failed jobs.
+		job.GetStatus().State = flex.RequestStatus_ERROR
+		job.GetStatus().Message = "job cannot continue without user intervention (see work results for details)"
+	case flex.RequestStatus_FAILED:
+		// Something that went wrong that requires user intervention. We don't know what so don't
+		// try to complete or abort the request as it may make it more difficult to recover.
+		job.GetStatus().State = flex.RequestStatus_FAILED
+		job.GetStatus().Message = "job cannot continue without user intervention (see work results for details)"
 	default:
 		job.GetStatus().State = e.Status().State
 		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
@@ -1094,6 +1109,7 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 		// state it makes sense to update the job state to reflect this as well.
 		return fmt.Errorf("all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)")
 	}
+	m.log.Debug("job result", zap.Any("job", job), zap.Any("results", resultsEntry.Value))
 	return nil
 }
 

@@ -35,6 +35,9 @@ type Config struct {
 	SelfSignedTLSCertPath string `mapstructure:"selfSignedTLSCertPath"`
 	MaxReconnectBackOff   int    `mapstructure:"maxReconnectBackOff"`
 	DisconnectTimeout     int    `mapstructure:"disconnectTimeout"`
+	SendRetries           int    `mapstructure:"sendRetries"`
+	RetryInterval         int    `mapstructure:"retryInterval"`
+	HeartbeatInterval     int    `mapstructure:"heartbeatInterval"`
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into the worker Config.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
@@ -117,6 +120,18 @@ func newWorkerNodeFromConfig(log *zap.Logger, config Config) (Worker, error) {
 		config.DisconnectTimeout = 30
 	}
 
+	if config.SendRetries == 0 {
+		config.SendRetries = 10
+	}
+
+	if config.RetryInterval == 0 {
+		config.RetryInterval = 1
+	}
+
+	if config.HeartbeatInterval == 0 {
+		config.HeartbeatInterval = 10
+	}
+
 	baseNode := &baseNode{
 		config:     config,
 		State:      OFFLINE,
@@ -126,7 +141,7 @@ func newWorkerNodeFromConfig(log *zap.Logger, config Config) (Worker, error) {
 		rpcCtx:     rpcCtx,
 		rpcCancel:  rpcCancel,
 		log:        log,
-		rpcErr:     make(chan struct{}),
+		rpcErr:     make(chan error),
 	}
 
 	switch baseNode.GetNodeType() {

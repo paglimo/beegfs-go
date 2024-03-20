@@ -2,9 +2,12 @@ package worker
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type BeeSyncNode struct {
@@ -57,6 +60,10 @@ func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *f
 	return false, nil
 }
 
+func (n *BeeSyncNode) heartbeat(request *flex.HeartbeatRequest) (*flex.HeartbeatResponse, error) {
+	return n.client.Heartbeat(n.rpcCtx, request)
+}
+
 func (n *BeeSyncNode) disconnect() error {
 
 	if n.conn != nil {
@@ -75,15 +82,41 @@ func (n *BeeSyncNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkRespons
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
 
-	resp, err := n.client.SubmitWorkRequest(n.rpcCtx, wr)
+	var resp *flex.WorkResponse
+	var err error
+	alreadyNotified := false
+	for i := 0; i <= n.config.SendRetries; i++ {
+		resp, err = n.client.SubmitWorkRequest(n.rpcCtx, wr)
+		if rpcStatus, ok := status.FromError(err); ok {
+			// FailedPrecondition likely means the node is up but not yet ready. Most likely it
+			// restarted and hasn't received any configuration from BeeRemote yet.
+			if rpcStatus.Code() == codes.FailedPrecondition {
+				if !alreadyNotified {
+					// Report the error to the handler once so it will try to reconnect. Don't
+					// report the error multiple times or it may cause unpredictable behavior.
+					n.reportError(err)
+				}
+				time.Sleep(time.Duration(n.config.RetryInterval) * time.Second)
+				continue
+			}
+		}
+		break
+	}
+
 	if err != nil {
-		select {
-		case n.rpcErr <- struct{}{}:
-		default:
+		if !alreadyNotified {
+			n.reportError(err)
 		}
 		return nil, err
 	}
 	return resp, nil
+}
+
+func (n *BeeSyncNode) reportError(err error) {
+	select {
+	case n.rpcErr <- err:
+	default:
+	}
 }
 
 func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
@@ -93,11 +126,32 @@ func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
 
-	resp, err := n.client.UpdateWorkRequest(n.rpcCtx, updateRequest)
+	var resp *flex.WorkResponse
+	var err error
+	alreadyNotified := false
+	for i := 0; i <= n.config.SendRetries; i++ {
+		resp, err = n.client.UpdateWorkRequest(n.rpcCtx, updateRequest)
+		if rpcStatus, ok := status.FromError(err); ok {
+			// FailedPrecondition likely means the node is up but not yet ready. Most likely it
+			// restarted and hasn't received any configuration from BeeRemote yet.
+			if rpcStatus.Code() == codes.FailedPrecondition {
+				if !alreadyNotified {
+					// Report the error to the handler once so it will try to reconnect. Don't
+					// report the error multiple times or it may cause unpredictable behavior.
+					n.reportError(err)
+				}
+				time.Sleep(time.Duration(n.config.RetryInterval) * time.Second)
+				continue
+			} else if rpcStatus.Code() == codes.NotFound {
+				return nil, ErrWorkRequestNotFound
+			}
+		}
+		break
+	}
+
 	if err != nil {
-		select {
-		case n.rpcErr <- struct{}{}:
-		default:
+		if !alreadyNotified {
+			n.reportError(err)
 		}
 		return nil, err
 	}

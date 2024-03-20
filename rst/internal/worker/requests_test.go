@@ -29,14 +29,14 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 			},
 			Parts: []*flex.WorkResponse_Part{
 				{
-					PartNumber: 10,
-					EntityTag:  "etag10",
-					Checksum:   "checksum10",
+					PartNumber:     10,
+					EntityTag:      "etag10",
+					ChecksumSha256: "checksum10",
 				},
 				{
-					PartNumber: 11,
-					EntityTag:  "etag11",
-					Checksum:   "checksum11",
+					PartNumber:     11,
+					EntityTag:      "etag11",
+					ChecksumSha256: "checksum11",
 				},
 			},
 		},
@@ -52,11 +52,10 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	assert.Equal(t, workResult, decodedWorkResult)
 
 	expectedUserFields := map[string]reflect.Type{
-		"JobId":          reflect.TypeOf(""),
-		"RequestId":      reflect.TypeOf(""),
-		"Status":         reflect.TypeOf(&flex.RequestStatus{}),
-		"CompletedParts": reflect.TypeOf([]*flex.WorkResponse_Part{}),
-		"RemainingParts": reflect.TypeOf(int32(0)),
+		"JobId":     reflect.TypeOf(""),
+		"RequestId": reflect.TypeOf(""),
+		"Status":    reflect.TypeOf(&flex.RequestStatus{}),
+		"Parts":     reflect.TypeOf([]*flex.WorkResponse_Part{}),
 	}
 
 	workResponseType := reflect.TypeOf(flex.WorkResponse{})
@@ -76,5 +75,5 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	assert.True(t, state && sizeCache && unknownFields, "an expected internal protobuf field was not found (update test and verify encoding via Gob is not broken)")
 
 	// Verify number of user defined + internal fields haven't changed:
-	assert.Equal(t, reflect.TypeOf(flex.WorkResponse{}).NumField(), 8, "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+	assert.Equal(t, 7, reflect.TypeOf(flex.WorkResponse{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
 }

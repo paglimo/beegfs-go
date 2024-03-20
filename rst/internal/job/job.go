@@ -97,7 +97,7 @@ func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission,
 		}
 		fileSize := stat.Size()
 		var canRetry bool
-		j.ExternalId, workRequests, canRetry, err = rstClient.GenerateRequests(j.Get(), fileSize, 0)
+		workRequests, canRetry, err = rstClient.GenerateRequests(j.Get(), fileSize, 0)
 		if err != nil {
 			return workermgr.JobSubmission{}, canRetry, err
 		}

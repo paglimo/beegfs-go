@@ -24,13 +24,18 @@ func newMockNode(baseNode *baseNode) Worker {
 	return mockNode
 }
 
-func (w *MockNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) (bool, error) {
-	args := w.Called()
+func (n *MockNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) (bool, error) {
+	args := n.Called()
 	return args.Bool(0), args.Error(1)
 }
 
-func (w *MockNode) disconnect() error {
-	args := w.Called()
+func (n *MockNode) heartbeat(request *flex.HeartbeatRequest) (*flex.HeartbeatResponse, error) {
+	args := n.Called()
+	return args.Get(0).(*flex.HeartbeatResponse), args.Error(1)
+}
+
+func (n *MockNode) disconnect() error {
+	args := n.Called()
 	return args.Error(1)
 }
 
@@ -44,7 +49,7 @@ func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, 
 
 	if args.Error(1) != nil {
 		select {
-		case n.rpcErr <- struct{}{}:
+		case n.rpcErr <- args.Error(1):
 		default:
 		}
 		return nil, args.Error(1)
@@ -77,7 +82,7 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 
 	if args.Error(1) != nil {
 		select {
-		case n.rpcErr <- struct{}{}:
+		case n.rpcErr <- args.Error(1):
 		default:
 		}
 		return nil, args.Error(1)
