@@ -3,6 +3,7 @@ package job
 import (
 	"io/fs"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -325,9 +326,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	deleteJobByPathResponse, err := jobManager.UpdateJob(&deleteJobByPathRequest)
 	require.NoError(t, err)                     // Only internal errors should return an error.
 	assert.False(t, deleteJobByPathResponse.Ok) // Response should not be okay.
+	assert.Contains(t, deleteJobByPathResponse.Message, "because it has not reached a terminal state")
 
+	// Status on the job should not change:
 	assert.Equal(t, flex.RequestStatus_SCHEDULED, deleteJobByPathResponse.Responses[0].Job.Status.State)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", deleteJobByPathResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, "finished scheduling work requests", deleteJobByPathResponse.Responses[0].Job.Status.Message)
 
 	// Work results should all still be scheduled:
 	assert.Len(t, deleteJobByPathResponse.Responses[0].WorkResults, 4)
@@ -387,10 +390,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	updateJobByIDResponse, err := jobManager.UpdateJob(&deleteJobByIDRequest)
 	require.NoError(t, err)                   // Only internal errors should return an error.
 	assert.False(t, updateJobByIDResponse.Ok) // However the response should not be okay.
+	assert.Contains(t, updateJobByIDResponse.Message, "because it has not reached a terminal state")
 
-	require.NoError(t, err)
+	// Status on the job should not change:
 	assert.Equal(t, flex.RequestStatus_SCHEDULED, updateJobByIDResponse.Responses[0].Job.Status.State)
-	assert.Equal(t, "unable to delete job that has not reached a terminal state (cancel it first)", updateJobByIDResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, "finished scheduling work requests", updateJobByIDResponse.Responses[0].Job.Status.Message)
 
 	assert.Len(t, updateJobByIDResponse.Responses[0].WorkResults, 2)
 	for _, wr := range updateJobByIDResponse.Responses[0].WorkResults {
@@ -445,11 +449,79 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	response, err := jobManager.SubmitJobRequest(&testJobRequest1)
 	require.NoError(t, err)
 	require.NotNil(t, response)
+	// Complete the job by simulating a worker node updating the results.
+	for i := range 4 {
+		resp := &flex.WorkResponse{
+			Path:      response.Job.Request.Path,
+			JobId:     response.Job.GetId(),
+			RequestId: strconv.Itoa(i),
+			Status: &flex.RequestStatus{
+				State:   flex.RequestStatus_COMPLETED,
+				Message: "complete",
+			},
+			Parts: []*flex.WorkResponse_Part{},
+		}
+		err = jobManager.updateJobResults(resp)
+		require.NoError(t, err)
+	}
 
-	// TODO: Add tests once we handle completed jobs.
-	// Test deleting jobs by path skips completed jobs silently unless deleteCompletedJobs==true.
-	// Test deleting jobs by ID skips completed jobs not affecting the job status message, but the response is !ok.
+	// Refuse to cancel completed jobs:
+	updateJobByIDRequest := beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
+			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
+				JobID: response.Job.Id,
+				Path:  response.Job.Request.Path,
+			},
+		},
+		NewState: flex.NewState_CANCEL,
+	}
+	cancelJobByIDResponse, err = jobManager.UpdateJob(&updateJobByIDRequest)
+	require.NoError(t, err)
+	assert.True(t, cancelJobByIDResponse.Ok)
+	assert.Contains(t, cancelJobByIDResponse.Message, "rejecting update for completed job")
 
+	// Refuse to delete completed jobs by ID and path, the overall response should be ok:
+	updateJobByIDRequest.NewState = flex.NewState_DELETE
+	deleteJobByIDResp, err := jobManager.UpdateJob(&updateJobByIDRequest)
+	require.NoError(t, err)
+	assert.True(t, deleteJobByIDResp.Ok)
+	assert.Contains(t, deleteJobByIDResp.Message, "rejecting update for completed job")
+
+	// Refuse to delete completed jobs by path, the overall response should be ok:
+	updateJobByPathRequest := beeremote.UpdateJobRequest{
+		Query: &beeremote.UpdateJobRequest_ByExactPath{
+			ByExactPath: response.Job.Request.Path,
+		},
+		NewState: flex.NewState_DELETE,
+	}
+	deleteJobByPathResp, err := jobManager.UpdateJob(&updateJobByPathRequest)
+	require.NoError(t, err)
+	assert.True(t, deleteJobByPathResp.Ok)
+	assert.Contains(t, deleteJobByPathResp.Message, "rejecting update for completed job")
+
+	// Status on the job should have not changed at any point:
+	assert.Equal(t, flex.RequestStatus_COMPLETED, deleteJobByPathResp.Responses[0].Job.Status.State)
+	assert.Equal(t, "successfully completed job", deleteJobByPathResp.Responses[0].Job.Status.Message)
+
+	assert.Len(t, deleteJobByPathResp.Responses[0].WorkResults, 4)
+	for _, wr := range deleteJobByPathResp.Responses[0].WorkResults {
+		assert.Equal(t, flex.RequestStatus_COMPLETED, wr.Status.State)
+	}
+
+	// Deleting completed jobs by job ID and path is allowed when the update is forced:
+	updateJobByIDRequest.ForceUpdate = true
+	deleteJobByIDResp, err = jobManager.UpdateJob(&updateJobByIDRequest)
+	require.NoError(t, err)
+	assert.True(t, deleteJobByIDResp.Ok)
+	assert.Contains(t, deleteJobByIDResp.Message, "")
+	assert.Len(t, deleteJobByIDResp.Responses, 1)
+	assert.Equal(t, flex.RequestStatus_COMPLETED, deleteJobByPathResp.Responses[0].Job.Status.State)
+	assert.Contains(t, deleteJobByPathResp.Responses[0].Job.Status.Message, "job scheduled for deletion")
+
+	_, err = jobManager.GetJobs(&beeremote.GetJobsRequest{
+		Query: &beeremote.GetJobsRequest_ByExactPath{ByExactPath: "response.Job.Request.Path"},
+	})
+	assert.ErrorIs(t, badger.ErrKeyNotFound, err)
 }
 
 // Test fault conditions
@@ -580,6 +652,8 @@ func TestManageErrorHandling(t *testing.T) {
 			ByExactPath: "/test/myfile",
 		},
 		NewState: flex.NewState_CANCEL,
+		// Updating the state of completed jobs must be forced.
+		ForceUpdate: true,
 	}
 	jobManager.UpdateJob(&updateJobRequest)
 
