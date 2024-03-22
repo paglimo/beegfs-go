@@ -157,6 +157,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		if !ok {
 			err = fmt.Errorf("%s: %w", nodeType, ErrNoPoolsForNodeType)
 			workResult.WorkResponse = &flex.WorkResponse{
+				Path:      workRequest.GetPath(),
 				JobId:     workRequest.GetJobId(),
 				RequestId: workRequest.GetRequestId(),
 				Status: &flex.RequestStatus{
@@ -190,6 +191,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 				// If there was a failure assemble a minimal work response.
 				allScheduled = false
 				workResult.WorkResponse = &flex.WorkResponse{
+					Path:      workRequest.GetPath(),
 					JobId:     workRequest.GetJobId(),
 					RequestId: workRequest.GetRequestId(),
 					Status: &flex.RequestStatus{

@@ -130,8 +130,8 @@ func TestManage(t *testing.T) {
 	require.NoError(t, err)
 
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_PathPrefix{
-			PathPrefix: "/",
+		Query: &beeremote.GetJobsRequest_ByPathPrefix{
+			ByPathPrefix: "/",
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -154,8 +154,8 @@ func TestManage(t *testing.T) {
 
 	// No job should be created:
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_ExactPath{
-			ExactPath: "/test/myfile",
+		Query: &beeremote.GetJobsRequest_ByExactPath{
+			ByExactPath: "/test/myfile",
 		},
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByPath)
@@ -177,8 +177,8 @@ func TestManage(t *testing.T) {
 
 	// If we cancel a job the state of the job and work requests should update:
 	updateJobRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_Path{
-			Path: "/test/myfile",
+		Query: &beeremote.UpdateJobRequest_ByExactPath{
+			ByExactPath: "/test/myfile",
 		},
 		NewState: flex.NewState_CANCEL,
 	}
@@ -186,8 +186,11 @@ func TestManage(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: scheduledJobID,
+		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+				JobID: scheduledJobID,
+				Path:  testJobRequest2.Path,
+			},
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -314,8 +317,8 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	////////////////////////////////////
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
 	deleteJobByPathRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_Path{
-			Path: testJobRequest1.Path,
+		Query: &beeremote.UpdateJobRequest_ByExactPath{
+			ByExactPath: testJobRequest1.Path,
 		},
 		NewState: flex.NewState_DELETE,
 	}
@@ -334,8 +337,8 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Cancel the job:
 	cancelJobByPathRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_Path{
-			Path: testJobRequest1.Path,
+		Query: &beeremote.UpdateJobRequest_ByExactPath{
+			ByExactPath: testJobRequest1.Path,
 		},
 		NewState: flex.NewState_CANCEL,
 	}
@@ -357,8 +360,8 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Verify the job was fully deleted:
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_ExactPath{
-			ExactPath: testJobRequest1.Path,
+		Query: &beeremote.GetJobsRequest_ByExactPath{
+			ByExactPath: testJobRequest1.Path,
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -373,8 +376,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
 	deleteJobByIDRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: submitJobResponse2.Job.Id,
+		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
+			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
+				JobID: submitJobResponse2.Job.Id,
+				Path:  submitJobResponse2.Job.Request.Path,
+			},
 		},
 		NewState: flex.NewState_DELETE,
 	}
@@ -393,8 +399,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Cancel the job:
 	cancelJobByIDRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: submitJobResponse2.Job.Id,
+		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
+			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
+				JobID: submitJobResponse2.Job.Id,
+				Path:  submitJobResponse2.Job.Request.Path,
+			},
 		},
 		NewState: flex.NewState_CANCEL,
 	}
@@ -416,8 +425,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Verify the job was fully deleted:
 	getJobRequestsByID := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: submitJobResponse2.Job.Id,
+		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+				JobID: submitJobResponse2.Job.Id,
+				Path:  submitJobResponse2.Job.Request.Path,
+			},
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -536,8 +548,8 @@ func TestManageErrorHandling(t *testing.T) {
 	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
 	getJobRequestsByPrefix := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_PathPrefix{
-			PathPrefix: "/",
+		Query: &beeremote.GetJobsRequest_ByPathPrefix{
+			ByPathPrefix: "/",
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -564,16 +576,19 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.Message = "test expects a failed request"
 
 	updateJobRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_Path{
-			Path: "/test/myfile",
+		Query: &beeremote.UpdateJobRequest_ByExactPath{
+			ByExactPath: "/test/myfile",
 		},
 		NewState: flex.NewState_CANCEL,
 	}
 	jobManager.UpdateJob(&updateJobRequest)
 
 	getJobRequestsByID := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: scheduledJobID,
+		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+				JobID: scheduledJobID,
+				Path:  testJobRequest.Path,
+			},
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -595,8 +610,11 @@ func TestManageErrorHandling(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID = &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: scheduledJobID,
+		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+				JobID: scheduledJobID,
+				Path:  testJobRequest.Path,
+			},
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,
@@ -621,8 +639,11 @@ func TestManageErrorHandling(t *testing.T) {
 
 	// We should not be able to delete failed jobs:
 	updateJobRequest = beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobID,
+		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
+			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
+				JobID: jobID,
+				Path:  testJobRequest.Path,
+			},
 		},
 		NewState: flex.NewState_DELETE,
 	}
@@ -640,8 +661,11 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.Message = "test expects a cancelled request"
 
 	updateJobRequest = beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_JobID{
-			JobID: jobID,
+		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
+			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
+				JobID: jobID,
+				Path:  testJobRequest.Path,
+			},
 		},
 		NewState: flex.NewState_CANCEL,
 	}
@@ -787,6 +811,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 		// The first response should not finish the job:
 		workResponse1 := &flex.WorkResponse{
+			Path:      js.Job.Request.Path,
 			JobId:     js.Job.GetId(),
 			RequestId: "0",
 			Status: &flex.RequestStatus{
@@ -800,8 +825,11 @@ func TestUpdateJobResults(t *testing.T) {
 		require.NoError(t, err)
 
 		getJobsRequest := &beeremote.GetJobsRequest{
-			Query: &beeremote.GetJobsRequest_JobID{
-				JobID: js.Job.GetId(),
+			Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+				ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+					JobID: js.Job.GetId(),
+					Path:  js.Job.Request.Path,
+				},
 			},
 			IncludeWorkRequests: false,
 			IncludeWorkResults:  true,
@@ -821,6 +849,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 		// The second response should finish the job:
 		workResponse2 := &flex.WorkResponse{
+			Path:      js.Job.Request.Path,
 			JobId:     js.Job.GetId(),
 			RequestId: "1",
 			Status: &flex.RequestStatus{
@@ -845,6 +874,7 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, err)
 
 	workResponse1 := &flex.WorkResponse{
+		Path:      js.Job.Request.Path,
 		JobId:     js.Job.GetId(),
 		RequestId: "0",
 		Status: &flex.RequestStatus{
@@ -855,6 +885,7 @@ func TestUpdateJobResults(t *testing.T) {
 	}
 
 	workResponse2 := &flex.WorkResponse{
+		Path:      js.Job.Request.Path,
 		JobId:     js.Job.GetId(),
 		RequestId: "1",
 		Status: &flex.RequestStatus{
@@ -870,8 +901,11 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, err)
 
 	getJobsRequest := &beeremote.GetJobsRequest{
-		Query: &beeremote.GetJobsRequest_JobID{
-			JobID: js.Job.GetId(),
+		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
+			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
+				JobID: js.Job.GetId(),
+				Path:  js.Job.Request.Path,
+			},
 		},
 		IncludeWorkRequests: false,
 		IncludeWorkResults:  true,

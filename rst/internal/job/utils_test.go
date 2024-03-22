@@ -17,6 +17,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			AssignedNode: "node0",
 			AssignedPool: worker.BeeSync,
 			WorkResponse: &flex.WorkResponse{
+				Path:      "/foo",
 				RequestId: "0",
 				Status: &flex.RequestStatus{
 					State:   5,
@@ -28,6 +29,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			AssignedNode: "node1",
 			AssignedPool: worker.BeeSync,
 			WorkResponse: &flex.WorkResponse{
+				Path:      "/bar",
 				RequestId: "1",
 				Status: &flex.RequestStatus{
 					State:   6,

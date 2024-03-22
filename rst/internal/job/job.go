@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+	"slices"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
@@ -21,8 +22,13 @@ type Job struct {
 	// By directly storing the protobuf defined Job we can quickly return
 	// responses to users about the current status of their jobs.
 	*beeremote.Job
-	// Segments aren't populated until Allocate() is called.
+	// Segments aren't populated until GetSegments() is called.
 	Segments []*Segment
+	// Mapping of request IDs to their results. We intentionally don't store individual work
+	// requests on-disk as they contain a lot of duplicate information that can be regenerated as
+	// needed from the job request and segments.
+	WorkResults map[string]worker.WorkResult
+	// IMPORTANT: When adding fields update the gob serialization and deserialization methods.
 }
 
 // Get() returns the protocol buffer defined message representing a single Job.
@@ -124,9 +130,9 @@ func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission,
 // example completing or aborting a multipart upload for a sync job to an S3 target. Note this is
 // largely just a wrapper around the rst.Client CompleteRequests method to handle converting between
 // data types used by the Job and the RST packages.
-func (j *Job) Complete(client rst.Client, results map[string]worker.WorkResult, abort bool) error {
-	workResponses := make([]*flex.WorkResponse, 0, len(results))
-	for _, r := range results {
+func (j *Job) Complete(client rst.Client, abort bool) error {
+	workResponses := make([]*flex.WorkResponse, 0, len(j.WorkResults))
+	for _, r := range j.WorkResults {
 		workResponses = append(workResponses, r.WorkResponse)
 	}
 	return client.CompleteRequests(j.Get(), workResponses, abort)
@@ -160,18 +166,11 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error
 	return nil, fmt.Errorf("bad job request")
 }
 
-// GobEncode encodes the job into a byte slice for gob serialization. The method
-// serializes the JobResponse using the protobuf marshaller and the Segments
-// slice field using gob and individual segments using the protobuf
-// unmarshaller. It prefixes the serialized Job field with its length to handle
-// variable-length slices during deserialization. It is primarily used when
-// storing jobs in the database.
-//
-// IMPORTANT: Concrete jobs (like SyncJobs) must still implement GobEncode and
-// GobDecode methods. However unless the job has additional fields that require
-// special handling these methods can simply call the GobEncode/GobDecode
-// methods of the base job. Don't forget the to update the Job package init()
-// function to add `gob.Register(&MyType{})` for any new types.
+// GobEncode encodes the job into a byte slice for gob serialization. The method serializes the
+// JobResponse using the protobuf marshaller and the Segments slice field using gob and individual
+// segments using the protobuf unmarshaller. It prefixes the serialized Job field with its length to
+// handle variable-length slices during deserialization. It is primarily used when storing jobs in
+// the database.
 func (j *Job) GobEncode() ([]byte, error) {
 
 	// We use the proto.Marshal function because gob doesn't work properly with
@@ -181,45 +180,38 @@ func (j *Job) GobEncode() ([]byte, error) {
 		return nil, err
 	}
 
-	// We use Gob to encode the slice of segments. The segment.GobEncode method
-	// will be called for each element to properly encode it using the protobuf
-	// marshaller.
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 
-	err = enc.Encode(j.Segments)
-	if err != nil {
+	// We use Gob to encode the slice of segments. The segment.GobEncode method will be called for
+	// each element to properly encode it using the protobuf marshaller.
+	if err := enc.Encode(j.Segments); err != nil {
 		return nil, err
 	}
 
-	segmentsData := buf.Bytes()
+	// WorkResults contain proto defined WorkResponses, but these don't use a oneof type so they can
+	// be encoded with Gob directly.
+	if err := enc.Encode(j.WorkResults); err != nil {
+		return nil, err
+	}
 
 	// Prefix the serialized jobData with the length as a uint16.
 	// We'll use this when decoding.
 	jobFieldLength := make([]byte, 2)
 	binary.BigEndian.PutUint16(jobFieldLength, uint16((len(jobData))))
-
-	combinedData := append(jobFieldLength, jobData...)
-	combinedData = append(combinedData, segmentsData...)
-	return combinedData, nil
+	return slices.Concat(jobFieldLength, jobData, buf.Bytes()), nil
 }
 
-// GobDecode decodes a byte slice into a baseJob. It first extracts the length
-// prefix to determine the size of the Job field. It then decodes the Job field
-// using the protobuf unmarshaller and Segments slice field using gob an
-// individual segments using the protobuf unmarshaller. It is primarily used
-// when retrieving Jobs from the database.
-//
-// IMPORTANT: Concrete jobs (like SyncJobs) must still implement GobEncode and
-// GobDecode methods. However unless the job has additional fields that require
-// special handling these methods can simply call the GobEncode/GobDecode
-// methods of the base job. Don't forget the to update the Job package init()
-// function to add `gob.Register(&MyType{})` for any new types.
+// GobDecode decodes a byte slice into a baseJob. It first extracts the length prefix to determine
+// the size of the Job field. It then decodes the Job field using the protobuf unmarshaller and
+// Segments slice field using gob and individual segments using the protobuf unmarshaller. Remaining
+// fields do not require special handling and are just decoded using gob. It is primarily used when
+// retrieving Jobs from the database.
 func (j *Job) GobDecode(data []byte) error {
 
 	jobFieldLength := binary.BigEndian.Uint16(data[:2])
 	jobData := data[2 : 2+jobFieldLength]
-	segmentsData := data[2+jobFieldLength:]
+	remainingData := data[2+jobFieldLength:]
 
 	if j.Job == nil {
 		j.Job = &beeremote.Job{}
@@ -229,17 +221,19 @@ func (j *Job) GobDecode(data []byte) error {
 		j.Segments = make([]*Segment, 0)
 	}
 
-	err := proto.Unmarshal(jobData, j.Job)
-	if err != nil {
+	if j.WorkResults == nil {
+		j.WorkResults = make(map[string]worker.WorkResult)
+	}
+
+	if err := proto.Unmarshal(jobData, j.Job); err != nil {
 		return err
 	}
 
-	dec := gob.NewDecoder(bytes.NewReader(segmentsData))
-	err = dec.Decode(&j.Segments)
-	if err != nil {
-		return err
+	dec := gob.NewDecoder(bytes.NewReader(remainingData))
+	if err := dec.Decode(&j.Segments); err != nil {
+		return nil
 	}
-	return nil
+	return dec.Decode(&j.WorkResults)
 }
 
 // Segment is a wrapper around the protobuf defined Segment type to

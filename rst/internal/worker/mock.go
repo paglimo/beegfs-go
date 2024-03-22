@@ -30,8 +30,14 @@ func (n *MockNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex
 }
 
 func (n *MockNode) heartbeat(request *flex.HeartbeatRequest) (*flex.HeartbeatResponse, error) {
-	args := n.Called()
-	return args.Get(0).(*flex.HeartbeatResponse), args.Error(1)
+	// We could mock heartbeat responses if it ever becomes necessary. However for now they are
+	// disabled because it causes confusing errors when tests run longer than 10 seconds because it
+	// will panic unless the test mocked a heartbeat (which is not the focus of most tests).
+	//  args := n.Called()
+	// return args.Get(0).(*flex.HeartbeatResponse), args.Error(1)
+	return &flex.HeartbeatResponse{
+		IsReady: true,
+	}, nil
 }
 
 func (n *MockNode) disconnect() error {
@@ -66,6 +72,7 @@ func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, 
 	}
 
 	return &flex.WorkResponse{
+		Path:      wr.GetPath(),
 		JobId:     wr.GetJobId(),
 		RequestId: wr.GetRequestId(),
 		Status:    status,
@@ -98,6 +105,9 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
 	}
 	return &flex.WorkResponse{
+		// The update request does not contain "path" so we cannot set that field in the response.
+		// Currently this doesn't break anything, but this may be the source of future test
+		// failures.
 		JobId:     updateRequest.GetJobId(),
 		RequestId: updateRequest.GetRequestId(),
 		Status:    status,

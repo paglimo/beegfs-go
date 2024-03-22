@@ -21,6 +21,7 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 		AssignedNode: "test",
 		AssignedPool: BeeSync,
 		WorkResponse: &flex.WorkResponse{
+			Path:      "/foo",
 			JobId:     "1",
 			RequestId: "2",
 			Status: &flex.RequestStatus{
@@ -52,6 +53,7 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	assert.Equal(t, workResult, decodedWorkResult)
 
 	expectedUserFields := map[string]reflect.Type{
+		"Path":      reflect.TypeOf(""),
 		"JobId":     reflect.TypeOf(""),
 		"RequestId": reflect.TypeOf(""),
 		"Status":    reflect.TypeOf(&flex.RequestStatus{}),
@@ -75,5 +77,5 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	assert.True(t, state && sizeCache && unknownFields, "an expected internal protobuf field was not found (update test and verify encoding via Gob is not broken)")
 
 	// Verify number of user defined + internal fields haven't changed:
-	assert.Equal(t, 7, reflect.TypeOf(flex.WorkResponse{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+	assert.Equal(t, 8, reflect.TypeOf(flex.WorkResponse{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
 }
