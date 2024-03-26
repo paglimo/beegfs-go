@@ -225,8 +225,8 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		var allCancelled bool
 		workResults, allCancelled = m.UpdateJob(jobUpdate)
 		if !allCancelled {
-			status.State = beeremote.Job_FAILED
-			status.Message = "failed because one or more work requests could not be cancelled after initial scheduling failure"
+			status.State = beeremote.Job_UNKNOWN
+			status.Message = "job status is unknown because one or more work requests could not be cancelled after initial scheduling failure (inspect individual results for details then cancel the job before submitting a new one)"
 			err = fmt.Errorf("attempted to cancel the job after an error scheduling one or more work requests, but there was an error cancelling the work requests (inspect the job for details then cancel the job before submitting a new one)")
 		}
 	} else {

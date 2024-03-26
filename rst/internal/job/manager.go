@@ -673,12 +673,19 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 // updateJobState takes an already locked job and and will attempt to apply newState. The job will
 // be directly updated with the result of the operation. It is the callers responsibility to release
-// the lock on the job. It returns success only if the new state was definitively applied. If it
-// returns !success, the job state was updated (but not to the desired state), and the status
-// message will be updated directly. If it returns !success but the job state was not updated
-// (perhaps because the new state is invalid), it returns a message that should be included in the
-// overall UpdateJobResponse to help a user understand why the new state could not be applied. For
-// example if a job was deleted but hasn't yet reached a terminal state.
+// the lock on the job. It returns success only if the new state was definitively applied OR if the
+// update was forced. If it returns !success, the job state was updated (but not to the desired
+// state), and the job and/or work request status messages will be updated directly. If it returns
+// !success but the job state was not updated (perhaps because the new state is invalid), it returns
+// a message that should be included in the overall UpdateJobResponse to help a user understand why
+// the new state could not be applied. For example if a job was deleted but hasn't yet reached a
+// terminal state.
+//
+// If the update was forced it will always return success and safeToDelete to ensure the caller can
+// always delete the job from the internal DB, at the risk of not fully cleaning up the job (e.g.,
+// leaving orphaned work requests on worker nodes or incomplete multipart uploads). If there were
+// any issues forcing the update the job status will indicate this. Generally callers should first
+// try to update a job and only force the update if absolutely necessary.
 //
 // By default completed jobs are not updated and always return success, !safeToDelete and a warning
 // message. As a safety hatch completed jobs can be forcibly updated by specifying forceUpdate.
@@ -701,24 +708,57 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 	}
 
 	if newState == beeremote.UpdateJobRequest_CANCELLED {
-		// If we're unable to definitively cancel on any node, ok is
-		// set to false and the state of the job is unmodified.
-		var updatedResults map[string]worker.WorkResult
-		job.WorkResults, success = m.workerManager.UpdateJob(workermgr.JobUpdate{
-			JobID:       job.GetId(),
-			WorkResults: job.WorkResults,
-			NewState:    flex.UpdateWorkRequest_CANCELLED,
-		})
-
-		if !success {
-			job.GetStatus().State = beeremote.Job_FAILED
-			job.GetStatus().Message = "error cancelling job (review work results for details)"
-		} else {
-			job.GetStatus().State = beeremote.Job_CANCELLED
-			job.GetStatus().Message = "job cancelled"
+		// If the job is already failed we don't need to update the work requests unless the update was forced:
+		if job.GetStatus().State != beeremote.Job_FAILED || forceUpdate {
+			// If we're unable to definitively cancel on any node, success is set to false and the
+			// state of the job is failed.
+			job.WorkResults, success = m.workerManager.UpdateJob(workermgr.JobUpdate{
+				JobID:       job.GetId(),
+				WorkResults: job.WorkResults,
+				NewState:    flex.UpdateWorkRequest_CANCELLED,
+			})
+			if !success {
+				if !forceUpdate {
+					job.GetStatus().State = beeremote.Job_UNKNOWN
+					job.GetStatus().Message = "unable to cancel job: unable to confirm work request(s) are no longer running on worker nodes (review work results for details and try again later)"
+					return false, false, ""
+				} else {
+					job.GetStatus().Message = "canceling job: unable to confirm work request(s) are no longer running on worker nodes (cancelling anyway because this is a forced update)"
+				}
+			} else {
+				job.GetStatus().State = beeremote.Job_CANCELLED
+				job.GetStatus().Message = "verified work requests are cancelled on all worker nodes"
+			}
 		}
-		m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
-		return success, false, ""
+
+		rstClient, ok := m.workerManager.RemoteStorageTargets[job.Request.GetRemoteStorageTarget()]
+		if !ok {
+			if forceUpdate {
+				job.GetStatus().State = beeremote.Job_CANCELLED
+				job.GetStatus().Message += job.GetStatus().Message + "; unable to request the RST abort this job because the specified RST no longer exists (ignoring because this is a forced update)"
+				return true, true, ""
+			}
+			job.GetStatus().State = beeremote.Job_FAILED
+			job.GetStatus().Message += job.GetStatus().Message + "; unable to request the RST abort this job because the specified RST no longer exists (add it back or force the update to cancel the job anyway)"
+			return false, false, ""
+		}
+
+		err := job.Complete(rstClient, true)
+		if err != nil {
+			if forceUpdate {
+				job.GetStatus().State = beeremote.Job_CANCELLED
+				job.GetStatus().Message += job.GetStatus().Message + "; error requesting the RST abort this job (ignoring because this is a forced update): " + err.Error()
+				return true, true, ""
+			}
+			job.GetStatus().State = beeremote.Job_FAILED
+			job.GetStatus().Message += job.GetStatus().Message + "; error requesting the RST abort this job (try again or force the update to cancel the job anyway): " + err.Error()
+			return false, false, ""
+		}
+
+		job.GetStatus().State = beeremote.Job_CANCELLED
+		job.GetStatus().Message += job.GetStatus().Message + "; successfully requested the RST abort this job"
+		m.log.Debug("successfully updated job", zap.Any("job", job))
+		return true, true, ""
 	}
 
 	return false, false, fmt.Sprintf("unable to update job %s, new state %s is not supported", job.Id, newState)
