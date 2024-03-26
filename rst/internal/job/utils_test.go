@@ -19,7 +19,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			WorkResponse: &flex.WorkResponse{
 				Path:      "/foo",
 				RequestId: "0",
-				Status: &flex.RequestStatus{
+				Status: &flex.WorkResponse_Status{
 					State:   5,
 					Message: "message0",
 				},
@@ -31,7 +31,7 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 			WorkResponse: &flex.WorkResponse{
 				Path:      "/bar",
 				RequestId: "1",
-				Status: &flex.RequestStatus{
+				Status: &flex.WorkResponse_Status{
 					State:   6,
 					Message: "message1",
 				},
@@ -41,13 +41,13 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 
 	for _, r := range getWorkResultsForResponse(testMap) {
 
-		reqID, err := strconv.Atoi(r.RequestId)
+		reqID, err := strconv.Atoi(r.Response.GetRequestId())
 		require.NoError(t, err)
-		expectedStatus := flex.RequestStatus_State(reqID + 5)
+		expectedStatus := flex.WorkResponse_State(reqID + 5)
 
-		assert.Equal(t, expectedStatus, r.Status.State)
-		assert.Equal(t, "message"+r.RequestId, r.Status.Message)
-		assert.Equal(t, "node"+r.RequestId, r.AssignedNode)
+		assert.Equal(t, expectedStatus, r.Response.GetStatus().State)
+		assert.Equal(t, "message"+r.Response.GetRequestId(), r.Response.GetStatus().Message)
+		assert.Equal(t, "node"+r.Response.GetRequestId(), r.AssignedNode)
 		assert.Equal(t, r.AssignedPool, string(worker.BeeSync))
 
 	}

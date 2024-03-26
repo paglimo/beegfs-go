@@ -39,7 +39,7 @@ func (p *Pool) HandleAll(wg *sync.WaitGroup) {
 	// while it was offline. For now we don't allow modifying WRs on offline
 	// nodes so just tell it to resume all requests.
 	wrUpdates := &flex.UpdateWorkRequests{
-		NewState: flex.NewState_UNCHANGED,
+		NewState: flex.UpdateWorkRequests_UNCHANGED,
 	}
 
 	for _, node := range p.nodes {
@@ -53,9 +53,10 @@ func (p *Pool) StopAll() {
 	}
 }
 
-// assignToLeastBusyWorker assigns the work request to the least busy node in
-// the pool. It returns the ID of the assigned node and the response from the
-// node, or an error if the request could not be assigned to a node.
+// assignToLeastBusyWorker assigns the work request to the least busy node in the pool. It returns
+// the ID of the assigned node and the response from the node, or an error if the request could not
+// be assigned to a node. Note errors always mean the request was not assigned to a node, and the
+// caller is not expected to try and cancel or otherwise cleanup the request.
 func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.WorkResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -117,7 +118,7 @@ func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.Work
 // the remote worker node. It returns the work response from the remote node or
 // an error if the node was unable to apply the new state or a network/local error
 // occurred preventing the remote node form being updated.
-func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResult, newState flex.NewState) (*flex.WorkResponse, error) {
+func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResult, newState flex.UpdateWorkRequest_NewState) (*flex.WorkResponse, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()

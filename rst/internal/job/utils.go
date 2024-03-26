@@ -9,10 +9,9 @@ import (
 // messages.
 func getWorkResultsForResponse(workResults map[string]worker.WorkResult) []*beeremote.JobResponse_WorkResult {
 	workResultsForResponse := []*beeremote.JobResponse_WorkResult{}
-	for reqID, wr := range workResults {
+	for _, wr := range workResults {
 		workResult := &beeremote.JobResponse_WorkResult{
-			RequestId:    reqID,
-			Status:       wr.Status(),
+			Response:     wr.WorkResponse,
 			AssignedNode: wr.AssignedNode,
 			AssignedPool: string(wr.AssignedPool),
 		}

@@ -24,8 +24,8 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 			Path:      "/foo",
 			JobId:     "1",
 			RequestId: "2",
-			Status: &flex.RequestStatus{
-				State:   flex.RequestStatus_COMPLETED,
+			Status: &flex.WorkResponse_Status{
+				State:   flex.WorkResponse_COMPLETED,
 				Message: "test message",
 			},
 			Parts: []*flex.WorkResponse_Part{
@@ -56,7 +56,7 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 		"Path":      reflect.TypeOf(""),
 		"JobId":     reflect.TypeOf(""),
 		"RequestId": reflect.TypeOf(""),
-		"Status":    reflect.TypeOf(&flex.RequestStatus{}),
+		"Status":    reflect.TypeOf(&flex.WorkResponse_Status{}),
 		"Parts":     reflect.TypeOf([]*flex.WorkResponse_Part{}),
 	}
 

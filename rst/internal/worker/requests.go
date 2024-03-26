@@ -33,7 +33,7 @@ type WorkResult struct {
 // the request to the worker node to ensure it is updated. Update requests are
 // expected to be idempotent so if the WR is already in the requested state no
 // errors will happen.
-func (wr *WorkResult) Status() *flex.RequestStatus {
+func (wr *WorkResult) Status() *flex.WorkResponse_Status {
 	return wr.WorkResponse.GetStatus()
 }
 
@@ -43,15 +43,13 @@ func (wr *WorkResult) Status() *flex.RequestStatus {
 // don't complete or abort the job request, meaning (for example) artifacts like multipart uploads
 // and partial uploads wouldn't not have been cleaned up.
 func (wr *WorkResult) InTerminalState() bool {
-	return wr.Status().State == flex.RequestStatus_COMPLETED || wr.Status().State == flex.RequestStatus_CANCELLED
+	return wr.Status().State == flex.WorkResponse_COMPLETED || wr.Status().State == flex.WorkResponse_CANCELLED
 }
 
 // RequiresUserIntervention() indicates the work request cannot proceed without user intervention.
 // This could include correcting RST configuration, fixing external network issues, or potentially
 // just cancelling the request if it is no longer valid. Jobs in this state still have resources
 // that need to be cleaned up and why they aren't considered in a terminal state.
-//
-// TODO: Long-term errors should be retried automatically before the request is failed.
 func (wr *WorkResult) RequiresUserIntervention() bool {
-	return wr.Status().State == flex.RequestStatus_ERROR || wr.Status().State == flex.RequestStatus_FAILED
+	return wr.Status().State == flex.WorkResponse_FAILED
 }

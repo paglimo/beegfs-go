@@ -5,23 +5,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/flex"
 )
 
 func TestInTerminalState(t *testing.T) {
 	job := &Job{
 		Job: &beeremote.Job{
 			Request: &beeremote.JobRequest{},
-			Status: &flex.RequestStatus{
-				State: flex.RequestStatus_COMPLETED,
+			Status: &beeremote.Job_Status{
+				State: beeremote.Job_COMPLETED,
 			},
 		},
 	}
 	assert.True(t, job.InTerminalState())
 
-	job.GetStatus().State = flex.RequestStatus_CANCELLED
+	job.GetStatus().State = beeremote.Job_CANCELLED
 	assert.True(t, job.InTerminalState())
 
-	job.GetStatus().State = flex.RequestStatus_RUNNING
+	job.GetStatus().State = beeremote.Job_RUNNING
 	assert.False(t, job.InTerminalState())
 }

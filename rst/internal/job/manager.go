@@ -255,10 +255,9 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		}
 
 		if request.GetIncludeWorkResults() {
-			for reqID, wr := range job.WorkResults {
+			for _, wr := range job.WorkResults {
 				workResult := &beeremote.JobResponse_WorkResult{
-					RequestId:    reqID,
-					Status:       wr.Status(),
+					Response:     wr.WorkResponse,
 					AssignedNode: wr.AssignedNode,
 					AssignedPool: string(wr.AssignedPool),
 				}
@@ -346,22 +345,22 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
 }
 
-// Takes a single job request and attempts to create and schedule a job for it.
-// Returns an error if the job could not be created. There are two main reasons
-// we may not be able to create a job:
+// Takes a single job request and attempts to create and schedule a job for it. Returns an error if
+// the job could not be created or there was a scheduling error. There are two main reasons we may
+// not be able to create a job:
 //
-// (1) The provided request is invalid. For example the job type doesn't support
-// the specified RST or the RST doesn't exist.
+// (1) The provided request is invalid. For example the job type doesn't support the specified RST
+// or the RST doesn't exist.
 //
-// (2) Some temporary condition makes the job request currently impossible. For
-// example there is already an active job for the RST/path combo or there was an
-// internal error retrieving or saving DB entries.
+// (2) Some temporary condition makes the job request currently impossible. For example there is
+// already an active job for the RST/path combo or there was an internal error retrieving or saving
+// DB entries.
 //
-// Once the job is created if there were any issues allocating, scheduling or
-// running the job these will be indicated in the job response or by inspecting
-// the job status later on. If there was a temporary issue such as a network
-// error trying to contact the RST, the job will still be created but the status
-// will indicate the error.
+// If there was a scheduling error the job is still created, but the state will be CANCELLED if all
+// work requests that may have been started are definitively cancelled and it is safe to submit
+// another job, or FAILED if there were any problems cleaning up that require manual intervention.
+// If the response is not nil the status of the overall job and individual work requests should be
+// reviewed to troubleshoot as errors are more general to guide the user on broad recovery steps.
 func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 
 	m.readyMu.RLock()
@@ -456,31 +455,31 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 
 	jobSubmission, retry, err := job.GenerateSubmission(rstClient)
 	if err != nil && !retry {
-		return nil, fmt.Errorf("unable to create job due to an unrecoverable error generating the submission: %w", err)
+		return nil, fmt.Errorf("a fatal error occurred generating the job submission, please check the job or RST configuration before trying again: %w", err)
 	} else if err != nil {
-		// If an temporary error occurred that can be retried still go forward
-		// with creating the job and just leave the results empty.
-		job.GetStatus().State = flex.RequestStatus_ERROR
-		job.GetStatus().Message = err.Error()
-		pathEntry.Value[job.GetId()] = job
-		// TODO: Push to a queue of jobs that need to be periodically retried by
-		// a separate go routine. Note error is not considered a terminal state
-		// so subsequent job requests for the same path/RST will be rejected
-		// until this one is cancelled. This handler will need to periodically
-		// retry GenerateSubmission() until there is no error then submit the job
-		// submission to worker manager.
-		return &beeremote.JobResponse{
-			Job:          job.Get(),
-			WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
-			WorkResults:  getWorkResultsForResponse(job.WorkResults),
-		}, nil
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/27. If we decide to implement a
+		// method to allow jobs to be resumed after an error/failure occurs, it could make sense to
+		// create the job but leave the state as error or failed (depending on the results of #27),
+		// allowing the user to easily resume jobs impacted by some transient issue in the
+		// environment. For now just return an error. This is the original approach, cleanup
+		// depending on the results of #27:
+		//
+		// job.GetStatus().State = beeremote.Job_FAILED job.GetStatus().Message = err.Error()
+		// pathEntry.Value[job.GetId()] = job return &beeremote.JobResponse{
+		//  Job:          job.Get(),
+		//  WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
+		//  WorkResults:  getWorkResultsForResponse(job.WorkResults),
+		// }, nil
+		return nil, fmt.Errorf("an transient error occurred generating the job submission, please try again: %w", err)
 	}
 
-	// At this point we have a properly formed job request that should be
-	// runnable barring any ephemeral issues. Errors from this point onwards
-	// should be indicated by the job status.
+	// At this point we have a properly formed job request that should be runnable barring any
+	// transient issues. Details errors from this point onwards should be indicated by the job
+	// status. We don't plan to allow jobs to be submitted asynchronously, so if there are any
+	// errors scheduling also return an error to the caller so they know to fix whatever prevented
+	// the job from being scheduled before trying again.
 	pathEntry.Value[job.GetId()] = job
-	job.WorkResults, job.Status = m.workerManager.SubmitJob(jobSubmission)
+	job.WorkResults, job.Status, err = m.workerManager.SubmitJob(jobSubmission)
 
 	// TODO: A crash here could mean there are WRs scheduled to worker nodes but no record of the
 	// job or which nodes they were assigned to because the updated pathEntry hasn't been committed
@@ -495,7 +494,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		Job:          job.Get(),
 		WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 		WorkResults:  getWorkResultsForResponse(job.WorkResults),
-	}, nil
+	}, err
 }
 
 // UpdateJob will attempt to update the specified job(s) and any associated work requests. If a path
@@ -538,8 +537,8 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
 	}
 
-	if jobUpdate.NewState == flex.NewState_UNCHANGED {
-		return nil, fmt.Errorf("job update requested by the job state is unchanged (possibly this indicates a bug in the caller)")
+	if jobUpdate.NewState == beeremote.UpdateJobRequest_UNKNOWN {
+		return nil, fmt.Errorf("job update requested by the job state is unknown (probably this indicates a bug in the caller)")
 	}
 
 	// The response will collect the results of all the job updates.
@@ -566,7 +565,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		// If we've been asked to delete jobs, after we verify they are in a terminal state and
 		// deletion is allowed, we'll mark them for deletion.
 		var jobsSafeToDelete []string
-		if jobUpdate.NewState == flex.NewState_DELETE {
+		if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED {
 			jobsSafeToDelete = make([]string, 0)
 		}
 
@@ -580,7 +579,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 				response.Message = response.Message + newMessage + ";"
 			}
 			// Only if the user requested a deletion and the job is safe to delete do we mark it for deletion:
-			if jobUpdate.NewState == flex.NewState_DELETE && safeToDelete {
+			if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED && safeToDelete {
 				jobsSafeToDelete = append(jobsSafeToDelete, job.GetId())
 			}
 			response.Responses = append(response.Responses, &beeremote.JobResponse{
@@ -590,12 +589,12 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			})
 		}
 
-		if jobUpdate.NewState == flex.NewState_DELETE {
+		if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED {
 			for _, deletedJobID := range jobsSafeToDelete {
 				delete(pathEntry.Value, deletedJobID)
 			}
 		}
-		if jobUpdate.NewState == flex.NewState_DELETE && len(pathEntry.Value) == 0 {
+		if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED && len(pathEntry.Value) == 0 {
 			// Only clean up the path entry if there are no more jobs left for it.
 			// We want to delete the entry before releasing the lock, otherwise its
 			// possible someone else slips in a new job for this path and we would
@@ -646,7 +645,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			response.Message = response.Message + newMessage + ";"
 		}
 		// Only if the user asked to delete the job and it is safe to delete should we delete it.
-		if jobUpdate.NewState == flex.NewState_DELETE && safeToDelete {
+		if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED && safeToDelete {
 			delete(pathEntry.Value, query.JobID)
 		}
 		// Only clean up the path entry if there are no more jobs left for it:
@@ -687,13 +686,13 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // IMPORTANT: This should only be used when the state of a job's work requests need to be modified
 // on the assigned worker nodes. To update the job state in reaction to job results returned by a
 // worker node use updateJobResults().
-func (m *Manager) updateJobState(job *Job, newState flex.NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
+func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
 
-	if job.Status.State == flex.RequestStatus_COMPLETED && !forceUpdate {
+	if job.Status.State == beeremote.Job_COMPLETED && !forceUpdate {
 		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to override)", job.Id)
 	}
 
-	if newState == flex.NewState_DELETE {
+	if newState == beeremote.UpdateJobRequest_DELETED {
 		if !job.InTerminalState() {
 			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.Id)
 		}
@@ -701,21 +700,21 @@ func (m *Manager) updateJobState(job *Job, newState flex.NewState, forceUpdate b
 		return true, true, ""
 	}
 
-	if newState == flex.NewState_CANCEL {
+	if newState == beeremote.UpdateJobRequest_CANCELLED {
 		// If we're unable to definitively cancel on any node, ok is
 		// set to false and the state of the job is unmodified.
 		var updatedResults map[string]worker.WorkResult
 		job.WorkResults, success = m.workerManager.UpdateJob(workermgr.JobUpdate{
 			JobID:       job.GetId(),
 			WorkResults: job.WorkResults,
-			NewState:    newState,
+			NewState:    flex.UpdateWorkRequest_CANCELLED,
 		})
 
 		if !success {
-			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().State = beeremote.Job_FAILED
 			job.GetStatus().Message = "error cancelling job (review work results for details)"
 		} else {
-			job.GetStatus().State = flex.RequestStatus_CANCELLED
+			job.GetStatus().State = beeremote.Job_CANCELLED
 			job.GetStatus().Message = "job cancelled"
 		}
 		m.log.Debug("updated job", zap.Any("job", job), zap.Any("workResults", updatedResults))
@@ -773,7 +772,7 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	// cancelled the job. Perhaps we treat the overall job state as cancelled in
 	// this scenario?
 	if !allSameState {
-		job.GetStatus().State = flex.RequestStatus_FAILED
+		job.GetStatus().State = beeremote.Job_FAILED
 		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
 		return nil
 	}
@@ -783,48 +782,41 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 		// We shouldn't return an error here. The caller (a worker node) can't do anything about
 		// this. Most likely a user updated the configuration and removed the RST so there is
 		// nothing we can do unless they were to add it back.
-		job.GetStatus().State = flex.RequestStatus_FAILED
+		job.GetStatus().State = beeremote.Job_FAILED
 		job.GetStatus().Message = fmt.Sprintf("unable to complete job because the RST no longer exists: %s (add it back or manually cleanup any artifacts from this job)", job.Request.GetRemoteStorageTarget())
 		return nil
 	}
 
 	// If everything has the same state, the state of the entry we just updated will match every other request.
 	switch entryToUpdate.Status().State {
-	case flex.RequestStatus_CANCELLED:
+	case flex.WorkResponse_CANCELLED:
 		if err := job.Complete(rst, true); err != nil {
-			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().State = beeremote.Job_FAILED
 			job.GetStatus().Message = "error cancelling job: " + err.Error()
 		} else {
-			job.GetStatus().State = flex.RequestStatus_CANCELLED
+			job.GetStatus().State = beeremote.Job_CANCELLED
 			job.GetStatus().Message = "successfully cancelled job"
 		}
-	case flex.RequestStatus_COMPLETED:
+	case flex.WorkResponse_COMPLETED:
 		if err := job.Complete(rst, false); err != nil {
-			job.GetStatus().State = flex.RequestStatus_FAILED
+			job.GetStatus().State = beeremote.Job_FAILED
 			job.GetStatus().Message = "error completing job: " + err.Error()
 		} else {
-			job.GetStatus().State = flex.RequestStatus_COMPLETED
+			job.GetStatus().State = beeremote.Job_COMPLETED
 			job.GetStatus().Message = "successfully completed job"
 		}
-	case flex.RequestStatus_ERROR:
-		// TODO: Automatically retry errors (also requires changing RequiresUserIntervention()). For
-		// now treat jobs with an error the same as failed jobs.
-		job.GetStatus().State = flex.RequestStatus_ERROR
-		job.GetStatus().Message = "job cannot continue without user intervention (see work results for details)"
-	case flex.RequestStatus_FAILED:
+	case flex.WorkResponse_FAILED:
 		// Something that went wrong that requires user intervention. We don't know what so don't
 		// try to complete or abort the request as it may make it more difficult to recover.
-		job.GetStatus().State = flex.RequestStatus_FAILED
+		job.GetStatus().State = beeremote.Job_FAILED
 		job.GetStatus().Message = "job cannot continue without user intervention (see work results for details)"
 	default:
-		job.GetStatus().State = entryToUpdate.Status().State
-		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)"
-		// We return an error here because this is an internal problem that
-		// shouldn't happen and hopefully a test will catch it. Most likely some
-		// new terminal states were added and this function needs to be updated.
-		// Since we have valid entries and all work requests are in the same
-		// state it makes sense to update the job state to reflect this as well.
-		return fmt.Errorf("all work requests have reached a terminal state, but the state is unknown (ignoring and updating job state anyway, this is likely a bug and may cause unexpected behavior)")
+		job.GetStatus().State = beeremote.Job_UNKNOWN
+		job.GetStatus().Message = "all work requests have reached a terminal state, but the state is unknown (this is likely a bug and will cause unexpected behavior)"
+		// We return an error here because this is an internal problem that shouldn't happen and
+		// hopefully a test will catch it. Most likely some new terminal states were added and this
+		// function needs to be updated.
+		return fmt.Errorf("all work requests have reached a terminal state, but the state is unknown (this is likely a bug and will cause unexpected behavior): %s", entryToUpdate.Status().State)
 	}
 	m.log.Debug("job result", zap.Any("job", job))
 	return nil

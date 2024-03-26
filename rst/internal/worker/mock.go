@@ -66,9 +66,9 @@ func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, 
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.RequestStatus{
-		State:   args.Get(0).(*flex.RequestStatus).GetState(),
-		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
+	status := &flex.WorkResponse_Status{
+		State:   args.Get(0).(*flex.WorkResponse_Status).GetState(),
+		Message: args.Get(0).(*flex.WorkResponse_Status).GetMessage(),
 	}
 
 	return &flex.WorkResponse{
@@ -100,9 +100,9 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.RequestStatus{
-		State:   args.Get(0).(*flex.RequestStatus).GetState(),
-		Message: args.Get(0).(*flex.RequestStatus).GetMessage(),
+	status := &flex.WorkResponse_Status{
+		State:   args.Get(0).(*flex.WorkResponse_Status).GetState(),
+		Message: args.Get(0).(*flex.WorkResponse_Status).GetMessage(),
 	}
 	return &flex.WorkResponse{
 		// The update request does not contain "path" so we cannot set that field in the response.

@@ -23,6 +23,10 @@ type Worker interface {
 	Handle(*sync.WaitGroup, *flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests)
 	Stop()
 	// Implemented by specific node types:
+	//
+	// SubmitWorkRequest() should only return an error if the request was definitely not created on
+	// the node. Otherwise this can lead to orphaned requests because BeeRemote assumes an error
+	// means the request could not be sent to the node or created due to an internal node error.
 	SubmitWorkRequest(*flex.WorkRequest) (*flex.WorkResponse, error)
 	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
 	// TODO: Require UpdateConfig() once dynamic configuration updates are supported.

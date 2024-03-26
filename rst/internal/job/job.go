@@ -61,7 +61,7 @@ func (j *Job) GetSegments() []*flex.WorkRequest_Segment {
 // WorkResults.
 func (j *Job) InTerminalState() bool {
 	status := j.GetStatus()
-	return status.State == flex.RequestStatus_COMPLETED || status.State == flex.RequestStatus_CANCELLED
+	return status.State == beeremote.Job_COMPLETED || status.State == beeremote.Job_CANCELLED
 }
 
 // GenerateSubmission creates a JobSubmission containing one or more work requests that can be
@@ -150,8 +150,8 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error
 		Job: &beeremote.Job{
 			Id:      fmt.Sprint(jobID),
 			Request: jobRequest,
-			Status: &flex.RequestStatus{
-				State:   flex.RequestStatus_UNASSIGNED,
+			Status: &beeremote.Job_Status{
+				State:   beeremote.Job_UNASSIGNED,
 				Message: "created",
 			},
 		},

@@ -9,6 +9,7 @@ import (
 
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/gobee/rst"
+	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 )
@@ -54,7 +55,9 @@ type JobSubmission struct {
 type JobUpdate struct {
 	JobID       string
 	WorkResults map[string]worker.WorkResult
-	NewState    flex.NewState
+	// The job update contains the new state for all work request(s) associated with the job. This
+	// forces the caller to map the new job state to the new worker request state.
+	NewState flex.UpdateWorkRequest_NewState
 }
 
 func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode) (*Manager, error) {
@@ -117,13 +120,21 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// SubmitJob executes the work requests for a job across one or more worker
-// nodes. If any requests can not be scheduled, it attempts to cancel all
-// requests. It returns a map of individual work results and and the overall
-// status of the job submission. If all requests have the same state, that is
-// the overall status. Otherwise the overall status is failed if one or more
-// requests cannot be cancelled after an initial failure.
-func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *flex.RequestStatus) {
+// SubmitJob schedules the work requests for a job across one or more worker nodes. It returns an
+// error if anything goes wrong during scheduling even if the issue is potentially transient,
+// because there is no mechanism for BeeRemote to automatically retry jobs with errors later (such
+// as if all nodes in a pool are offline). This error should be returned to the user immediately to
+// let them know to retry. If all WRs were cancelled the job status is cancelled allowing the user
+// to submit a new request immediately, otherwise if there was an issue cancelling any WRs the job
+// is failed requiring the user to review the issue and manually cleanup by cancelling the job
+// before submitting another one.
+//
+// It returns a map of individual work results and and the overall status of the job submission. If
+// all requests have the same state, that is the overall status. Otherwise the overall status is
+// failed if one or more requests cannot be cancelled after an initial failure. If an error occurs
+// the map and status should be checked to ensure they are not nil, otherwise they can be used to
+// further diagnose the issue without requiring additional requests to get the status of the job.
+func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *beeremote.Job_Status, error) {
 
 	workResults := make(map[string]worker.WorkResult)
 	// If we're unable to schedule any of the work requests this is set to false
@@ -160,8 +171,8 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 				Path:      workRequest.GetPath(),
 				JobId:     workRequest.GetJobId(),
 				RequestId: workRequest.GetRequestId(),
-				Status: &flex.RequestStatus{
-					State:   flex.RequestStatus_FAILED,
+				Status: &flex.WorkResponse_Status{
+					State:   flex.WorkResponse_FAILED,
 					Message: err.Error(),
 				},
 			}
@@ -170,37 +181,23 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		} else {
 			var workResponse *flex.WorkResponse
 			workerID, workResponse, err = pool.assignToLeastBusyWorker(workRequest)
-			// TODO: https://github.com/ThinkParQ/bee-remote/issues/7. For
-			// now treat all failures as fatal. The final implementation
-			// should include logic that handles any errors that can be
-			// retried by WorkerMgr, for example if there aren't any nodes
-			// available in the pool yet, or a request fails on one node but
-			// others are available.
-			//
-			// Note since we don't store the full work requests in the DB
-			// (only the results) we have to retry immediately (perhaps with
-			// a backoff). We can't just store the work request in the
-			// jobResultStore and try again later. This means we need to be
-			// careful not to run ourselves out of memory if some extended
-			// condition prevents scheduling requests because we can't just
-			// keep an infinite backlog of outstanding work requests.
-			// Probably the correct/easiest way to handle this is to use a
-			// buffered channel and the size of the channel determines how
-			// many outstanding work requests we'll allow.
 			if err != nil {
-				// If there was a failure assemble a minimal work response.
+				// If there was a failure assemble a minimal work response. An error from
+				// assignToLeastBusyWorker() means the request was not not assigned to any nodes so
+				// the state must be CREATED so when later we try to cancel any requests that
+				// were assigned, it is automatically cancelled.
 				allScheduled = false
 				workResult.WorkResponse = &flex.WorkResponse{
 					Path:      workRequest.GetPath(),
 					JobId:     workRequest.GetJobId(),
 					RequestId: workRequest.GetRequestId(),
-					Status: &flex.RequestStatus{
-						State:   flex.RequestStatus_UNASSIGNED,
+					Status: &flex.WorkResponse_Status{
+						State:   flex.WorkResponse_CREATED,
 						Message: "error communicating to node: " + err.Error(),
 					},
 				}
 			} else {
-				if workResponse.Status.State != flex.RequestStatus_SCHEDULED {
+				if workResponse.Status.State != flex.WorkResponse_SCHEDULED {
 					allScheduled = false
 				}
 				workResult.WorkResponse = workResponse
@@ -212,28 +209,31 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *fl
 		workResults[workRequest.RequestId] = workResult
 	}
 
-	var status flex.RequestStatus
+	var status beeremote.Job_Status
+	var err error
 
 	if !allScheduled {
-		status.State = flex.RequestStatus_CANCELLED
+		status.State = beeremote.Job_CANCELLED
 		status.Message = "cancelled because one or more work requests could not be scheduled"
+		err = fmt.Errorf("job was automatically cancelled because there was an error scheduling one or more work requests (inspect the job for details then submit a new job)")
 
 		jobUpdate := JobUpdate{
 			JobID:       js.JobID,
 			WorkResults: workResults,
-			NewState:    flex.NewState_CANCEL,
+			NewState:    flex.UpdateWorkRequest_CANCELLED,
 		}
 		var allCancelled bool
 		workResults, allCancelled = m.UpdateJob(jobUpdate)
 		if !allCancelled {
-			status.State = flex.RequestStatus_FAILED
+			status.State = beeremote.Job_FAILED
 			status.Message = "failed because one or more work requests could not be cancelled after initial scheduling failure"
+			err = fmt.Errorf("attempted to cancel the job after an error scheduling one or more work requests, but there was an error cancelling the work requests (inspect the job for details then cancel the job before submitting a new one)")
 		}
 	} else {
-		status.State = flex.RequestStatus_SCHEDULED
+		status.State = beeremote.Job_SCHEDULED
 		status.Message = "finished scheduling work requests"
 	}
-	return workResults, &status
+	return workResults, &status, err
 }
 
 // UpdateJob takes a jobUpdate containing work results for outstanding work
@@ -259,8 +259,8 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 	for reqID, workResult := range jobUpdate.WorkResults {
 
 		// If the WR was never assigned we can just cancel it.
-		if workResult.AssignedPool == "" || workResult.AssignedNode == "" {
-			workResult.Status().State = flex.RequestStatus_CANCELLED
+		if workResult.AssignedPool == "" && workResult.AssignedNode == "" && workResult.Status().State == flex.WorkResponse_CREATED {
+			workResult.Status().State = flex.WorkResponse_CANCELLED
 			workResult.Status().Message = workResult.Status().Message + "; cancelling because the request is not assigned to a pool or node"
 			newResults[reqID] = workResult
 			continue
@@ -268,7 +268,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status().State = flex.RequestStatus_UNKNOWN
+			workResult.Status().State = flex.WorkResponse_UNKNOWN
 			workResult.Status().Message = workResult.Status().Message + "; " + ErrNoPoolsForNodeType.Error()
 			newResults[reqID] = workResult
 			allUpdated = false
@@ -278,10 +278,10 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
 			if errors.Is(err, worker.ErrWorkRequestNotFound) {
-				workResult.Status().State = flex.RequestStatus_CANCELLED
+				workResult.Status().State = flex.WorkResponse_CANCELLED
 				workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
 			} else {
-				workResult.Status().State = flex.RequestStatus_UNKNOWN
+				workResult.Status().State = flex.WorkResponse_UNKNOWN
 				workResult.Status().Message = "error communicating to node: " + err.Error()
 				allUpdated = false
 			}
@@ -292,7 +292,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 		workResult.Status().State = resp.Status.State
 		workResult.Status().Message = workResult.Status().Message + "; " + resp.Status.GetMessage()
 
-		if jobUpdate.NewState == flex.NewState_CANCEL && workResult.Status().State != flex.RequestStatus_CANCELLED {
+		if jobUpdate.NewState == flex.UpdateWorkRequest_CANCELLED && workResult.Status().State != flex.WorkResponse_CANCELLED {
 			allUpdated = false
 		}
 
