@@ -224,7 +224,7 @@ func (m *Manager) Start() error {
 					m.log.Debug("updated job request", zap.Any("response", response))
 				}
 			case workResponse := <-m.workResponses:
-				err := m.updateJobResults(workResponse)
+				err := m.UpdateJobResults(workResponse)
 				// TODO: Once we are using a journal to keep track of job
 				// results, it needs to be updated depending if the update was
 				// successful or not.
@@ -764,7 +764,7 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 	return false, false, fmt.Sprintf("unable to update job %s, new state %s is not supported", job.Id, newState)
 }
 
-// updateJobResults processes work responses from worker nodes for outstanding
+// UpdateJobResults processes work responses from worker nodes for outstanding
 // work requests and handles updating the job results. Once all work requests
 // have reached a terminal state, it handles moving the overall job state to a
 // terminal state, including finishing the job by completing or cancelling
@@ -773,11 +773,14 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 // otherwise the result of the update are reflected in the Job status and
 // message. It may update the job status and also return an error for some
 // corner cases.
-func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
+func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 
 	pathEntry, commitAndRelease, err := m.pathStore.GetAndLockEntry(workResponse.Path)
 	if err != nil {
-		return status.Errorf(codes.NotFound, "no jobs found for path %s", workResponse.Path)
+		if err == badger.ErrKeyNotFound {
+			return status.Errorf(codes.NotFound, "no jobs found for path %s", workResponse.Path)
+		}
+		return status.Errorf(codes.Internal, "internal database error retrieving path entry (try again later): %s: %s", workResponse.Path, err)
 	}
 	defer commitAndRelease()
 	job, ok := pathEntry.Value[workResponse.JobId]
@@ -788,7 +791,7 @@ func (m *Manager) updateJobResults(workResponse *flex.WorkResponse) error {
 	// Update the results entry.
 	entryToUpdate, ok := job.WorkResults[workResponse.RequestId]
 	if !ok {
-		return fmt.Errorf("received a work response for an unknown work request: %s", workResponse)
+		return status.Errorf(codes.NotFound, "received a work response for an unknown work request: %s", workResponse)
 	}
 	entryToUpdate.WorkResponse = workResponse
 	job.WorkResults[workResponse.RequestId] = entryToUpdate

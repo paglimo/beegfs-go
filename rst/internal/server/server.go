@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type Config struct {
@@ -124,13 +125,8 @@ func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.Upda
 	}, nil
 }
 
-func (s *BeeRemoteServer) UpdateWorkRequest(ctx context.Context, workResponse *flex.WorkResponse) (*flex.Response, error) {
+func (s *BeeRemoteServer) UpdateWorkRequest(ctx context.Context, workResponse *flex.WorkResponse) (*emptypb.Empty, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	// TODO: Keep a journal of work responses that can be replayed should we crash before jobMgr processes the response.
-	s.jobMgr.WorkResponses <- workResponse
-	return &flex.Response{
-		Success: true,
-		Message: "sent work response to channel (persistence is not currently guaranteed and the response could be lost with a crash)",
-	}, nil
+	return &emptypb.Empty{}, s.jobMgr.UpdateJobResults(workResponse)
 }

@@ -461,7 +461,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 			},
 			Parts: []*flex.WorkResponse_Part{},
 		}
-		err = jobManager.updateJobResults(resp)
+		err = jobManager.UpdateJobResults(resp)
 		require.NoError(t, err)
 	}
 
@@ -919,7 +919,7 @@ func TestUpdateJobResults(t *testing.T) {
 			Parts: []*flex.WorkResponse_Part{},
 		}
 
-		err = jobManager.updateJobResults(workResponse1)
+		err = jobManager.UpdateJobResults(workResponse1)
 		require.NoError(t, err)
 
 		getJobsRequest := &beeremote.GetJobsRequest{
@@ -956,7 +956,7 @@ func TestUpdateJobResults(t *testing.T) {
 			},
 			Parts: []*flex.WorkResponse_Part{},
 		}
-		err = jobManager.updateJobResults(workResponse2)
+		err = jobManager.UpdateJobResults(workResponse2)
 		require.NoError(t, err)
 
 		resp, err = jobManager.GetJobs(getJobsRequest)
@@ -1001,9 +1001,9 @@ func TestUpdateJobResults(t *testing.T) {
 		Parts: []*flex.WorkResponse_Part{},
 	}
 
-	err = jobManager.updateJobResults(workResponse1)
+	err = jobManager.UpdateJobResults(workResponse1)
 	require.NoError(t, err)
-	err = jobManager.updateJobResults(workResponse2)
+	err = jobManager.UpdateJobResults(workResponse2)
 	require.NoError(t, err)
 
 	getJobsRequest := &beeremote.GetJobsRequest{
