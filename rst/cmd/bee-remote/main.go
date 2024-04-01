@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -48,6 +49,8 @@ func main() {
 	pflag.Int("job.resultsDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	pflag.Int("job.requestQueueDepth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
 	pflag.String("job.journalPath", "", "Path where the job journal will be created/maintained. This is used to optimize crash recovery.")
+	pflag.Int("job.minJobEntriesPerRST", 2, "This many jobs for each RST configured for a particular path is guaranteed to be retained. At minimum this should be set to 1 so we always know the last sync result for an RST.")
+	pflag.Int("job.maxJobEntriesPerRST", 4, "Once this threshold is exceeded, older jobs will be deleted (oldest-to-newest) until the number of jobs equals the minJobEntriesPerRST.")
 	// Hidden flags:
 	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
@@ -88,11 +91,10 @@ Using environment variables:
 	if initialCfg.Developer.DumpConfig {
 		fmt.Printf("Dumping AppConfig and exiting...\n\n")
 		fmt.Printf("%+v\n", initialCfg)
-		// TODO: Remove unless it later turns out this actually applies.
-		// fmt.Println(`
-		// WARNING: Configuration listed here for individual Remote Storage Targets may not reflect their final configuration.
-		// Individual RST types may define their own custom defaults, or automatically override invalid user configuration.
-		// `)
+		fmt.Println(`
+		WARNING: Configuration listed here for individual Remote Storage Targets may not reflect their final configuration.
+		Individual RST types may define their own custom defaults, or automatically override invalid user configuration.
+		`)
 		os.Exit(0)
 	}
 
@@ -115,8 +117,18 @@ Using environment variables:
 	// Create a channel to receive OS signals to coordinate graceful shutdown:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	// This context signals the application has received one of the above signals. It is used by the
+	// main goroutine to understand when it should start a coordinated/ordered graceful shutdown of
+	// all components. Generally it should not be used by individual components to coordinate their
+	// shutdown, except if they require a context as part of their setup method to request
+	// cancellation of any goroutines that may otherwise block shutdown.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-sigs
+		cancel()
+	}()
 
-	workerManager, err := workermgr.NewManager(logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
+	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
 		Id:      nodeID,
 		Address: initialCfg.Server.Address,
 	})
@@ -141,10 +153,8 @@ Using environment variables:
 	}
 	go jobServer.ListenAndServe()
 
-	// TODO: Initialize the event subscriber.
-
 	// Block and wait for a shutdown signal:
-	<-sigs
+	<-ctx.Done()
 	logger.Info("shutdown signal received")
 	jobServer.Stop()
 	jobManager.Stop()

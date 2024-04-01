@@ -34,7 +34,8 @@ type Pool struct {
 
 func (p *Pool) HandleAll(wg *sync.WaitGroup) {
 
-	// TODO: When initially connecting to a node we need to tell it what to do
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/12
+	// When initially connecting to a node we need to tell it what to do
 	// with any outstanding work requests. For example if any were cancelled
 	// while it was offline. For now we don't allow modifying WRs on offline
 	// nodes so just tell it to resume all requests.

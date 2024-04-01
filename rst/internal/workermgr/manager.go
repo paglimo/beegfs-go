@@ -1,6 +1,7 @@
 package workermgr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -34,7 +35,8 @@ type Manager struct {
 	// WorkerManager maintains the list of RSTs because it is responsible for
 	// keeping the configuration on all worker nodes in sync. This is exported
 	// so other components like JobMgr can also reference it as needed.
-	// TODO: Allow RST configuration to be dynamically updated. This is complicated
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/29
+	// Allow RST configuration to be dynamically updated. This is complicated
 	// because we'll have to add locking and figure out how to handle when there
 	// are existing jobs for a changed/removed RST.
 	RemoteStorageTargets map[string]rst.Client
@@ -60,12 +62,19 @@ type JobUpdate struct {
 	NewState flex.UpdateWorkRequest_NewState
 }
 
-func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode) (*Manager, error) {
+// NewManager() is also responsible for setting up RST clients. As this can involve network
+// operations it accepts a context that can be cancelled if it should stop trying to configure the
+// manager. It does not (nor should it) use this context for anything else, and Stop() must be
+// called to shutdown worker nodes.
+func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode) (*Manager, error) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	rstMap := make(map[string]rst.Client)
 	for _, config := range rstConfigs {
-		rst, err := rst.New(config)
+		// We could provide a real context here it it ever became necessary, however `NewManager()`
+		// is not expected to be run in a separate goroutine so we shouldn't become blocked if the
+		// user tries to shutdown via Ctrl+C.
+		rst, err := rst.New(ctx, config)
 		if err != nil {
 			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}
@@ -86,7 +95,8 @@ func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Co
 				nodeMap:  map[string]worker.Worker{},
 				next:     0,
 				mu:       new(sync.Mutex),
-				// TODO: If/when we allow dynamic configuration this won't work. We would need to
+				// TODO: https://github.com/ThinkParQ/bee-remote/issues/29
+				// If/when we allow dynamic configuration this won't work. We would need to
 				// pass a reference to the actual RST clients and provide methods to get their
 				// configuration. The ClientStore will likely make this easy to update.
 				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rstConfigs, BeeRemote: beeRmtConfig},
@@ -108,7 +118,8 @@ func NewManager(log *zap.Logger, managerConfig Config, workerConfigs []worker.Co
 }
 
 func (m *Manager) Start() error {
-	// TODO: Remove once we allow dynamic configuration updates since it is okay
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/29
+	// Remove once we allow dynamic configuration updates since it is okay
 	// if we startup with bad configuration (it can be fixed later).
 	if len(m.nodePools) == 0 {
 		return fmt.Errorf("no valid workers could be configured")
@@ -247,7 +258,9 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 // was cancelled, the message from the initial failure and result of the
 // cancellation request may be required to understand what happened.
 //
-// TODO: Support job updates besides just cancellations.
+// TODO: https://github.com/ThinkParQ/bee-remote/issues/16
+// AND https://github.com/ThinkParQ/bee-remote/issues/27
+// Support job updates besides just cancellations.
 func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, bool) {
 
 	newResults := make(map[string]worker.WorkResult)

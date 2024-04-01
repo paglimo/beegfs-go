@@ -69,10 +69,6 @@ func New(log *zap.Logger, config Config, jobMgr *job.Manager) (*BeeRemoteServer,
 // Stop() is called against the BeeRemoteServer.
 func (s *BeeRemoteServer) ListenAndServe() {
 
-	// TODO: Whenever we support dynamically updating the server configuration
-	// we'll want to make this retry if there is an error listening or serving
-	// requests in case a configuration update fixes things.
-
 	s.log.Debug("listening on local network address", zap.Any("address", s.Address))
 	lis, err := net.Listen("tcp", s.Address)
 	if err != nil {

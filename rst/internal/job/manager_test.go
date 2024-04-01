@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"strconv"
@@ -99,7 +100,7 @@ func TestManage(t *testing.T) {
 		},
 	}
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
+	workerManager, err := workermgr.NewManager(context.TODO(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -206,12 +207,13 @@ func TestManage(t *testing.T) {
 
 }
 
-// Use interactive JobMgr methods to submit and update jobs for this test. The
-// channels are mostly just asynchronous wrappers around these anyway, so using
-// these directly lets us also test what they return under different conditions.
+// Use interactive JobMgr methods to submit and update jobs for this test. The channels are mostly
+// just asynchronous wrappers around these anyway, so using these directly lets us also test what
+// they return under different conditions.
 //
-// TODO: Test updating multiple jobs, including when one job updates and the
-// other has a problem.
+// TODO: https://github.com/ThinkParQ/bee-remote/issues/37
+// Test updating multiple jobs for the same path, including when one job updates and the other has a
+// problem.
 func TestUpdateJobRequestDelete(t *testing.T) {
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
@@ -270,7 +272,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		},
 	}
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
+	workerManager, err := workermgr.NewManager(context.TODO(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -589,7 +591,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
+	workerManager, err := workermgr.NewManager(context.TODO(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -772,6 +774,8 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.Responses[0].Job.Status.State)
 }
 
+// This test verifies if we try to do an S3 upload for a file that doesn't exist with get the
+// appropriate path error from the RST package.
 func TestGenerateSubmissionFailure(t *testing.T) {
 	// Set setup:
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
@@ -789,8 +793,8 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// We don't need a full worker manager for this test.
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
-	workerManager, err := workermgr.NewManager(logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{})
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_S3_{}}}
+	workerManager, err := workermgr.NewManager(context.TODO(), logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 
 	jobMgrConfig := Config{
@@ -813,7 +817,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 		RemoteStorageTarget: "1",
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &flex.SyncJob{
-				Operation: flex.SyncJob_UNKNOWN,
+				Operation: flex.SyncJob_UPLOAD,
 			},
 		},
 	}
@@ -873,7 +877,7 @@ func TestUpdateJobResults(t *testing.T) {
 			},
 		},
 	}
-	workerManager, err := workermgr.NewManager(logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
+	workerManager, err := workermgr.NewManager(context.TODO(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{})
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
 
@@ -975,7 +979,7 @@ func TestUpdateJobResults(t *testing.T) {
 	}
 
 	// Test if all WRs are in a terminal state but there is a mismatch the job
-	// is failed:
+	// state is unknown:
 	js, err := jobManager.SubmitJobRequest(testJobRequest)
 	require.NoError(t, err)
 
@@ -1019,6 +1023,6 @@ func TestUpdateJobResults(t *testing.T) {
 
 	resp, err := jobManager.GetJobs(getJobsRequest)
 	require.NoError(t, err)
-	require.Equal(t, beeremote.Job_FAILED, resp.Response[0].Job.Status.GetState())
+	require.Equal(t, beeremote.Job_UNKNOWN, resp.Response[0].Job.Status.GetState())
 
 }

@@ -30,26 +30,15 @@ func init() {
 	gob.Register(&Segment{})
 }
 
-const (
-	// This many jobs for each RST configured on a particular path is guaranteed
-	// to be retained. At minimum this should be set to 1 so we always know the
-	// last sync result for a particular RST.
-	// TODO: Make this user configurable.
-	minJobEntriesPerRST = 2
-	// Once this threshold is exceeded older jobs will be deleted
-	// (oldest-to-newest) until the number of jobs equals the
-	// minJobEntriesPerRST The oldest job is determined by the lowest job ID.
-	// TODO: Make this user configurable.
-	maxJobEntriesPerRST = 4
-)
-
 type Config struct {
-	PathDBPath         string `mapstructure:"pathDBPath"`
-	PathDBCacheSize    int    `mapstructure:"pathDBCacheSize"`
-	ResultsDBPath      string `mapstructure:"resultsDBPath"`
-	ResultsDBCacheSize int    `mapstructure:"resultsDBCacheSize"`
-	RequestQueueDepth  int    `mapstructure:"requestQueueDepth"`
-	JournalPath        string `mapstructure:"journalPath"`
+	PathDBPath          string `mapstructure:"pathDBPath"`
+	PathDBCacheSize     int    `mapstructure:"pathDBCacheSize"`
+	ResultsDBPath       string `mapstructure:"resultsDBPath"`
+	ResultsDBCacheSize  int    `mapstructure:"resultsDBCacheSize"`
+	RequestQueueDepth   int    `mapstructure:"requestQueueDepth"`
+	JournalPath         string `mapstructure:"journalPath"`
+	MinJobEntriesPerRST int    `mapstructure:"minJobEntriesPerRST"`
+	MaxJobEntriesPerRST int    `mapstructure:"maxJobEntriesPerRST"`
 }
 
 type Manager struct {
@@ -158,10 +147,8 @@ func (m *Manager) Start() error {
 	deferredFuncs = append(deferredFuncs, closePathDB)
 	m.pathStore = pathStore
 
-	// TODO: Create a journal that also can be used to generate monotonically
-	// increasing integers we can use as job IDs. The journal should also be
-	// used to generate sequential job IDs.
-	// Ref: https://dgraph.io/docs/badger/get-started/#monotonically-increasing-integers
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
+	// Likely replace this depending on the outcome of #11.
 	jobJournalDBOpts := badger.DefaultOptions(m.config.JournalPath)
 	jobJournalDBOpts = jobJournalDBOpts.WithLogger(logger.NewBadgerLoggerBridge("journalDB", m.log))
 	jobJournalDBOpts = jobJournalDBOpts.WithLoggingLevel(badger.INFO)
@@ -172,8 +159,8 @@ func (m *Manager) Start() error {
 
 	deferredFuncs = append(deferredFuncs, func() error { return jobJournal.Close() })
 
-	// TODO: Evaluate if a bandwidth of 1000 is appropriate.
-	// Possibly this should be user configurable.
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
+	// Evaluate if a bandwidth of 1000 is appropriate. Possibly this should be user configurable.
 	jobIDGenerator, err := jobJournal.GetSequence([]byte("jobIDs"), 1000)
 	if err != nil {
 		return err
@@ -225,9 +212,10 @@ func (m *Manager) Start() error {
 				}
 			case workResponse := <-m.workResponses:
 				err := m.UpdateJobResults(workResponse)
-				// TODO: Once we are using a journal to keep track of job
-				// results, it needs to be updated depending if the update was
-				// successful or not.
+				// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
+				// Once we are using a journal to keep track of job results, it needs to be updated
+				// depending if the update was successful or not (this will likely be unneeded
+				// depending on the outcome of #11.
 				if err != nil {
 					m.log.Error("error updating job results", zap.Error(err), zap.Any("workResponse", workResponse))
 				} else {
@@ -318,8 +306,8 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		}
 		defer cleanupEntries()
 
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13 - If there were enough entries in
-		// the database that matched the path prefix we could run out of memory.
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13
+		// If there were enough entries in the database that matched the path prefix we could run out of memory.
 		for {
 			entry, err := nextEntry()
 			if err != nil {
@@ -377,9 +365,10 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	// Initialize reference types:
 	job.WorkResults = make(map[string]worker.WorkResult)
 
-	// TODO: Consider adding a CreateOrGetEntry method to the MapStore to
-	// simplify/optimize this. Or adding a flag to the existing method that will
-	// get the entry if it already exists.
+	// TODO: https://github.com/ThinkParQ/gobee/issues/10
+	// Add a flag to `CreateAndLockEntry()` that will get the entry if it already exists so the
+	// caller doesn't have to check for an error then call `GetAndLockEntry()` (likely still
+	// returning an appropriate error so the caller can adjust behavior as needed).
 	pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(job.Request.GetPath())
 	if err == kvstore.ErrEntryAlreadyExistsInDB || err == kvstore.ErrEntryAlreadyExistsInCache {
 		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.Request.GetPath())
@@ -420,11 +409,11 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		for _, jobsForRST := range terminalJobsByRST {
 			// It would be inefficient if we only cleaned up one entry at a
 			// time so we set a max number of entries before we start GC.
-			if len(jobsForRST) > maxJobEntriesPerRST {
+			if len(jobsForRST) > m.config.MaxJobEntriesPerRST {
 				// Sort the slice so we can delete old jobs based on the lowest
 				// job ID until we reach minJobEntriesPerRST.
 				sort.Slice(jobsForRST, func(i, j int) bool { return jobsForRST[i].GetId() < jobsForRST[j].GetId() })
-				for _, gcJob := range jobsForRST[:minJobEntriesPerRST+1] {
+				for _, gcJob := range jobsForRST[:m.config.MinJobEntriesPerRST+1] {
 					delete(pathEntry.Value, gcJob.GetId())
 				}
 			}
@@ -453,7 +442,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.Request.GetRemoteStorageTarget())
 	}
 
-	jobSubmission, retry, err := job.GenerateSubmission(rstClient)
+	jobSubmission, retry, err := job.GenerateSubmission(m.ctx, rstClient)
 	if err != nil && !retry {
 		return nil, fmt.Errorf("a fatal error occurred generating the job submission, please check the job or RST configuration before trying again: %w", err)
 	} else if err != nil {
@@ -481,7 +470,10 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 	pathEntry.Value[job.GetId()] = job
 	job.WorkResults, job.Status, err = m.workerManager.SubmitJob(jobSubmission)
 
-	// TODO: A crash here could mean there are WRs scheduled to worker nodes but no record of the
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
+	// Decide if this concern is valid enough to do anything about.
+	//
+	// A crash here could mean there are WRs scheduled to worker nodes but no record of the
 	// job or which nodes they were assigned to because the updated pathEntry hasn't been committed
 	// to the DB. If we had a journal mechanism we could reply the journal and broadcast to all
 	// workers they should cancel those jobs to cleanup any remnants and retry the job creation.
@@ -743,7 +735,7 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 			return false, false, ""
 		}
 
-		err := job.Complete(rstClient, true)
+		err := job.Complete(m.ctx, rstClient, true)
 		if err != nil {
 			if forceUpdate {
 				job.GetStatus().State = beeremote.Job_CANCELLED
@@ -809,14 +801,12 @@ func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 		}
 	}
 
-	// TODO: Consider the scenarios where all work requests are in a terminal
-	// state, but they aren't in the same state. Depending on how worker nodes
-	// are implemented this could be possible if some WRs completed, then a user
-	// cancelled the job. Perhaps we treat the overall job state as cancelled in
-	// this scenario?
+	// This might happen if WRs could complete on some nodes, but not on other nodes. This could be
+	// due to some worker nodes having an issue uploading their segments to the RST, or a user
+	// cancelling the job partway through while some WRs are complete and others are still running.
 	if !allSameState {
-		job.GetStatus().State = beeremote.Job_FAILED
-		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (this likely indicates a bug and the job will need to be cancelled to cleanup)"
+		job.GetStatus().State = beeremote.Job_UNKNOWN
+		job.GetStatus().Message = "all work requests have reached a terminal state, but not all work requests are in the same state (inspect individual work requests to determine possible next steps)"
 		return nil
 	}
 
@@ -833,7 +823,7 @@ func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 	// If everything has the same state, the state of the entry we just updated will match every other request.
 	switch entryToUpdate.Status().State {
 	case flex.WorkResponse_CANCELLED:
-		if err := job.Complete(rst, true); err != nil {
+		if err := job.Complete(m.ctx, rst, true); err != nil {
 			job.GetStatus().State = beeremote.Job_FAILED
 			job.GetStatus().Message = "error cancelling job: " + err.Error()
 		} else {
@@ -841,7 +831,7 @@ func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 			job.GetStatus().Message = "successfully cancelled job"
 		}
 	case flex.WorkResponse_COMPLETED:
-		if err := job.Complete(rst, false); err != nil {
+		if err := job.Complete(m.ctx, rst, false); err != nil {
 			job.GetStatus().State = beeremote.Job_FAILED
 			job.GetStatus().Message = "error completing job: " + err.Error()
 		} else {
@@ -867,11 +857,12 @@ func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 
 func (m *Manager) Stop() {
 
-	m.readyMu.RLock()
-	defer m.readyMu.RUnlock()
+	m.readyMu.Lock()
+	defer m.readyMu.Unlock()
 	if !m.ready {
 		return // Nothing to do.
 	}
 
 	m.cancel()
+	m.ready = false
 }

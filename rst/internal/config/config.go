@@ -41,7 +41,8 @@ func (c *AppConfig) NewEmptyInstance() configmgr.Configurable {
 }
 
 func (c *AppConfig) UpdateAllowed(newConfig configmgr.Configurable) error {
-	// TODO: Implement
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/29.
+	// At least allow RST configuration to be dynamically updated.
 	return nil
 }
 
@@ -55,7 +56,16 @@ func (c *AppConfig) ValidateConfig() error {
 		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.jobResultsDBPath must be set to a valid path (provided path: '%s')", c.Job.ResultsDBPath))
 	}
 
-	// TODO: Implement other checks as needed.
+	if c.Job.MinJobEntriesPerRST < 1 {
+		return fmt.Errorf("the MinJobEntriesPerRST must be one or greater (provided value: %d)", c.Job.MinJobEntriesPerRST)
+	}
+
+	if c.Job.MaxJobEntriesPerRST < c.Job.MinJobEntriesPerRST {
+		return fmt.Errorf("the MaxJobEntriesPerRST (%d) cannot be less than the MinJobEntriesPerRST (%d)", c.Job.MaxJobEntriesPerRST, c.Job.MinJobEntriesPerRST)
+	}
+
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/29
+	// At least add checks for RST configuration before allowing it to be updated dynamically.
 
 	if len(multiErr.Errors) > 0 {
 		return &multiErr

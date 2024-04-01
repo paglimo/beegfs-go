@@ -2,15 +2,16 @@ package job
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+	"path/filepath"
 	"slices"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
-	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -86,24 +87,14 @@ func (j *Job) InTerminalState() bool {
 // function as a method to determine if a file has changed and it is safe to resume a job or if it
 // should be cancelled. It also ensures even if the file changes the original job submission can be
 // recreated for troubleshooting.
-func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission, bool, error) {
+func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Client) (workermgr.JobSubmission, bool, error) {
 
 	var workRequests []*flex.WorkRequest
 
 	if j.Segments == nil {
-		stat, err := filesystem.MountPoint.Stat(j.Request.GetPath())
-		if err != nil {
-			// The most likely reason for an error is the path wasn't found because
-			// we got a job request for a file in BeeGFS that didn't exist or was
-			// removed after the job request was submitted. Less likely there was
-			// some transient network/other issue preventing us from talking to
-			// BeeGFS that could actually be retried. Until there is a reason to add
-			// more complex error handling lets just treat all stat errors as fatal.
-			return workermgr.JobSubmission{}, false, err
-		}
-		fileSize := stat.Size()
 		var canRetry bool
-		workRequests, canRetry, err = rstClient.GenerateRequests(j.Get(), fileSize, 0)
+		var err error
+		workRequests, canRetry, err = rstClient.GenerateRequests(ctx, j.Get(), 0)
 		if err != nil {
 			return workermgr.JobSubmission{}, canRetry, err
 		}
@@ -118,6 +109,10 @@ func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission,
 		workRequests = rst.RecreateWorkRequests(j.Get(), j.GetSegments())
 	}
 
+	if len(workRequests) == 0 {
+		return workermgr.JobSubmission{}, false, fmt.Errorf("generated work request is empty (this is probably a bug in the RST package)")
+	}
+
 	return workermgr.JobSubmission{
 		JobID:        j.GetId(),
 		WorkRequests: workRequests,
@@ -130,12 +125,12 @@ func (j *Job) GenerateSubmission(rstClient rst.Client) (workermgr.JobSubmission,
 // example completing or aborting a multipart upload for a sync job to an S3 target. Note this is
 // largely just a wrapper around the rst.Client CompleteRequests method to handle converting between
 // data types used by the Job and the RST packages.
-func (j *Job) Complete(client rst.Client, abort bool) error {
+func (j *Job) Complete(ctx context.Context, client rst.Client, abort bool) error {
 	workResponses := make([]*flex.WorkResponse, 0, len(j.WorkResults))
 	for _, r := range j.WorkResults {
 		workResponses = append(workResponses, r.WorkResponse)
 	}
-	return client.CompleteRequests(j.Get(), workResponses, abort)
+	return client.CompleteRequests(ctx, j.Get(), workResponses, abort)
 }
 
 // New is the standard way to generate a Job from a JobRequest.
@@ -144,6 +139,15 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error
 	jobID, err := jobSeq.Next()
 	if err != nil {
 		return nil, err
+	}
+
+	// Normalize all paths so they start with a slash. This means if the user wants to get jobs for
+	// all paths (a potentially resource intensive request) they have to consciously specify "/" and
+	// BeeRemote clients can use "" as a check for invalid/no input when querying by path. This also
+	// clearly establishes all paths are specified as absolute paths (relative to the mount
+	// point/root directory).
+	if !filepath.IsAbs(jobRequest.Path) {
+		jobRequest.Path = "/" + jobRequest.Path
 	}
 
 	newJob := &Job{

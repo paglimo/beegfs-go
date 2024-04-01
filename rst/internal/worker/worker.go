@@ -29,8 +29,9 @@ type Worker interface {
 	// means the request could not be sent to the node or created due to an internal node error.
 	SubmitWorkRequest(*flex.WorkRequest) (*flex.WorkResponse, error)
 	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
-	// TODO: Require UpdateConfig() once dynamic configuration updates are supported.
-	//UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)
+	// TODO: https://github.com/ThinkParQ/bee-sync/issues/6
+	// Require UpdateConfig() once dynamic configuration updates are supported.
+	//   UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)
 }
 
 // grpcClientHandler defines the interface for managing gRPC connections in

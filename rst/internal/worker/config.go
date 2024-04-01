@@ -107,10 +107,10 @@ func newWorkerNodeFromConfig(log *zap.Logger, config Config) (Worker, error) {
 	nodeCtx, nodeCancel := context.WithCancel(context.Background())
 	rpcCtx, rpcCancel := context.WithCancel(context.Background())
 
-	// TODO: Allow configuration that should apply to all nodes to be set using
-	// configmgr, including the default values (which should be set using
-	// flags). For now just ensure these are not set to zero here, otherwise
-	// weird things can happen.
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/36
+	// Allow configuration that should apply to all nodes to be set using configmgr, including the
+	// default values (which should be set using flags). For now just ensure these are not set to
+	// zero here, otherwise weird things can happen.
 
 	if config.MaxReconnectBackOff == 0 {
 		config.MaxReconnectBackOff = 60

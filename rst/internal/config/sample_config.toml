@@ -1,10 +1,14 @@
 [[remote_storage_target]]
 id = "1"
 name = "rst1"
-policies = { FastStartMaxSize = 4096, localflock = true, remoteflock = true, keepdirstructure = true, keepbeegfsmetadata = true }
-s3.endpointUrl = "localhost:9000"
-s3.partitionId = "test_partition"
-s3.region = "test_region"
+# FastStartMaxSize is the point at which uploads and downloads are split into multiple parts and
+# uploaded using a multipart upload. Amazon generally recommends when object sizes approach 100MB, a
+# multipart upload should be used instead of uploading the object in a single operation
+# (https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html).
+policies = { FastStartMaxSize = 104857600, localflock = true, remoteflock = true, keepdirstructure = true, keepbeegfsmetadata = true }
+s3.endpointUrl = "http://localhost:9000"
+# s3.partitionId = "test_partition"
+s3.region = "minio"
 s3.bucket = "s3bucket"
 s3.accessKey = "access_key"
 s3.secretKey = "secret_key"
@@ -27,6 +31,9 @@ allowInsecure = true
 selfSignedTLSCertPath = ""
 maxReconnectBackOff = 10
 disconnectTimeout = 30
+sendRetries = 10
+retryInterval = 10
+heartbeatInterval = 10
 
 # [[worker]]
 # id = "2"
