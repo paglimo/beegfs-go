@@ -52,9 +52,6 @@ func (c *AppConfig) ValidateConfig() error {
 	if c.Job.PathDBPath == "" {
 		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.pathDBPath must be set to a valid path (provided path: '%s')", c.Job.PathDBPath))
 	}
-	if c.Job.ResultsDBPath == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.jobResultsDBPath must be set to a valid path (provided path: '%s')", c.Job.ResultsDBPath))
-	}
 
 	if c.Job.MinJobEntriesPerRST < 1 {
 		return fmt.Errorf("the MinJobEntriesPerRST must be one or greater (provided value: %d)", c.Job.MinJobEntriesPerRST)

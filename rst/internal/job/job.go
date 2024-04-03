@@ -16,6 +16,7 @@ import (
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Job represents a task that can be managed by BeeRemote.
@@ -157,6 +158,7 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error
 			Status: &beeremote.Job_Status{
 				State:   beeremote.Job_UNASSIGNED,
 				Message: "created",
+				Updated: timestamppb.Now(),
 			},
 		},
 	}

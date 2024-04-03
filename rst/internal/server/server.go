@@ -90,7 +90,7 @@ func (s *BeeRemoteServer) Stop() {
 	s.wg.Wait()
 }
 
-func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.JobRequest) (*beeremote.JobResponse, error) {
+func (s *BeeRemoteServer) SubmitJobRequest(ctx context.Context, request *beeremote.JobRequest) (*beeremote.JobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	return s.jobMgr.SubmitJobRequest(request)
@@ -111,14 +111,7 @@ func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJob
 func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	if request.Wait {
-		return s.jobMgr.UpdateJob(request)
-	}
-	s.jobMgr.JobUpdates <- request
-	return &beeremote.UpdateJobResponse{
-		Ok:      true,
-		Message: "asynchronous update requested (query the path or job ID later to check the result)",
-	}, nil
+	return s.jobMgr.UpdateJob(request)
 }
 
 func (s *BeeRemoteServer) UpdateWorkRequest(ctx context.Context, workResponse *flex.WorkResponse) (*emptypb.Empty, error) {

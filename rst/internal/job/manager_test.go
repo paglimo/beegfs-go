@@ -47,10 +47,6 @@ func TestManage(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupResultsDBPath(t)
-
 	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupJournalDBPath(t)
@@ -105,11 +101,9 @@ func TestManage(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         tmpPathDBPath,
-		PathDBCacheSize:    1024,
-		ResultsDBPath:      tmpResultsDBPath,
-		ResultsDBCacheSize: 1024,
-		JournalPath:        tmpJournalDBPath,
+		PathDBPath:      tmpPathDBPath,
+		PathDBCacheSize: 1024,
+		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -140,14 +134,14 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err := jobManager.GetJobs(getJobRequestsByPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_SCHEDULED, getJobsResponse.Response[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_SCHEDULED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
-	assert.Len(t, getJobsResponse.Response[0].WorkResults, 4)
-	for _, wr := range getJobsResponse.Response[0].WorkResults {
+	assert.Len(t, getJobsResponse.Paths[0].Jobs[0].WorkResults, 4)
+	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
 		assert.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.State)
 	}
 
-	scheduledJobID := getJobsResponse.Response[0].Job.Id
+	scheduledJobID := getJobsResponse.Paths[0].Jobs[0].Job.Id
 
 	// If we try to submit another job for the same path with the same RST an error should be returned:
 	jr, err := jobManager.SubmitJobRequest(&testJobRequest)
@@ -162,8 +156,8 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByPath)
 	require.NoError(t, err)
-	assert.Len(t, getJobsResponse.Response, 1)
-	assert.Equal(t, beeremote.Job_SCHEDULED, getJobsResponse.Response[0].Job.Status.State)
+	assert.Len(t, getJobsResponse.Paths, 1)
+	assert.Equal(t, beeremote.Job_SCHEDULED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
 	// If we schedule a job for a different RST it should be scheduled:
 	testJobRequest2 := beeremote.JobRequest{
@@ -190,7 +184,7 @@ func TestManage(t *testing.T) {
 	getJobRequestsByID := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-				JobID: scheduledJobID,
+				JobId: scheduledJobID,
 				Path:  testJobRequest2.Path,
 			},
 		},
@@ -199,9 +193,9 @@ func TestManage(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
-	for _, wr := range getJobsResponse.Response[0].WorkResults {
+	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
 		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
 	}
 
@@ -218,10 +212,6 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
-
-	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupResultsDBPath(t)
 
 	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
@@ -277,11 +267,9 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         tmpPathDBPath,
-		PathDBCacheSize:    1024,
-		ResultsDBPath:      tmpResultsDBPath,
-		ResultsDBCacheSize: 1024,
-		JournalPath:        tmpJournalDBPath,
+		PathDBPath:      tmpPathDBPath,
+		PathDBCacheSize: 1024,
+		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -383,7 +371,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	deleteJobByIDRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: submitJobResponse2.Job.Id,
+				JobId: submitJobResponse2.Job.Id,
 				Path:  submitJobResponse2.Job.Request.Path,
 			},
 		},
@@ -407,7 +395,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	cancelJobByIDRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: submitJobResponse2.Job.Id,
+				JobId: submitJobResponse2.Job.Id,
 				Path:  submitJobResponse2.Job.Request.Path,
 			},
 		},
@@ -433,7 +421,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	getJobRequestsByID := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-				JobID: submitJobResponse2.Job.Id,
+				JobId: submitJobResponse2.Job.Id,
 				Path:  submitJobResponse2.Job.Request.Path,
 			},
 		},
@@ -471,7 +459,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	updateJobByIDRequest := beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: response.Job.Id,
+				JobId: response.Job.Id,
 				Path:  response.Job.Request.Path,
 			},
 		},
@@ -535,10 +523,6 @@ func TestManageErrorHandling(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupResultsDBPath(t)
-
 	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupJournalDBPath(t)
@@ -596,11 +580,9 @@ func TestManageErrorHandling(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         tmpPathDBPath,
-		PathDBCacheSize:    1024,
-		ResultsDBPath:      tmpResultsDBPath,
-		ResultsDBCacheSize: 1024,
-		JournalPath:        tmpJournalDBPath,
+		PathDBPath:      tmpPathDBPath,
+		PathDBCacheSize: 1024,
+		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -630,15 +612,15 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err := jobManager.GetJobs(getJobRequestsByPrefix)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
 	// JobMgr should have cancelled all outstanding requests:
-	assert.Len(t, getJobsResponse.Response[0].WorkResults, 4)
-	for _, wr := range getJobsResponse.Response[0].WorkResults {
+	assert.Len(t, getJobsResponse.Paths[0].Jobs[0].WorkResults, 4)
+	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
 		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
 	}
 
-	scheduledJobID := getJobsResponse.Response[0].Job.Id
+	scheduledJobID := getJobsResponse.Paths[0].Jobs[0].Job.Id
 
 	// The following sequence of events is unlikely in real work scenarios, but verifies how JobMgr
 	// handles states. First try to cancel the already cancelled job. JobMgr should always attempt
@@ -659,7 +641,7 @@ func TestManageErrorHandling(t *testing.T) {
 	getJobRequestsByID := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-				JobID: scheduledJobID,
+				JobId: scheduledJobID,
 				Path:  testJobRequest.Path,
 			},
 		},
@@ -668,9 +650,9 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_UNKNOWN, getJobsResponse.Response[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_UNKNOWN, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
-	for _, wr := range getJobsResponse.Response[0].WorkResults {
+	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
 		assert.Equal(t, flex.WorkResponse_UNKNOWN, wr.Response.Status.State)
 	}
 
@@ -684,7 +666,7 @@ func TestManageErrorHandling(t *testing.T) {
 	getJobRequestsByID = &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-				JobID: scheduledJobID,
+				JobId: scheduledJobID,
 				Path:  testJobRequest.Path,
 			},
 		},
@@ -693,9 +675,9 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	getJobsResponse, err = jobManager.GetJobs(getJobRequestsByID)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Response[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
-	for _, wr := range getJobsResponse.Response[0].WorkResults {
+	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
 		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
 	}
 
@@ -713,7 +695,7 @@ func TestManageErrorHandling(t *testing.T) {
 	updateJobRequest = beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: jobID,
+				JobId: jobID,
 				Path:  testJobRequest.Path,
 			},
 		},
@@ -735,7 +717,7 @@ func TestManageErrorHandling(t *testing.T) {
 	updateJobRequest = beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: jobID,
+				JobId: jobID,
 				Path:  testJobRequest.Path,
 			},
 		},
@@ -760,7 +742,7 @@ func TestManageErrorHandling(t *testing.T) {
 	updateJobRequest = beeremote.UpdateJobRequest{
 		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
 			ByIdAndPath: &beeremote.UpdateJobRequest_QueryIdAndPath{
-				JobID: jobID,
+				JobId: jobID,
 				Path:  testJobRequest.Path,
 			},
 		},
@@ -782,10 +764,6 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupResultsDBPath(t)
-
 	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupJournalDBPath(t)
@@ -798,11 +776,9 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	jobMgrConfig := Config{
-		PathDBPath:         tmpPathDBPath,
-		PathDBCacheSize:    1024,
-		ResultsDBPath:      tmpResultsDBPath,
-		ResultsDBCacheSize: 1024,
-		JournalPath:        tmpJournalDBPath,
+		PathDBPath:      tmpPathDBPath,
+		PathDBCacheSize: 1024,
+		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -834,10 +810,6 @@ func TestUpdateJobResults(t *testing.T) {
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
-
-	tmpResultsDBPath, cleanupResultsDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupResultsDBPath(t)
 
 	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
@@ -882,11 +854,9 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:         tmpPathDBPath,
-		PathDBCacheSize:    1024,
-		ResultsDBPath:      tmpResultsDBPath,
-		ResultsDBCacheSize: 1024,
-		JournalPath:        tmpJournalDBPath,
+		PathDBPath:      tmpPathDBPath,
+		PathDBCacheSize: 1024,
+		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -929,7 +899,7 @@ func TestUpdateJobResults(t *testing.T) {
 		getJobsRequest := &beeremote.GetJobsRequest{
 			Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 				ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-					JobID: js.Job.GetId(),
+					JobId: js.Job.GetId(),
 					Path:  js.Job.Request.Path,
 				},
 			},
@@ -940,14 +910,14 @@ func TestUpdateJobResults(t *testing.T) {
 		require.NoError(t, err)
 
 		// Work result order is not guaranteed...
-		for _, wr := range resp.Response[0].WorkResults {
+		for _, wr := range resp.Paths[0].Jobs[0].WorkResults {
 			if wr.Response.GetRequestId() == "0" {
 				require.Equal(t, expectedStatus, wr.Response.Status.GetState())
 			} else {
 				require.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.GetState())
 			}
 		}
-		require.Equal(t, beeremote.Job_SCHEDULED, resp.Response[0].Job.Status.GetState())
+		require.Equal(t, beeremote.Job_SCHEDULED, resp.Paths[0].Jobs[0].Job.Status.State)
 
 		// The second response should finish the job:
 		workResponse2 := &flex.WorkResponse{
@@ -965,13 +935,13 @@ func TestUpdateJobResults(t *testing.T) {
 
 		resp, err = jobManager.GetJobs(getJobsRequest)
 		require.NoError(t, err)
-		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[0].Response.Status.GetState())
-		require.Equal(t, expectedStatus, resp.Response[0].WorkResults[1].Response.Status.GetState())
+		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[0].Response.Status.GetState())
+		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[1].Response.Status.GetState())
 		switch expectedStatus {
 		case flex.WorkResponse_COMPLETED:
-			require.Equal(t, beeremote.Job_COMPLETED, resp.Response[0].Job.Status.GetState())
+			require.Equal(t, beeremote.Job_COMPLETED, resp.Paths[0].Jobs[0].Job.Status.GetState())
 		case flex.WorkResponse_CANCELLED:
-			require.Equal(t, beeremote.Job_CANCELLED, resp.Response[0].Job.Status.GetState())
+			require.Equal(t, beeremote.Job_CANCELLED, resp.Paths[0].Jobs[0].Job.Status.GetState())
 		default:
 			require.Fail(t, "received an unexpected status", "likely the test needs to be updated to add a new status compare the job status against")
 		}
@@ -1013,7 +983,7 @@ func TestUpdateJobResults(t *testing.T) {
 	getJobsRequest := &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByJobIdAndPath{
 			ByJobIdAndPath: &beeremote.GetJobsRequest_QueryIdAndPath{
-				JobID: js.Job.GetId(),
+				JobId: js.Job.GetId(),
 				Path:  js.Job.Request.Path,
 			},
 		},
@@ -1023,6 +993,6 @@ func TestUpdateJobResults(t *testing.T) {
 
 	resp, err := jobManager.GetJobs(getJobsRequest)
 	require.NoError(t, err)
-	require.Equal(t, beeremote.Job_UNKNOWN, resp.Response[0].Job.Status.GetState())
+	require.Equal(t, beeremote.Job_UNKNOWN, resp.Paths[0].Jobs[0].Job.Status.State)
 
 }

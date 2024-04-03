@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Register custom types for serialization/deserialization via Gob when the
@@ -33,8 +34,6 @@ func init() {
 type Config struct {
 	PathDBPath          string `mapstructure:"pathDBPath"`
 	PathDBCacheSize     int    `mapstructure:"pathDBCacheSize"`
-	ResultsDBPath       string `mapstructure:"resultsDBPath"`
-	ResultsDBCacheSize  int    `mapstructure:"resultsDBCacheSize"`
 	RequestQueueDepth   int    `mapstructure:"requestQueueDepth"`
 	JournalPath         string `mapstructure:"journalPath"`
 	MinJobEntriesPerRST int    `mapstructure:"minJobEntriesPerRST"`
@@ -261,7 +260,7 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 
 	switch query := request.Query.(type) {
 	case *beeremote.GetJobsRequest_ByJobIdAndPath:
-		if query.ByJobIdAndPath.JobID == "" || query.ByJobIdAndPath.Path == "" {
+		if query.ByJobIdAndPath.JobId == "" || query.ByJobIdAndPath.Path == "" {
 			return nil, fmt.Errorf("to query by job ID and path, both must be specified")
 		}
 
@@ -270,14 +269,19 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			return nil, err
 		}
 
-		job, ok := pathEntry.Value[query.ByJobIdAndPath.JobID]
+		job, ok := pathEntry.Value[query.ByJobIdAndPath.JobId]
 		if !ok {
-			return nil, fmt.Errorf("job ID %s does not exist for path %s", query.ByJobIdAndPath.JobID, query.ByJobIdAndPath.Path)
+			return nil, fmt.Errorf("job ID %s does not exist for path %s", query.ByJobIdAndPath.JobId, query.ByJobIdAndPath.Path)
 		}
 
 		return &beeremote.GetJobsResponse{
-			Response: []*beeremote.JobResponse{
-				getJobResponse(job),
+			Paths: []*beeremote.GetJobsResponse_JobsByPath{
+				{
+					Path: query.ByJobIdAndPath.Path,
+					Jobs: []*beeremote.JobResponse{
+						getJobResponse(job),
+					},
+				},
 			},
 		}, nil
 
@@ -291,15 +295,26 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 		for _, job := range pathEntry.Value {
 			jobResponses = append(jobResponses, getJobResponse(job))
 		}
+
 		return &beeremote.GetJobsResponse{
-			Response: jobResponses,
+			Paths: []*beeremote.GetJobsResponse_JobsByPath{
+				{
+					Path: query.ByExactPath,
+					Jobs: jobResponses,
+				},
+			},
 		}, nil
 
 	case *beeremote.GetJobsRequest_ByPathPrefix:
 		// For a path prefix first get all paths that match the prefix. Then get all the jobs for
 		// each path. If someone wanted to get all jobs they could provide a prefix of "/".
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13
+		// There could be lots of paths, do we want to start with a zero length slice?
+		// We should optimize this while we're here addressing the memory issue.
+		response := &beeremote.GetJobsResponse{
+			Paths: make([]*beeremote.GetJobsResponse_JobsByPath, 0),
+		}
 
-		pathItems := make([]*kvstore.BadgerItem[map[string]*Job], 0)
 		nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(query.ByPathPrefix))
 		if err != nil {
 			return nil, err
@@ -316,18 +331,19 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			if entry == nil {
 				break
 			}
-			pathItems = append(pathItems, entry)
+
+			jobsByPath := &beeremote.GetJobsResponse_JobsByPath{
+				Path: entry.Key,
+				Jobs: make([]*beeremote.JobResponse, 0, len(entry.Entry.Value)),
+			}
+
+			for _, job := range entry.Entry.Value {
+				jobsByPath.Jobs = append(jobsByPath.Jobs, getJobResponse(job))
+			}
+			response.Paths = append(response.Paths, jobsByPath)
 		}
 
-		jobResponses := []*beeremote.JobResponse{}
-		for _, pathItem := range pathItems {
-			for _, job := range pathItem.Entry.Value {
-				jobResponses = append(jobResponses, getJobResponse(job))
-			}
-		}
-		return &beeremote.GetJobsResponse{
-			Response: jobResponses,
-		}, nil
+		return response, nil
 	}
 
 	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
@@ -382,7 +398,13 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		pathEntry.Value = make(map[string]*Job)
 	}
 	defer func() {
-		if err := commitAndReleasePath(); err != nil {
+		// If there was an error creating the job and there are no other jobs for this path, clean
+		// it up when we return.
+		if len(pathEntry.Value) == 0 {
+			if err := commitAndReleasePath(kvstore.DeleteEntry); err != nil {
+				m.log.Error("unable to release and cleanup path entry with no jobs", zap.Error(err))
+			}
+		} else if err := commitAndReleasePath(); err != nil {
 			m.log.Error("unable to release path entry", zap.Error(err))
 		}
 	}()
@@ -611,19 +633,19 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 
 	} else if query := jobUpdate.GetByIdAndPath(); query != nil {
 
-		if query.JobID == "" || query.Path == "" {
+		if query.JobId == "" || query.Path == "" {
 			return nil, fmt.Errorf("to update by job ID and path, both must be specified")
 		}
 
 		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(query.Path)
 		if err != nil {
-			return nil, fmt.Errorf("error retrieving jobs for path %s while searching for job ID %s : %w", query.Path, query.JobID, err)
+			return nil, fmt.Errorf("error retrieving jobs for path %s while searching for job ID %s : %w", query.Path, query.JobId, err)
 		}
 
-		job, ok := pathEntry.Value[query.JobID]
+		job, ok := pathEntry.Value[query.JobId]
 		if !ok {
 			var multiErr types.MultiError
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job ID %s does not exist for path %s", query.JobID, query.Path))
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job ID %s does not exist for path %s", query.JobId, query.Path))
 			if err = releasePathEntry(); err != nil {
 				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to commit and release path entry %s: %w", query.Path, err))
 			}
@@ -638,16 +660,16 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		}
 		// Only if the user asked to delete the job and it is safe to delete should we delete it.
 		if jobUpdate.NewState == beeremote.UpdateJobRequest_DELETED && safeToDelete {
-			delete(pathEntry.Value, query.JobID)
+			delete(pathEntry.Value, query.JobId)
 		}
 		// Only clean up the path entry if there are no more jobs left for it:
 		if len(pathEntry.Value) == 0 {
 			if err = releasePathEntry(kvstore.DeleteEntry); err != nil {
-				return nil, fmt.Errorf("after deleting job ID %s no jobs should remain for path %s but was unable to remove the path entry (try again): %w", query.JobID, query.Path, err)
+				return nil, fmt.Errorf("after deleting job ID %s no jobs should remain for path %s but was unable to remove the path entry (try again): %w", query.JobId, query.Path, err)
 			}
 		} else {
 			if err = releasePathEntry(); err != nil {
-				return nil, fmt.Errorf("unable to commit and release entry for path %s after updating job ID %s (try again): %w", query.Path, query.JobID, err)
+				return nil, fmt.Errorf("unable to commit and release entry for path %s after updating job ID %s (try again): %w", query.Path, query.JobId, err)
 			}
 		}
 		response.Responses = append(response.Responses, &beeremote.JobResponse{
@@ -686,6 +708,11 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // on the assigned worker nodes. To update the job state in reaction to job results returned by a
 // worker node use updateJobResults().
 func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
+
+	// When returning ensure the timestamp on the job state is updated.
+	defer func() {
+		job.GetStatus().Updated = timestamppb.Now()
+	}()
 
 	if job.Status.State == beeremote.Job_COMPLETED && !forceUpdate {
 		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to override)", job.Id)
@@ -800,6 +827,11 @@ func (m *Manager) UpdateJobResults(workResponse *flex.WorkResponse) error {
 			allSameState = false
 		}
 	}
+
+	// From here on out we'll modify the job state, ensure the timestamp is also updated.
+	defer func() {
+		job.GetStatus().Updated = timestamppb.Now()
+	}()
 
 	// This might happen if WRs could complete on some nodes, but not on other nodes. This could be
 	// due to some worker nodes having an issue uploading their segments to the RST, or a user

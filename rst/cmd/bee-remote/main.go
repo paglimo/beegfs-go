@@ -45,8 +45,6 @@ func main() {
 	pflag.String("server.tlsKey", "", "Path to a key file.")
 	pflag.String("job.pathDBPath", "", "Path where the jobs database will be created/maintained.")
 	pflag.Int("job.pathDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
-	pflag.String("job.resultsDBPath", "", "Path where the job results database will be created/maintained.")
-	pflag.Int("job.resultsDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	pflag.Int("job.requestQueueDepth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
 	pflag.String("job.journalPath", "", "Path where the job journal will be created/maintained. This is used to optimize crash recovery.")
 	pflag.Int("job.minJobEntriesPerRST", 2, "This many jobs for each RST configured for a particular path is guaranteed to be retained. At minimum this should be set to 1 so we always know the last sync result for an RST.")
