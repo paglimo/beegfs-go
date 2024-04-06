@@ -13,6 +13,7 @@ import (
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Configuration that should apply to all nodes.
@@ -244,6 +245,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		status.State = beeremote.Job_SCHEDULED
 		status.Message = "finished scheduling work requests"
 	}
+	status.Updated = timestamppb.Now()
 	return workResults, &status, err
 }
 

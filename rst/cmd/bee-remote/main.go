@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,7 +45,7 @@ func main() {
 	pflag.String("server.address", "127.0.0.1:9010", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tlsCertificate", "", "Path to a certificate file.")
 	pflag.String("server.tlsKey", "", "Path to a key file.")
-	pflag.String("job.pathDBPath", "", "Path where the jobs database will be created/maintained.")
+	pflag.String("job.pathDBPath", "/var/lib/beegfs/beeremotePathDB", "Path where the jobs database will be created/maintained.")
 	pflag.Int("job.pathDBCacheSize", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	pflag.Int("job.requestQueueDepth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
 	pflag.String("job.journalPath", "", "Path where the job journal will be created/maintained. This is used to optimize crash recovery.")
@@ -94,6 +96,12 @@ Using environment variables:
 		Individual RST types may define their own custom defaults, or automatically override invalid user configuration.
 		`)
 		os.Exit(0)
+	}
+
+	if initialCfg.Developer.PerfProfilingPort != 0 {
+		go func() {
+			http.ListenAndServe(fmt.Sprintf(":%d", initialCfg.Developer.PerfProfilingPort), nil)
+		}()
 	}
 
 	logger, err := logger.New(initialCfg.Log)

@@ -709,16 +709,15 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // worker node use updateJobResults().
 func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
 
-	// When returning ensure the timestamp on the job state is updated.
-	defer func() {
-		job.GetStatus().Updated = timestamppb.Now()
-	}()
-
 	if job.Status.State == beeremote.Job_COMPLETED && !forceUpdate {
 		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to override)", job.Id)
 	}
 
 	if newState == beeremote.UpdateJobRequest_DELETED {
+		// When returning ensure the timestamp on the job state is updated.
+		defer func() {
+			job.GetStatus().Updated = timestamppb.Now()
+		}()
 		if !job.InTerminalState() {
 			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.Id)
 		}
@@ -727,6 +726,10 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 	}
 
 	if newState == beeremote.UpdateJobRequest_CANCELLED {
+		// When returning ensure the timestamp on the job state is updated.
+		defer func() {
+			job.GetStatus().Updated = timestamppb.Now()
+		}()
 		// If the job is already failed we don't need to update the work requests unless the update was forced:
 		if job.GetStatus().State != beeremote.Job_FAILED || forceUpdate {
 			// If we're unable to definitively cancel on any node, success is set to false and the

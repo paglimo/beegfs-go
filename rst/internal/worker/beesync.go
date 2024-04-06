@@ -98,6 +98,10 @@ func (n *BeeSyncNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkRespons
 				}
 				time.Sleep(time.Duration(n.config.RetryInterval) * time.Second)
 				continue
+			} else if rpcStatus.Code() == codes.AlreadyExists {
+				// TODO: https://github.com/ThinkParQ/bee-remote/issues/39
+				// Ideally don't panic here and figure out how to handle more gracefully.
+				panic("work request already exists on node, this should never happen unless something is misconfigured or there is a new bug: " + err.Error())
 			}
 		}
 		break
