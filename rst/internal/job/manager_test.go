@@ -47,10 +47,6 @@ func TestManage(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupJournalDBPath(t)
-
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
 	workerConfigs := []worker.Config{
@@ -103,7 +99,6 @@ func TestManage(t *testing.T) {
 	jobMgrConfig := Config{
 		PathDBPath:      tmpPathDBPath,
 		PathDBCacheSize: 1024,
-		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -213,10 +208,6 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupJournalDBPath(t)
-
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
 	workerConfigs := []worker.Config{
@@ -269,7 +260,6 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	jobMgrConfig := Config{
 		PathDBPath:      tmpPathDBPath,
 		PathDBCacheSize: 1024,
-		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -523,10 +513,6 @@ func TestManageErrorHandling(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupJournalDBPath(t)
-
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
 
@@ -582,7 +568,6 @@ func TestManageErrorHandling(t *testing.T) {
 	jobMgrConfig := Config{
 		PathDBPath:      tmpPathDBPath,
 		PathDBCacheSize: 1024,
-		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -764,10 +749,6 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
 
-	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupJournalDBPath(t)
-
 	logger := zaptest.NewLogger(t)
 
 	// We don't need a full worker manager for this test.
@@ -778,7 +759,6 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	jobMgrConfig := Config{
 		PathDBPath:      tmpPathDBPath,
 		PathDBCacheSize: 1024,
-		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -810,10 +790,6 @@ func TestUpdateJobResults(t *testing.T) {
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
 	defer cleanupPathDBPath(t)
-
-	tmpJournalDBPath, cleanupJournalDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupJournalDBPath(t)
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
@@ -856,7 +832,6 @@ func TestUpdateJobResults(t *testing.T) {
 	jobMgrConfig := Config{
 		PathDBPath:      tmpPathDBPath,
 		PathDBCacheSize: 1024,
-		JournalPath:     tmpJournalDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)

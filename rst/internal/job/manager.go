@@ -35,7 +35,6 @@ type Config struct {
 	PathDBPath          string `mapstructure:"pathDBPath"`
 	PathDBCacheSize     int    `mapstructure:"pathDBCacheSize"`
 	RequestQueueDepth   int    `mapstructure:"requestQueueDepth"`
-	JournalPath         string `mapstructure:"journalPath"`
 	MinJobEntriesPerRST int    `mapstructure:"minJobEntriesPerRST"`
 	MaxJobEntriesPerRST int    `mapstructure:"maxJobEntriesPerRST"`
 }
@@ -77,8 +76,7 @@ type Manager struct {
 	// are kept. This store keeps a mapping of paths to Job(s). Note the inner
 	// map is a map of Job IDs to jobs (not RST IDs to jobs) so we can retain
 	// a configurable number of historical jobs for each path+RST combo.
-	pathStore      *kvstore.MapStore[map[string]*Job]
-	jobIDGenerator *badger.Sequence
+	pathStore *kvstore.MapStore[map[string]*Job]
 	// A pointer to an initialized/started worker manager.
 	workerManager *workermgr.Manager
 }
@@ -145,28 +143,6 @@ func (m *Manager) Start() error {
 	}
 	deferredFuncs = append(deferredFuncs, closePathDB)
 	m.pathStore = pathStore
-
-	// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
-	// Likely replace this depending on the outcome of #11.
-	jobJournalDBOpts := badger.DefaultOptions(m.config.JournalPath)
-	jobJournalDBOpts = jobJournalDBOpts.WithLogger(logger.NewBadgerLoggerBridge("journalDB", m.log))
-	jobJournalDBOpts = jobJournalDBOpts.WithLoggingLevel(badger.INFO)
-	jobJournal, err := badger.Open(jobJournalDBOpts)
-	if err != nil {
-		return err
-	}
-
-	deferredFuncs = append(deferredFuncs, func() error { return jobJournal.Close() })
-
-	// TODO: https://github.com/ThinkParQ/bee-remote/issues/11
-	// Evaluate if a bandwidth of 1000 is appropriate. Possibly this should be user configurable.
-	jobIDGenerator, err := jobJournal.GetSequence([]byte("jobIDs"), 1000)
-	if err != nil {
-		return err
-	}
-	// Defers are LIFO which means this is called before closing the DB.
-	deferredFuncs = append(deferredFuncs, func() error { return jobIDGenerator.Release() })
-	m.jobIDGenerator = jobIDGenerator
 
 	m.ready = true
 	m.readyMu.Unlock()
@@ -373,7 +349,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
 	}
 
-	job, err := New(m.jobIDGenerator, jr)
+	job, err := New(jr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to generate job from job request: %w", err)
 	}
@@ -424,6 +400,10 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResp
 			} else if existingJob.InTerminalState() {
 				// Found a job in a terminal state, add it to the list to check if it should be cleaned up:
 				terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()] = append(terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()], existingJob)
+			} else if existingJob.Job.Id == job.Id {
+				// We use a randomly generated UUID as the job ID. A collision is highly unlikely so
+				// most likely something changed and we have a bug somewhere.
+				return nil, fmt.Errorf("rejecting job request because the generated job ID (%s) is the same as a existing job ID (%s) (probably there is a bug somewhere)", job.Id, existingJob.Job.Id)
 			}
 			// Otherwise we found a job for a different RST not in a terminal state. Don't touch it.
 		}

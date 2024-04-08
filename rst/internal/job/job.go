@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/dgraph-io/badger/v4"
+	"github.com/google/uuid"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/rst"
@@ -135,12 +135,16 @@ func (j *Job) Complete(ctx context.Context, client rst.Client, abort bool) error
 }
 
 // New is the standard way to generate a Job from a JobRequest.
-func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error) {
+func New(jobRequest *beeremote.JobRequest) (*Job, error) {
 
-	jobID, err := jobSeq.Next()
-	if err != nil {
-		return nil, err
-	}
+	// Generate a random UUID for the job ID. Note the chance of collisions is very very (very) low,
+	// but not nil. Currently if we ended up with a duplicate job ID this causes problems in two
+	// places: (1) if the duplicate job ID happened to be for the same path then we would reject the
+	// job, and (2) if we tried to schedule a work request for a duplicate job ID to a worker node
+	// already handling a work request with the same job+request ID, the worker would reject the
+	// request and BeeRemote will panic. So we already gracefully handle this very unlikely event.
+	// If this happens, buy a lottery ticket.
+	jobID := uuid.New()
 
 	// Normalize all paths so they start with a slash. This means if the user wants to get jobs for
 	// all paths (a potentially resource intensive request) they have to consciously specify "/" and
@@ -155,6 +159,7 @@ func New(jobSeq *badger.Sequence, jobRequest *beeremote.JobRequest) (*Job, error
 		Job: &beeremote.Job{
 			Id:      fmt.Sprint(jobID),
 			Request: jobRequest,
+			Created: timestamppb.Now(),
 			Status: &beeremote.Job_Status{
 				State:   beeremote.Job_UNASSIGNED,
 				Message: "created",
