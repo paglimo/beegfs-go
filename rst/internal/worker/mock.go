@@ -24,7 +24,7 @@ func newMockNode(baseNode *baseNode) Worker {
 	return mockNode
 }
 
-func (n *MockNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) (bool, error) {
+func (n *MockNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex.BulkUpdateWorkRequest) (bool, error) {
 	args := n.Called()
 	return args.Bool(0), args.Error(1)
 }
@@ -45,13 +45,13 @@ func (n *MockNode) disconnect() error {
 	return args.Error(1)
 }
 
-func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, error) {
+func (n *MockNode) SubmitWork(request *flex.WorkRequest) (*flex.Work, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
-	args := n.Called(wr)
+	args := n.Called(request)
 
 	if args.Error(1) != nil {
 		select {
@@ -66,26 +66,26 @@ func (n *MockNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, 
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.WorkResponse_Status{
-		State:   args.Get(0).(*flex.WorkResponse_Status).GetState(),
-		Message: args.Get(0).(*flex.WorkResponse_Status).GetMessage(),
+	status := &flex.Work_Status{
+		State:   args.Get(0).(*flex.Work_Status).GetState(),
+		Message: args.Get(0).(*flex.Work_Status).GetMessage(),
 	}
 
-	return &flex.WorkResponse{
-		Path:      wr.GetPath(),
-		JobId:     wr.GetJobId(),
-		RequestId: wr.GetRequestId(),
+	return &flex.Work{
+		Path:      request.GetPath(),
+		JobId:     request.GetJobId(),
+		RequestId: request.GetRequestId(),
 		Status:    status,
 	}, args.Error(1)
 }
 
-func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
+func (n *MockNode) UpdateWork(request *flex.UpdateWorkRequest) (*flex.Work, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
-	args := n.Called(updateRequest)
+	args := n.Called(request)
 
 	if args.Error(1) != nil {
 		select {
@@ -100,16 +100,16 @@ func (n *MockNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*fl
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.WorkResponse_Status{
-		State:   args.Get(0).(*flex.WorkResponse_Status).GetState(),
-		Message: args.Get(0).(*flex.WorkResponse_Status).GetMessage(),
+	status := &flex.Work_Status{
+		State:   args.Get(0).(*flex.Work_Status).GetState(),
+		Message: args.Get(0).(*flex.Work_Status).GetMessage(),
 	}
-	return &flex.WorkResponse{
+	return &flex.Work{
 		// The update request does not contain "path" so we cannot set that field in the response.
 		// Currently this doesn't break anything, but this may be the source of future test
 		// failures.
-		JobId:     updateRequest.GetJobId(),
-		RequestId: updateRequest.GetRequestId(),
+		JobId:     request.GetJobId(),
+		RequestId: request.GetRequestId(),
 		Status:    status,
 	}, args.Error(1)
 }

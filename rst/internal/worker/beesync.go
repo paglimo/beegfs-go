@@ -26,7 +26,7 @@ func newBeeSyncNode(baseNode *baseNode) Worker {
 	return beeSyncNode
 }
 
-func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) (bool, error) {
+func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex.BulkUpdateWorkRequest) (bool, error) {
 	var err error
 	n.conn, err = getGRPCClientConnection(n.config)
 	if err != nil {
@@ -42,11 +42,11 @@ func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *f
 
 	// If we could send the message but the node didn't update the configuration
 	// correctly probably we can't recover with a simple retry so consider fatal.
-	if configureResp.Result != flex.WorkerNodeConfigResponse_SUCCESS {
+	if configureResp.Result != flex.UpdateConfigResponse_SUCCESS {
 		return false, fmt.Errorf("%s configure update on node with message %s", configureResp.Result, configureResp.Message)
 	}
 
-	updateWRResp, err := n.client.UpdateWorkRequests(n.rpcCtx, wrUpdates)
+	updateWRResp, err := n.client.BulkUpdateWork(n.rpcCtx, bulkUpdate)
 	if err != nil {
 		return true, err
 	}
@@ -54,7 +54,7 @@ func (n *BeeSyncNode) connect(config *flex.WorkerNodeConfigRequest, wrUpdates *f
 	// If we could send the message but the node couldn't update the WRs,
 	// probably we can't recover with a simply retry so consider fatal.
 	if !updateWRResp.Success {
-		return false, fmt.Errorf("updating work requests on node failed with message %s", updateWRResp.Message)
+		return false, fmt.Errorf("bulk update of work requests on node failed with message %s", updateWRResp.Message)
 	}
 
 	return false, nil
@@ -75,18 +75,18 @@ func (n *BeeSyncNode) disconnect() error {
 	return nil
 }
 
-func (n *BeeSyncNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkResponse, error) {
+func (n *BeeSyncNode) SubmitWork(request *flex.WorkRequest) (*flex.Work, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
 
-	var resp *flex.WorkResponse
+	var resp *flex.SubmitWorkResponse
 	var err error
 	alreadyNotified := false
 	for i := 0; i <= n.config.SendRetries; i++ {
-		resp, err = n.client.SubmitWorkRequest(n.rpcCtx, wr)
+		resp, err = n.client.SubmitWork(n.rpcCtx, &flex.SubmitWorkRequest{Request: request})
 		if rpcStatus, ok := status.FromError(err); ok {
 			// FailedPrecondition likely means the node is up but not yet ready. Most likely it
 			// restarted and hasn't received any configuration from BeeRemote yet.
@@ -113,7 +113,7 @@ func (n *BeeSyncNode) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.WorkRespons
 		}
 		return nil, err
 	}
-	return resp, nil
+	return resp.Work, nil
 }
 
 func (n *BeeSyncNode) reportError(err error) {
@@ -123,18 +123,18 @@ func (n *BeeSyncNode) reportError(err error) {
 	}
 }
 
-func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (*flex.WorkResponse, error) {
+func (n *BeeSyncNode) UpdateWork(request *flex.UpdateWorkRequest) (*flex.Work, error) {
 	n.rpcWG.Add(1)
 	defer n.rpcWG.Done()
 	if n.GetState() != ONLINE {
 		return nil, fmt.Errorf("unable to submit work request to an offline node")
 	}
 
-	var resp *flex.WorkResponse
+	var resp *flex.UpdateWorkResponse
 	var err error
 	alreadyNotified := false
 	for i := 0; i <= n.config.SendRetries; i++ {
-		resp, err = n.client.UpdateWorkRequest(n.rpcCtx, updateRequest)
+		resp, err = n.client.UpdateWork(n.rpcCtx, request)
 		if rpcStatus, ok := status.FromError(err); ok {
 			// FailedPrecondition likely means the node is up but not yet ready. Most likely it
 			// restarted and hasn't received any configuration from BeeRemote yet.
@@ -159,5 +159,5 @@ func (n *BeeSyncNode) UpdateWorkRequest(updateRequest *flex.UpdateWorkRequest) (
 		}
 		return nil, err
 	}
-	return resp, nil
+	return resp.Work, nil
 }

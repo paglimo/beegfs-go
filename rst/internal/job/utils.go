@@ -5,13 +5,12 @@ import (
 	"github.com/thinkparq/protobuf/go/beeremote"
 )
 
-// Converts the internal of one or more WorkResults to the corresponding gRPC
-// messages.
-func getWorkResultsForResponse(workResults map[string]worker.WorkResult) []*beeremote.JobResponse_WorkResult {
-	workResultsForResponse := []*beeremote.JobResponse_WorkResult{}
+// Converts the internal WorkResults to the corresponding gRPC messages.
+func getProtoWorkResults(workResults map[string]worker.WorkResult) []*beeremote.JobResult_WorkResult {
+	workResultsForResponse := []*beeremote.JobResult_WorkResult{}
 	for _, wr := range workResults {
-		workResult := &beeremote.JobResponse_WorkResult{
-			Response:     wr.WorkResponse,
+		workResult := &beeremote.JobResult_WorkResult{
+			Work:         wr.WorkResult,
 			AssignedNode: wr.AssignedNode,
 			AssignedPool: string(wr.AssignedPool),
 		}

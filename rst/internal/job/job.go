@@ -127,11 +127,11 @@ func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Client) (wor
 // largely just a wrapper around the rst.Client CompleteRequests method to handle converting between
 // data types used by the Job and the RST packages.
 func (j *Job) Complete(ctx context.Context, client rst.Client, abort bool) error {
-	workResponses := make([]*flex.WorkResponse, 0, len(j.WorkResults))
+	workResults := make([]*flex.Work, 0, len(j.WorkResults))
 	for _, r := range j.WorkResults {
-		workResponses = append(workResponses, r.WorkResponse)
+		workResults = append(workResults, r.WorkResult)
 	}
-	return client.CompleteRequests(ctx, j.Get(), workResponses, abort)
+	return client.CompleteRequests(ctx, j.Get(), workResults, abort)
 }
 
 // New is the standard way to generate a Job from a JobRequest.

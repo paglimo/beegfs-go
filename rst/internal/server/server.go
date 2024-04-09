@@ -2,18 +2,20 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path"
 	"reflect"
 	"sync"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/protobuf/go/beeremote"
-	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/grpc/status"
 )
 
 type Config struct {
@@ -90,10 +92,16 @@ func (s *BeeRemoteServer) Stop() {
 	s.wg.Wait()
 }
 
-func (s *BeeRemoteServer) SubmitJobRequest(ctx context.Context, request *beeremote.JobRequest) (*beeremote.JobResponse, error) {
+func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.SubmitJobRequest) (*beeremote.SubmitJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	return s.jobMgr.SubmitJobRequest(request)
+	result, err := s.jobMgr.SubmitJobRequest(request.Request)
+	if err != nil {
+		return nil, err
+	}
+	return &beeremote.SubmitJobResponse{
+		Result: result,
+	}, nil
 }
 
 func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
@@ -111,11 +119,18 @@ func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJob
 func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	return s.jobMgr.UpdateJob(request)
+	resp, err := s.jobMgr.UpdateJob(request)
+	if err != nil {
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil, status.Errorf(codes.NotFound, "%s", err)
+		}
+		return nil, err
+	}
+	return resp, nil
 }
 
-func (s *BeeRemoteServer) UpdateWorkRequest(ctx context.Context, workResponse *flex.WorkResponse) (*emptypb.Empty, error) {
+func (s *BeeRemoteServer) UpdateWork(ctx context.Context, request *beeremote.UpdateWorkRequest) (*beeremote.UpdateWorkResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	return &emptypb.Empty{}, s.jobMgr.UpdateJobResults(workResponse)
+	return &beeremote.UpdateWorkResponse{}, s.jobMgr.UpdateWork(request.Work)
 }

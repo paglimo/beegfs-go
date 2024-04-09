@@ -29,7 +29,7 @@ type Pool struct {
 	// The mutex should be locked when interacting with the pool.
 	mu *sync.Mutex
 	// All worker nodes in a particular pool share the same configuration.
-	workerConfig *flex.WorkerNodeConfigRequest
+	workerConfig *flex.UpdateConfigRequest
 }
 
 func (p *Pool) HandleAll(wg *sync.WaitGroup) {
@@ -39,8 +39,8 @@ func (p *Pool) HandleAll(wg *sync.WaitGroup) {
 	// with any outstanding work requests. For example if any were cancelled
 	// while it was offline. For now we don't allow modifying WRs on offline
 	// nodes so just tell it to resume all requests.
-	wrUpdates := &flex.UpdateWorkRequests{
-		NewState: flex.UpdateWorkRequests_UNCHANGED,
+	wrUpdates := &flex.BulkUpdateWorkRequest{
+		NewState: flex.BulkUpdateWorkRequest_UNCHANGED,
 	}
 
 	for _, node := range p.nodes {
@@ -58,7 +58,7 @@ func (p *Pool) StopAll() {
 // the ID of the assigned node and the response from the node, or an error if the request could not
 // be assigned to a node. Note errors always mean the request was not assigned to a node, and the
 // caller is not expected to try and cancel or otherwise cleanup the request.
-func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.WorkResponse, error) {
+func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.Work, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -78,7 +78,7 @@ func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.Work
 		for j := 0; j < poolSize; j++ {
 			if p.nodes[p.next].GetState() == worker.ONLINE {
 				assignedWorker := p.nodes[p.next].GetID()
-				resp, err := p.nodes[p.next].SubmitWorkRequest(wr)
+				resp, err := p.nodes[p.next].SubmitWork(wr)
 
 				if err != nil {
 					errWithWorker := fmt.Errorf("node: %s - error: %w", assignedWorker, err)
@@ -119,7 +119,7 @@ func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.Work
 // the remote worker node. It returns the work response from the remote node or
 // an error if the node was unable to apply the new state or a network/local error
 // occurred preventing the remote node form being updated.
-func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResult, newState flex.UpdateWorkRequest_NewState) (*flex.WorkResponse, error) {
+func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResult, newState flex.UpdateWorkRequest_NewState) (*flex.Work, error) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -136,9 +136,9 @@ func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResul
 
 	updateRequest := &flex.UpdateWorkRequest{
 		JobId:     jobID,
-		RequestId: workResult.WorkResponse.RequestId,
+		RequestId: workResult.WorkResult.RequestId,
 		NewState:  newState,
 	}
 
-	return node.UpdateWorkRequest(updateRequest)
+	return node.UpdateWork(updateRequest)
 }

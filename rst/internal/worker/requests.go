@@ -11,15 +11,14 @@ type WorkResult struct {
 	AssignedNode string
 	// AssignedPool is the type of the node pool running this work request or "" if it is unassigned.
 	AssignedPool Type
-	// Embed the latest work response from the assigned node (or generated
-	// response if assignment failed). This includes the status along with any
-	// other details like remaining/completed parts needed to finish the job.
+	// Embed the latest work result from the assigned node (or generated results if assignment
+	// failed). This includes the status along with any other details like remaining/completed parts
+	// needed to finish the job.
 	//
-	// Note because WorkResponse doesn't include any protobuf specific fields
-	// (like a oneof), testing shows we don't need to implement custom
-	// GobEncode/GobDecode methods. A test verifies this and checks if the
-	// definition of a WorkResponse ever changes which might break things.
-	WorkResponse *flex.WorkResponse
+	// Note because Work doesn't include any protobuf specific fields (like a oneof), testing shows
+	// we don't need to implement custom GobEncode/GobDecode methods. A test verifies this and
+	// checks if the definition of Work ever changes which might break things.
+	WorkResult *flex.Work
 }
 
 // Used to access the status of the work request. Because it returns a pointer
@@ -33,8 +32,8 @@ type WorkResult struct {
 // the request to the worker node to ensure it is updated. Update requests are
 // expected to be idempotent so if the WR is already in the requested state no
 // errors will happen.
-func (wr *WorkResult) Status() *flex.WorkResponse_Status {
-	return wr.WorkResponse.GetStatus()
+func (wr *WorkResult) Status() *flex.Work_Status {
+	return wr.WorkResult.GetStatus()
 }
 
 // InTerminalState() indicates the work request is no longer active, cannot be restarted, and will
@@ -43,7 +42,7 @@ func (wr *WorkResult) Status() *flex.WorkResponse_Status {
 // don't complete or abort the job request, meaning (for example) artifacts like multipart uploads
 // and partial uploads wouldn't not have been cleaned up.
 func (wr *WorkResult) InTerminalState() bool {
-	return wr.Status().State == flex.WorkResponse_COMPLETED || wr.Status().State == flex.WorkResponse_CANCELLED
+	return wr.Status().State == flex.Work_COMPLETED || wr.Status().State == flex.Work_CANCELLED
 }
 
 // RequiresUserIntervention() indicates the work request cannot proceed without user intervention.
@@ -51,5 +50,5 @@ func (wr *WorkResult) InTerminalState() bool {
 // just cancelling the request if it is no longer valid. Jobs in this state still have resources
 // that need to be cleaned up and why they aren't considered in a terminal state.
 func (wr *WorkResult) RequiresUserIntervention() bool {
-	return wr.Status().State == flex.WorkResponse_FAILED
+	return wr.Status().State == flex.Work_FAILED
 }

@@ -62,22 +62,22 @@ func TestManage(t *testing.T) {
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
-						MethodName: "SubmitWorkRequest",
+						MethodName: "SubmitWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
-							&flex.WorkResponse_Status{
-								State:   flex.WorkResponse_SCHEDULED,
+							&flex.Work_Status{
+								State:   flex.Work_SCHEDULED,
 								Message: "test expects a scheduled request",
 							},
 							nil,
 						},
 					},
 					{
-						MethodName: "UpdateWorkRequest",
+						MethodName: "UpdateWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
-							&flex.WorkResponse_Status{
-								State:   flex.WorkResponse_CANCELLED,
+							&flex.Work_Status{
+								State:   flex.Work_CANCELLED,
 								Message: "test expects a cancelled request",
 							},
 							nil,
@@ -133,7 +133,7 @@ func TestManage(t *testing.T) {
 
 	assert.Len(t, getJobsResponse.Paths[0].Jobs[0].WorkResults, 4)
 	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.State)
+		assert.Equal(t, flex.Work_SCHEDULED, wr.Work.Status.State)
 	}
 
 	scheduledJobID := getJobsResponse.Paths[0].Jobs[0].Job.Id
@@ -191,7 +191,7 @@ func TestManage(t *testing.T) {
 	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
+		assert.Equal(t, flex.Work_CANCELLED, wr.Work.Status.State)
 	}
 
 }
@@ -223,22 +223,22 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
-						MethodName: "SubmitWorkRequest",
+						MethodName: "SubmitWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
-							&flex.WorkResponse_Status{
-								State:   flex.WorkResponse_SCHEDULED,
+							&flex.Work_Status{
+								State:   flex.Work_SCHEDULED,
 								Message: "test expects a scheduled request",
 							},
 							nil,
 						},
 					},
 					{
-						MethodName: "UpdateWorkRequest",
+						MethodName: "UpdateWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
-							&flex.WorkResponse_Status{
-								State:   flex.WorkResponse_CANCELLED,
+							&flex.Work_Status{
+								State:   flex.Work_CANCELLED,
 								Message: "test expects a cancelled request",
 							},
 							nil,
@@ -309,13 +309,13 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.Contains(t, deleteJobByPathResponse.Message, "because it has not reached a terminal state")
 
 	// Status on the job should not change:
-	assert.Equal(t, beeremote.Job_SCHEDULED, deleteJobByPathResponse.Responses[0].Job.Status.State)
-	assert.Equal(t, "finished scheduling work requests", deleteJobByPathResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, beeremote.Job_SCHEDULED, deleteJobByPathResponse.Results[0].Job.Status.State)
+	assert.Equal(t, "finished scheduling work requests", deleteJobByPathResponse.Results[0].Job.Status.Message)
 
 	// Work results should all still be scheduled:
-	assert.Len(t, deleteJobByPathResponse.Responses[0].WorkResults, 4)
-	for _, wr := range deleteJobByPathResponse.Responses[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.State)
+	assert.Len(t, deleteJobByPathResponse.Results[0].WorkResults, 4)
+	for _, wr := range deleteJobByPathResponse.Results[0].WorkResults {
+		assert.Equal(t, flex.Work_SCHEDULED, wr.Work.Status.State)
 	}
 
 	// Cancel the job:
@@ -330,16 +330,16 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.True(t, cancelJobByPathResponse.Ok)
 
 	// Work results should all be cancelled:
-	assert.Len(t, cancelJobByPathResponse.Responses[0].WorkResults, 4)
-	for _, wr := range cancelJobByPathResponse.Responses[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
+	assert.Len(t, cancelJobByPathResponse.Results[0].WorkResults, 4)
+	for _, wr := range cancelJobByPathResponse.Results[0].WorkResults {
+		assert.Equal(t, flex.Work_CANCELLED, wr.Work.Status.State)
 	}
 
 	// Then delete it:
 	deleteJobByPathResponse, err = jobManager.UpdateJob(&deleteJobByPathRequest)
 	assert.NoError(t, err)
 	assert.True(t, deleteJobByPathResponse.Ok)
-	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.Results[0].Job.Status.Message)
 
 	// Verify the job was fully deleted:
 	getJobRequestsByPath := &beeremote.GetJobsRequest{
@@ -373,12 +373,12 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.Contains(t, updateJobByIDResponse.Message, "because it has not reached a terminal state")
 
 	// Status on the job should not change:
-	assert.Equal(t, beeremote.Job_SCHEDULED, updateJobByIDResponse.Responses[0].Job.Status.State)
-	assert.Equal(t, "finished scheduling work requests", updateJobByIDResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, beeremote.Job_SCHEDULED, updateJobByIDResponse.Results[0].Job.Status.State)
+	assert.Equal(t, "finished scheduling work requests", updateJobByIDResponse.Results[0].Job.Status.Message)
 
-	assert.Len(t, updateJobByIDResponse.Responses[0].WorkResults, 2)
-	for _, wr := range updateJobByIDResponse.Responses[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.State)
+	assert.Len(t, updateJobByIDResponse.Results[0].WorkResults, 2)
+	for _, wr := range updateJobByIDResponse.Results[0].WorkResults {
+		assert.Equal(t, flex.Work_SCHEDULED, wr.Work.Status.State)
 	}
 
 	// Cancel the job:
@@ -396,16 +396,16 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.True(t, cancelJobByIDResponse.Ok)
 
 	// Work requests should be cancelled:
-	assert.Len(t, cancelJobByIDResponse.Responses[0].WorkResults, 2)
-	for _, wr := range cancelJobByIDResponse.Responses[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
+	assert.Len(t, cancelJobByIDResponse.Results[0].WorkResults, 2)
+	for _, wr := range cancelJobByIDResponse.Results[0].WorkResults {
+		assert.Equal(t, flex.Work_CANCELLED, wr.Work.Status.State)
 	}
 
 	// Then delete it:
 	updateJobByIDResponse, err = jobManager.UpdateJob(&deleteJobByIDRequest)
 	assert.NoError(t, err)
 	assert.True(t, updateJobByIDResponse.Ok)
-	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.Responses[0].Job.Status.Message)
+	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.Results[0].Job.Status.Message)
 
 	// Verify the job was fully deleted:
 	getJobRequestsByID := &beeremote.GetJobsRequest{
@@ -431,17 +431,17 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NotNil(t, response)
 	// Complete the job by simulating a worker node updating the results.
 	for i := range 4 {
-		resp := &flex.WorkResponse{
+		result := &flex.Work{
 			Path:      response.Job.Request.Path,
 			JobId:     response.Job.GetId(),
 			RequestId: strconv.Itoa(i),
-			Status: &flex.WorkResponse_Status{
-				State:   flex.WorkResponse_COMPLETED,
+			Status: &flex.Work_Status{
+				State:   flex.Work_COMPLETED,
 				Message: "complete",
 			},
-			Parts: []*flex.WorkResponse_Part{},
+			Parts: []*flex.Work_Part{},
 		}
-		err = jobManager.UpdateJobResults(resp)
+		err = jobManager.UpdateWork(result)
 		require.NoError(t, err)
 	}
 
@@ -480,12 +480,12 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.Contains(t, deleteJobByPathResp.Message, "rejecting update for completed job")
 
 	// Status on the job should have not changed at any point:
-	assert.Equal(t, beeremote.Job_COMPLETED, deleteJobByPathResp.Responses[0].Job.Status.State)
-	assert.Equal(t, "successfully completed job", deleteJobByPathResp.Responses[0].Job.Status.Message)
+	assert.Equal(t, beeremote.Job_COMPLETED, deleteJobByPathResp.Results[0].Job.Status.State)
+	assert.Equal(t, "successfully completed job", deleteJobByPathResp.Results[0].Job.Status.Message)
 
-	assert.Len(t, deleteJobByPathResp.Responses[0].WorkResults, 4)
-	for _, wr := range deleteJobByPathResp.Responses[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_COMPLETED, wr.Response.Status.State)
+	assert.Len(t, deleteJobByPathResp.Results[0].WorkResults, 4)
+	for _, wr := range deleteJobByPathResp.Results[0].WorkResults {
+		assert.Equal(t, flex.Work_COMPLETED, wr.Work.Status.State)
 	}
 
 	// Deleting completed jobs by job ID and path is allowed when the update is forced:
@@ -494,9 +494,9 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleteJobByIDResp.Ok)
 	assert.Contains(t, deleteJobByIDResp.Message, "")
-	assert.Len(t, deleteJobByIDResp.Responses, 1)
-	assert.Equal(t, beeremote.Job_COMPLETED, deleteJobByPathResp.Responses[0].Job.Status.State)
-	assert.Contains(t, deleteJobByPathResp.Responses[0].Job.Status.Message, "job scheduled for deletion")
+	assert.Len(t, deleteJobByIDResp.Results, 1)
+	assert.Equal(t, beeremote.Job_COMPLETED, deleteJobByPathResp.Results[0].Job.Status.State)
+	assert.Contains(t, deleteJobByPathResp.Results[0].Job.Status.Message, "job scheduled for deletion")
 
 	_, err = jobManager.GetJobs(&beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByExactPath{ByExactPath: "response.Job.Request.Path"},
@@ -518,8 +518,8 @@ func TestManageErrorHandling(t *testing.T) {
 
 	// This allows us to modify the expected status to what we expect in
 	// different steps of the test after we initialize worker manager.
-	expectedStatus := &flex.WorkResponse_Status{
-		State:   flex.WorkResponse_CANCELLED,
+	expectedStatus := &flex.Work_Status{
+		State:   flex.Work_CANCELLED,
 		Message: "test expects a cancelled request",
 	}
 
@@ -536,7 +536,7 @@ func TestManageErrorHandling(t *testing.T) {
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
-						MethodName: "SubmitWorkRequest",
+						MethodName: "SubmitWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
 							expectedStatus,
@@ -544,7 +544,7 @@ func TestManageErrorHandling(t *testing.T) {
 						},
 					},
 					{
-						MethodName: "UpdateWorkRequest",
+						MethodName: "UpdateWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
 							expectedStatus,
@@ -602,7 +602,7 @@ func TestManageErrorHandling(t *testing.T) {
 	// JobMgr should have cancelled all outstanding requests:
 	assert.Len(t, getJobsResponse.Paths[0].Jobs[0].WorkResults, 4)
 	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
+		assert.Equal(t, flex.Work_CANCELLED, wr.Work.Status.State)
 	}
 
 	scheduledJobID := getJobsResponse.Paths[0].Jobs[0].Job.Id
@@ -612,7 +612,7 @@ func TestManageErrorHandling(t *testing.T) {
 	// to verify the work requests are cancelled on the worker nodes, even if they were previously
 	// cancelled (calls are idempotent). This time we cannot definitely cancel the requests so their
 	// state is unknown for some reason. As a result the Job status is now unknown.
-	expectedStatus.State = flex.WorkResponse_UNKNOWN
+	expectedStatus.State = flex.Work_UNKNOWN
 	expectedStatus.Message = "test expects an error communicating to the node"
 
 	updateJobRequest := beeremote.UpdateJobRequest{
@@ -638,12 +638,12 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Equal(t, beeremote.Job_UNKNOWN, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_UNKNOWN, wr.Response.Status.State)
+		assert.Equal(t, flex.Work_UNKNOWN, wr.Work.Status.State)
 	}
 
 	// Submit another request to cancel the job. This time the work requests are
 	// cancelled so the job status and work requests should all be cancelled.
-	expectedStatus.State = flex.WorkResponse_CANCELLED
+	expectedStatus.State = flex.Work_CANCELLED
 	expectedStatus.Message = "test expects a cancelled request"
 
 	jobManager.UpdateJob(&updateJobRequest)
@@ -663,12 +663,12 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.Paths[0].Jobs[0].Job.Status.State)
 
 	for _, wr := range getJobsResponse.Paths[0].Jobs[0].WorkResults {
-		assert.Equal(t, flex.WorkResponse_CANCELLED, wr.Response.Status.State)
+		assert.Equal(t, flex.Work_CANCELLED, wr.Work.Status.State)
 	}
 
 	// If we submit a job the state should be unknown if any work requests were
 	// failed and unable to be cancelled.
-	expectedStatus.State = flex.WorkResponse_FAILED
+	expectedStatus.State = flex.Work_FAILED
 	expectedStatus.Message = "test expects a failed request"
 
 	jobResponse, err := jobManager.SubmitJobRequest(&testJobRequest)
@@ -688,7 +688,7 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	updateJobResponse, err := jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_UNKNOWN, updateJobResponse.Responses[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_UNKNOWN, updateJobResponse.Results[0].Job.Status.State)
 
 	// We should reject new jobs while there is a job in an unknown state:
 	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
@@ -696,7 +696,7 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Nil(t, jobResponse)
 
 	// We should be able to cancel jobs in an unknown state once the WRs can be cancelled:
-	expectedStatus.State = flex.WorkResponse_CANCELLED
+	expectedStatus.State = flex.Work_CANCELLED
 	expectedStatus.Message = "test expects a cancelled request"
 
 	updateJobRequest = beeremote.UpdateJobRequest{
@@ -710,11 +710,11 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.Responses[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.Results[0].Job.Status.State)
 
 	// Submit another jobs whose work requests cannot be scheduled and an error occurs cancelling
 	// them so the overall job status is unknown:
-	expectedStatus.State = flex.WorkResponse_UNKNOWN
+	expectedStatus.State = flex.Work_UNKNOWN
 	expectedStatus.Message = "test expects the work request status is unknown"
 
 	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
@@ -738,7 +738,7 @@ func TestManageErrorHandling(t *testing.T) {
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
 	require.True(t, updateJobResponse.Ok)
-	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.Responses[0].Job.Status.State)
+	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.Results[0].Job.Status.State)
 }
 
 // This test verifies if we try to do an S3 upload for a file that doesn't exist with get the
@@ -807,11 +807,11 @@ func TestUpdateJobResults(t *testing.T) {
 						ReturnArgs: []interface{}{false, nil},
 					},
 					{
-						MethodName: "SubmitWorkRequest",
+						MethodName: "SubmitWork",
 						Args:       []interface{}{mock.Anything},
 						ReturnArgs: []interface{}{
-							&flex.WorkResponse_Status{
-								State:   flex.WorkResponse_SCHEDULED,
+							&flex.Work_Status{
+								State:   flex.Work_SCHEDULED,
 								Message: "test expects a scheduled request",
 							},
 							nil,
@@ -851,24 +851,24 @@ func TestUpdateJobResults(t *testing.T) {
 
 	// Verify once all WRs are in the same terminal state the job state
 	// transitions correctly:
-	for _, expectedStatus := range []flex.WorkResponse_State{flex.WorkResponse_COMPLETED, flex.WorkResponse_CANCELLED} {
+	for _, expectedStatus := range []flex.Work_State{flex.Work_COMPLETED, flex.Work_CANCELLED} {
 
 		js, err := jobManager.SubmitJobRequest(testJobRequest)
 		require.NoError(t, err)
 
 		// The first response should not finish the job:
-		workResponse1 := &flex.WorkResponse{
+		workResponse1 := &flex.Work{
 			Path:      js.Job.Request.Path,
 			JobId:     js.Job.GetId(),
 			RequestId: "0",
-			Status: &flex.WorkResponse_Status{
+			Status: &flex.Work_Status{
 				State:   expectedStatus,
 				Message: expectedStatus.String(),
 			},
-			Parts: []*flex.WorkResponse_Part{},
+			Parts: []*flex.Work_Part{},
 		}
 
-		err = jobManager.UpdateJobResults(workResponse1)
+		err = jobManager.UpdateWork(workResponse1)
 		require.NoError(t, err)
 
 		getJobsRequest := &beeremote.GetJobsRequest{
@@ -886,36 +886,36 @@ func TestUpdateJobResults(t *testing.T) {
 
 		// Work result order is not guaranteed...
 		for _, wr := range resp.Paths[0].Jobs[0].WorkResults {
-			if wr.Response.GetRequestId() == "0" {
-				require.Equal(t, expectedStatus, wr.Response.Status.GetState())
+			if wr.Work.GetRequestId() == "0" {
+				require.Equal(t, expectedStatus, wr.Work.Status.GetState())
 			} else {
-				require.Equal(t, flex.WorkResponse_SCHEDULED, wr.Response.Status.GetState())
+				require.Equal(t, flex.Work_SCHEDULED, wr.Work.Status.GetState())
 			}
 		}
 		require.Equal(t, beeremote.Job_SCHEDULED, resp.Paths[0].Jobs[0].Job.Status.State)
 
 		// The second response should finish the job:
-		workResponse2 := &flex.WorkResponse{
+		workResponse2 := &flex.Work{
 			Path:      js.Job.Request.Path,
 			JobId:     js.Job.GetId(),
 			RequestId: "1",
-			Status: &flex.WorkResponse_Status{
+			Status: &flex.Work_Status{
 				State:   expectedStatus,
 				Message: expectedStatus.String(),
 			},
-			Parts: []*flex.WorkResponse_Part{},
+			Parts: []*flex.Work_Part{},
 		}
-		err = jobManager.UpdateJobResults(workResponse2)
+		err = jobManager.UpdateWork(workResponse2)
 		require.NoError(t, err)
 
 		resp, err = jobManager.GetJobs(getJobsRequest)
 		require.NoError(t, err)
-		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[0].Response.Status.GetState())
-		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[1].Response.Status.GetState())
+		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[0].Work.Status.GetState())
+		require.Equal(t, expectedStatus, resp.Paths[0].Jobs[0].WorkResults[1].Work.Status.GetState())
 		switch expectedStatus {
-		case flex.WorkResponse_COMPLETED:
+		case flex.Work_COMPLETED:
 			require.Equal(t, beeremote.Job_COMPLETED, resp.Paths[0].Jobs[0].Job.Status.GetState())
-		case flex.WorkResponse_CANCELLED:
+		case flex.Work_CANCELLED:
 			require.Equal(t, beeremote.Job_CANCELLED, resp.Paths[0].Jobs[0].Job.Status.GetState())
 		default:
 			require.Fail(t, "received an unexpected status", "likely the test needs to be updated to add a new status compare the job status against")
@@ -928,31 +928,31 @@ func TestUpdateJobResults(t *testing.T) {
 	js, err := jobManager.SubmitJobRequest(testJobRequest)
 	require.NoError(t, err)
 
-	workResponse1 := &flex.WorkResponse{
+	workResult1 := &flex.Work{
 		Path:      js.Job.Request.Path,
 		JobId:     js.Job.GetId(),
 		RequestId: "0",
-		Status: &flex.WorkResponse_Status{
-			State:   flex.WorkResponse_COMPLETED,
-			Message: flex.WorkResponse_COMPLETED.String(),
+		Status: &flex.Work_Status{
+			State:   flex.Work_COMPLETED,
+			Message: flex.Work_COMPLETED.String(),
 		},
-		Parts: []*flex.WorkResponse_Part{},
+		Parts: []*flex.Work_Part{},
 	}
 
-	workResponse2 := &flex.WorkResponse{
+	workResult2 := &flex.Work{
 		Path:      js.Job.Request.Path,
 		JobId:     js.Job.GetId(),
 		RequestId: "1",
-		Status: &flex.WorkResponse_Status{
-			State:   flex.WorkResponse_CANCELLED,
-			Message: flex.WorkResponse_CANCELLED.String(),
+		Status: &flex.Work_Status{
+			State:   flex.Work_CANCELLED,
+			Message: flex.Work_CANCELLED.String(),
 		},
-		Parts: []*flex.WorkResponse_Part{},
+		Parts: []*flex.Work_Part{},
 	}
 
-	err = jobManager.UpdateJobResults(workResponse1)
+	err = jobManager.UpdateWork(workResult1)
 	require.NoError(t, err)
-	err = jobManager.UpdateJobResults(workResponse2)
+	err = jobManager.UpdateWork(workResult2)
 	require.NoError(t, err)
 
 	getJobsRequest := &beeremote.GetJobsRequest{

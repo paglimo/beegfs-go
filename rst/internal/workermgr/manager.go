@@ -100,7 +100,7 @@ func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, work
 				// If/when we allow dynamic configuration this won't work. We would need to
 				// pass a reference to the actual RST clients and provide methods to get their
 				// configuration. The ClientStore will likely make this easy to update.
-				workerConfig: &flex.WorkerNodeConfigRequest{Rsts: rstConfigs, BeeRemote: beeRmtConfig},
+				workerConfig: &flex.UpdateConfigRequest{Rsts: rstConfigs, BeeRemote: beeRmtConfig},
 			}
 		}
 		nodePools[n.GetNodeType()].nodeMap[n.GetID()] = n
@@ -159,7 +159,7 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		// WorkerID will be empty if an error happens.
 		workerID := ""
 
-		var workResult worker.WorkResult
+		var result worker.WorkResult
 		// If an error occurs return it as the message in the work response status.
 		var err error
 
@@ -179,46 +179,46 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 
 		if !ok {
 			err = fmt.Errorf("%s: %w", nodeType, ErrNoPoolsForNodeType)
-			workResult.WorkResponse = &flex.WorkResponse{
+			result.WorkResult = &flex.Work{
 				Path:      workRequest.GetPath(),
 				JobId:     workRequest.GetJobId(),
 				RequestId: workRequest.GetRequestId(),
-				Status: &flex.WorkResponse_Status{
-					State:   flex.WorkResponse_FAILED,
+				Status: &flex.Work_Status{
+					State:   flex.Work_FAILED,
 					Message: err.Error(),
 				},
 			}
 
 			allScheduled = false
 		} else {
-			var workResponse *flex.WorkResponse
-			workerID, workResponse, err = pool.assignToLeastBusyWorker(workRequest)
+			var work *flex.Work
+			workerID, work, err = pool.assignToLeastBusyWorker(workRequest)
 			if err != nil {
-				// If there was a failure assemble a minimal work response. An error from
+				// If there was a failure assemble a minimal work result. An error from
 				// assignToLeastBusyWorker() means the request was not not assigned to any nodes so
-				// the state must be CREATED so when later we try to cancel any requests that
-				// were assigned, it is automatically cancelled.
+				// the state must be CREATED so when later we try to cancel any requests that were
+				// assigned, it is automatically cancelled.
 				allScheduled = false
-				workResult.WorkResponse = &flex.WorkResponse{
+				result.WorkResult = &flex.Work{
 					Path:      workRequest.GetPath(),
 					JobId:     workRequest.GetJobId(),
 					RequestId: workRequest.GetRequestId(),
-					Status: &flex.WorkResponse_Status{
-						State:   flex.WorkResponse_CREATED,
+					Status: &flex.Work_Status{
+						State:   flex.Work_CREATED,
 						Message: "error communicating to node: " + err.Error(),
 					},
 				}
 			} else {
-				if workResponse.Status.State != flex.WorkResponse_SCHEDULED {
+				if work.Status.State != flex.Work_SCHEDULED {
 					allScheduled = false
 				}
-				workResult.WorkResponse = workResponse
+				result.WorkResult = work
 			}
 		}
 
-		workResult.AssignedNode = workerID
-		workResult.AssignedPool = nodeType
-		workResults[workRequest.RequestId] = workResult
+		result.AssignedNode = workerID
+		result.AssignedPool = nodeType
+		workResults[workRequest.RequestId] = result
 	}
 
 	var status beeremote.Job_Status
@@ -274,8 +274,8 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 	for reqID, workResult := range jobUpdate.WorkResults {
 
 		// If the WR was never assigned we can just cancel it.
-		if workResult.AssignedPool == "" && workResult.AssignedNode == "" && workResult.Status().State == flex.WorkResponse_CREATED {
-			workResult.Status().State = flex.WorkResponse_CANCELLED
+		if workResult.AssignedPool == "" && workResult.AssignedNode == "" && workResult.Status().State == flex.Work_CREATED {
+			workResult.Status().State = flex.Work_CANCELLED
 			workResult.Status().Message = workResult.Status().Message + "; cancelling because the request is not assigned to a pool or node"
 			newResults[reqID] = workResult
 			continue
@@ -283,7 +283,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status().State = flex.WorkResponse_UNKNOWN
+			workResult.Status().State = flex.Work_UNKNOWN
 			workResult.Status().Message = workResult.Status().Message + "; " + ErrNoPoolsForNodeType.Error()
 			newResults[reqID] = workResult
 			allUpdated = false
@@ -293,10 +293,10 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
 			if errors.Is(err, worker.ErrWorkRequestNotFound) {
-				workResult.Status().State = flex.WorkResponse_CANCELLED
+				workResult.Status().State = flex.Work_CANCELLED
 				workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
 			} else {
-				workResult.Status().State = flex.WorkResponse_UNKNOWN
+				workResult.Status().State = flex.Work_UNKNOWN
 				workResult.Status().Message = "error communicating to node: " + err.Error()
 				allUpdated = false
 			}
@@ -307,7 +307,7 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 		workResult.Status().State = resp.Status.State
 		workResult.Status().Message = workResult.Status().Message + "; " + resp.Status.GetMessage()
 
-		if jobUpdate.NewState == flex.UpdateWorkRequest_CANCELLED && workResult.Status().State != flex.WorkResponse_CANCELLED {
+		if jobUpdate.NewState == flex.UpdateWorkRequest_CANCELLED && workResult.Status().State != flex.Work_CANCELLED {
 			allUpdated = false
 		}
 

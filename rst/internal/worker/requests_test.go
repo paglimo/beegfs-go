@@ -20,15 +20,15 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	workResult := &WorkResult{
 		AssignedNode: "test",
 		AssignedPool: BeeSync,
-		WorkResponse: &flex.WorkResponse{
+		WorkResult: &flex.Work{
 			Path:      "/foo",
 			JobId:     "1",
 			RequestId: "2",
-			Status: &flex.WorkResponse_Status{
-				State:   flex.WorkResponse_COMPLETED,
+			Status: &flex.Work_Status{
+				State:   flex.Work_COMPLETED,
 				Message: "test message",
 			},
-			Parts: []*flex.WorkResponse_Part{
+			Parts: []*flex.Work_Part{
 				{
 					PartNumber:     10,
 					EntityTag:      "etag10",
@@ -56,14 +56,14 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 		"Path":      reflect.TypeOf(""),
 		"JobId":     reflect.TypeOf(""),
 		"RequestId": reflect.TypeOf(""),
-		"Status":    reflect.TypeOf(&flex.WorkResponse_Status{}),
-		"Parts":     reflect.TypeOf([]*flex.WorkResponse_Part{}),
+		"Status":    reflect.TypeOf(&flex.Work_Status{}),
+		"Parts":     reflect.TypeOf([]*flex.Work_Part{}),
 	}
 
-	workResponseType := reflect.TypeOf(flex.WorkResponse{})
+	workType := reflect.TypeOf(flex.Work{})
 	for expectedField, expectedType := range expectedUserFields {
-		field, found := workResponseType.FieldByName(expectedField)
-		assert.True(t, found, "a field was removed from the WorkResponse message (update test and verify encoding via Gob is not broken)")
+		field, found := workType.FieldByName(expectedField)
+		assert.True(t, found, "a field was removed from the Work message (update test and verify encoding via Gob is not broken)")
 		assert.Equal(t, field.Type, expectedType, "the type of a field was changed in the WorkResponse message (update test and verify encoding via Gob is not broken)")
 	}
 
@@ -71,11 +71,11 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	// internal fields. We should check the expected fields still exist
 	// otherwise we may miss changes to the struct when we verify the field
 	// count hasn't changed:
-	_, state := workResponseType.FieldByName("state")
-	_, sizeCache := workResponseType.FieldByName("sizeCache")
-	_, unknownFields := workResponseType.FieldByName("unknownFields")
+	_, state := workType.FieldByName("state")
+	_, sizeCache := workType.FieldByName("sizeCache")
+	_, unknownFields := workType.FieldByName("unknownFields")
 	assert.True(t, state && sizeCache && unknownFields, "an expected internal protobuf field was not found (update test and verify encoding via Gob is not broken)")
 
 	// Verify number of user defined + internal fields haven't changed:
-	assert.Equal(t, 8, reflect.TypeOf(flex.WorkResponse{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+	assert.Equal(t, 8, reflect.TypeOf(flex.Work{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
 }

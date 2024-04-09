@@ -20,15 +20,15 @@ type Worker interface {
 	GetID() string
 	GetState() State
 	GetNodeType() Type
-	Handle(*sync.WaitGroup, *flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests)
+	Handle(*sync.WaitGroup, *flex.UpdateConfigRequest, *flex.BulkUpdateWorkRequest)
 	Stop()
 	// Implemented by specific node types:
 	//
-	// SubmitWorkRequest() should only return an error if the request was definitely not created on
+	// SubmitWork() should only return an error if the request was definitely not created on
 	// the node. Otherwise this can lead to orphaned requests because BeeRemote assumes an error
 	// means the request could not be sent to the node or created due to an internal node error.
-	SubmitWorkRequest(*flex.WorkRequest) (*flex.WorkResponse, error)
-	UpdateWorkRequest(*flex.UpdateWorkRequest) (*flex.WorkResponse, error)
+	SubmitWork(*flex.WorkRequest) (*flex.Work, error)
+	UpdateWork(*flex.UpdateWorkRequest) (*flex.Work, error)
 	// TODO: https://github.com/ThinkParQ/bee-sync/issues/6
 	// Require UpdateConfig() once dynamic configuration updates are supported.
 	//   UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)
@@ -53,7 +53,7 @@ type Worker interface {
 // Note: Connect and disconnect operations should be idempotent and safe to call
 // multiple times.
 type grpcClientHandler interface {
-	connect(*flex.WorkerNodeConfigRequest, *flex.UpdateWorkRequests) (retry bool, err error)
+	connect(*flex.UpdateConfigRequest, *flex.BulkUpdateWorkRequest) (retry bool, err error)
 	heartbeat(*flex.HeartbeatRequest) (*flex.HeartbeatResponse, error)
 	disconnect() error
 }
@@ -152,7 +152,7 @@ func (n *baseNode) GetID() string {
 // time to complete before forcibly disconnecting them. To allow this to happen
 // it also requires a wait group that should be used to ensure nodes are
 // disconnected cleanly when the application is shutting down.
-func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) {
+func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.UpdateConfigRequest, wrUpdates *flex.BulkUpdateWorkRequest) {
 
 	wg.Add(1)
 	defer wg.Done()
@@ -246,7 +246,7 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.WorkerNodeConfigReque
 // or there is an error it will attempt to reconnect with an exponential
 // backoff. If it returns false there was an unrecoverable error and the caller
 // should first call doDisconnect() before reconnecting.
-func (n *baseNode) connectLoop(config *flex.WorkerNodeConfigRequest, wrUpdates *flex.UpdateWorkRequests) bool {
+func (n *baseNode) connectLoop(config *flex.UpdateConfigRequest, wrUpdates *flex.BulkUpdateWorkRequest) bool {
 	n.log.Info("connecting to node")
 	var reconnectBackOff float64 = 1
 
