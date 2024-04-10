@@ -202,12 +202,14 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
+func (m *Manager) GetJobs(ctx context.Context, request *beeremote.GetJobsRequest, responses chan<- *beeremote.GetJobsResponse) error {
+
+	defer close(responses)
 
 	m.readyMu.RLock()
 	defer m.readyMu.RUnlock()
 	if !m.ready {
-		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
+		return fmt.Errorf("unable to get jobs (JobMgr is not ready)")
 	}
 
 	getJobResults := func(job *Job) *beeremote.JobResult {
@@ -237,34 +239,31 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 	switch query := request.Query.(type) {
 	case *beeremote.GetJobsRequest_ByJobIdAndPath:
 		if query.ByJobIdAndPath.JobId == "" || query.ByJobIdAndPath.Path == "" {
-			return nil, fmt.Errorf("to query by job ID and path, both must be specified")
+			return fmt.Errorf("to query by job ID and path, both must be specified")
 		}
 
 		pathEntry, err := m.pathStore.GetEntry(query.ByJobIdAndPath.Path)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		job, ok := pathEntry.Value[query.ByJobIdAndPath.JobId]
 		if !ok {
-			return nil, fmt.Errorf("job ID %s does not exist for path %s", query.ByJobIdAndPath.JobId, query.ByJobIdAndPath.Path)
+			return fmt.Errorf("job ID %s does not exist for path %s", query.ByJobIdAndPath.JobId, query.ByJobIdAndPath.Path)
 		}
 
-		return &beeremote.GetJobsResponse{
-			Paths: []*beeremote.GetJobsResponse_JobsByPath{
-				{
-					Path: query.ByJobIdAndPath.Path,
-					Jobs: []*beeremote.JobResult{
-						getJobResults(job),
-					},
-				},
+		responses <- &beeremote.GetJobsResponse{
+			Path: query.ByJobIdAndPath.Path,
+			Results: []*beeremote.JobResult{
+				getJobResults(job),
 			},
-		}, nil
+		}
+		return nil
 
 	case *beeremote.GetJobsRequest_ByExactPath:
 		pathEntry, err := m.pathStore.GetEntry(query.ByExactPath)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		jobResults := []*beeremote.JobResult{}
@@ -272,57 +271,51 @@ func (m *Manager) GetJobs(request *beeremote.GetJobsRequest) (*beeremote.GetJobs
 			jobResults = append(jobResults, getJobResults(job))
 		}
 
-		return &beeremote.GetJobsResponse{
-			Paths: []*beeremote.GetJobsResponse_JobsByPath{
-				{
-					Path: query.ByExactPath,
-					Jobs: jobResults,
-				},
-			},
-		}, nil
+		responses <- &beeremote.GetJobsResponse{
+			Path:    query.ByExactPath,
+			Results: jobResults,
+		}
+		return nil
 
 	case *beeremote.GetJobsRequest_ByPathPrefix:
-		// For a path prefix first get all paths that match the prefix. Then get all the jobs for
-		// each path. If someone wanted to get all jobs they could provide a prefix of "/".
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13
-		// There could be lots of paths, do we want to start with a zero length slice?
-		// We should optimize this while we're here addressing the memory issue.
-		response := &beeremote.GetJobsResponse{
-			Paths: make([]*beeremote.GetJobsResponse_JobsByPath, 0),
-		}
-
+		// For path prefix use iterate over each matching path and split the jobs for each path into
+		// separate responses. This ensures we don't run out of memory and can efficiently stream
+		// back as many jobs as the user wants (including all jobs if the prefix was "/").
 		nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(query.ByPathPrefix))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer cleanupEntries()
 
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/13
-		// If there were enough entries in the database that matched the path prefix we could run out of memory.
+	sendResponses:
 		for {
-			entry, err := nextEntry()
-			if err != nil {
-				return nil, err
-			}
-			if entry == nil {
-				break
-			}
+			select {
+			case <-ctx.Done():
+				break sendResponses
+			default:
+				entry, err := nextEntry()
+				if err != nil {
+					return err
+				}
+				if entry == nil {
+					break sendResponses
+				}
 
-			jobsByPath := &beeremote.GetJobsResponse_JobsByPath{
-				Path: entry.Key,
-				Jobs: make([]*beeremote.JobResult, 0, len(entry.Entry.Value)),
-			}
+				respForPath := &beeremote.GetJobsResponse{
+					Path:    entry.Key,
+					Results: make([]*beeremote.JobResult, 0, len(entry.Entry.Value)),
+				}
 
-			for _, job := range entry.Entry.Value {
-				jobsByPath.Jobs = append(jobsByPath.Jobs, getJobResults(job))
+				for _, job := range entry.Entry.Value {
+					respForPath.Results = append(respForPath.Results, getJobResults(job))
+				}
+				responses <- respForPath
 			}
-			response.Paths = append(response.Paths, jobsByPath)
 		}
-
-		return response, nil
+		return nil
 	}
 
-	return nil, fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
+	return fmt.Errorf("no query parameters provided (to get all jobs use '/' with the prefix path query type)")
 }
 
 // Takes a single job request and attempts to create and schedule a job for it. Returns an error if
@@ -531,8 +524,8 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
 	}
 
-	if jobUpdate.NewState == beeremote.UpdateJobRequest_UNKNOWN {
-		return nil, fmt.Errorf("job update requested by the job state is unknown (probably this indicates a bug in the caller)")
+	if jobUpdate.NewState == beeremote.UpdateJobRequest_UNSPECIFIED {
+		return nil, fmt.Errorf("no new job state specified (probably this indicates a bug in the caller)")
 	}
 
 	// The response will collect the results of all the job updates.

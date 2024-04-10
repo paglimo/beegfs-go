@@ -104,16 +104,35 @@ func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.Subm
 	}, nil
 }
 
-func (s *BeeRemoteServer) GetJobs(ctx context.Context, request *beeremote.GetJobsRequest) (*beeremote.GetJobsResponse, error) {
+func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beeremote.BeeRemote_GetJobsServer) error {
 	s.wg.Add(1)
 	defer s.wg.Done()
 
-	response, err := s.jobMgr.GetJobs(request)
-	if err != nil {
-		return nil, err
-	}
+	responses := make(chan *beeremote.GetJobsResponse, 1024)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+	sendResponses:
+		for {
+			select {
+			case <-stream.Context().Done():
+				return
+			case resp, ok := <-responses:
+				if !ok {
+					break sendResponses
+				}
+				stream.Send(resp)
+			}
+		}
+	}()
 
-	return response, nil
+	err := s.jobMgr.GetJobs(stream.Context(), request, responses)
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
 }
 
 func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {

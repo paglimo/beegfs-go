@@ -11,11 +11,12 @@ replace (
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
+	github.com/google/uuid v1.6.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
 	github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de
-	github.com/thinkparq/protobuf v0.0.2
+	github.com/thinkparq/protobuf v0.0.4
 	go.uber.org/zap v1.26.0
 	google.golang.org/grpc v1.62.0
 	google.golang.org/protobuf v1.32.0
@@ -51,7 +52,6 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.2 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
