@@ -861,6 +861,19 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 	return nil
 }
 
+func (m *Manager) GetRSTConfig() ([]*flex.RemoteStorageTarget, error) {
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return nil, fmt.Errorf("unable to get RST config (JobMgr is not ready)")
+	}
+	rstConfigs := []*flex.RemoteStorageTarget{}
+	for _, client := range m.workerManager.RemoteStorageTargets {
+		rstConfigs = append(rstConfigs, client.GetConfig())
+	}
+	return rstConfigs, nil
+}
+
 func (m *Manager) Stop() {
 
 	m.readyMu.Lock()

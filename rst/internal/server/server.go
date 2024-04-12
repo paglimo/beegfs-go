@@ -148,6 +148,20 @@ func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.Upda
 	return resp, nil
 }
 
+func (s *BeeRemoteServer) GetRSTConfig(ctx context.Context, request *beeremote.GetRSTConfigRequest) (*beeremote.GetRSTConfigResponse, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	rsts, err := s.jobMgr.GetRSTConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	return &beeremote.GetRSTConfigResponse{
+		Rsts: rsts,
+	}, nil
+}
+
 func (s *BeeRemoteServer) UpdateWork(ctx context.Context, request *beeremote.UpdateWorkRequest) (*beeremote.UpdateWorkResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
