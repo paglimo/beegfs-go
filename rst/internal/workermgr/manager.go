@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -40,7 +41,7 @@ type Manager struct {
 	// Allow RST configuration to be dynamically updated. This is complicated
 	// because we'll have to add locking and figure out how to handle when there
 	// are existing jobs for a changed/removed RST.
-	RemoteStorageTargets map[string]rst.Client
+	RemoteStorageTargets map[string]rst.Provider
 }
 
 // JobSubmission is used to submit a Job and its associated work requests to be
@@ -67,15 +68,15 @@ type JobUpdate struct {
 // operations it accepts a context that can be cancelled if it should stop trying to configure the
 // manager. It does not (nor should it) use this context for anything else, and Stop() must be
 // called to shutdown worker nodes.
-func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode) (*Manager, error) {
+func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode, mountPoint filesystem.Provider) (*Manager, error) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
-	rstMap := make(map[string]rst.Client)
+	rstMap := make(map[string]rst.Provider)
 	for _, config := range rstConfigs {
 		// We could provide a real context here it it ever became necessary, however `NewManager()`
 		// is not expected to be run in a separate goroutine so we shouldn't become blocked if the
 		// user tries to shutdown via Ctrl+C.
-		rst, err := rst.New(ctx, config)
+		rst, err := rst.New(ctx, config, mountPoint)
 		if err != nil {
 			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}

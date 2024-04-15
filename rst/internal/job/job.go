@@ -88,14 +88,14 @@ func (j *Job) InTerminalState() bool {
 // function as a method to determine if a file has changed and it is safe to resume a job or if it
 // should be cancelled. It also ensures even if the file changes the original job submission can be
 // recreated for troubleshooting.
-func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Client) (workermgr.JobSubmission, bool, error) {
+func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Provider) (workermgr.JobSubmission, bool, error) {
 
 	var workRequests []*flex.WorkRequest
 
 	if j.Segments == nil {
 		var canRetry bool
 		var err error
-		workRequests, canRetry, err = rstClient.GenerateRequests(ctx, j.Get(), 0)
+		workRequests, canRetry, err = rstClient.GenerateWorkRequests(ctx, j.Get(), 0)
 		if err != nil {
 			return workermgr.JobSubmission{}, canRetry, err
 		}
@@ -126,12 +126,12 @@ func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Client) (wor
 // example completing or aborting a multipart upload for a sync job to an S3 target. Note this is
 // largely just a wrapper around the rst.Client CompleteRequests method to handle converting between
 // data types used by the Job and the RST packages.
-func (j *Job) Complete(ctx context.Context, client rst.Client, abort bool) error {
+func (j *Job) Complete(ctx context.Context, client rst.Provider, abort bool) error {
 	workResults := make([]*flex.Work, 0, len(j.WorkResults))
 	for _, r := range j.WorkResults {
 		workResults = append(workResults, r.WorkResult)
 	}
-	return client.CompleteRequests(ctx, j.Get(), workResults, abort)
+	return client.CompleteWorkRequests(ctx, j.Get(), workResults, abort)
 }
 
 // New is the standard way to generate a Job from a JobRequest.

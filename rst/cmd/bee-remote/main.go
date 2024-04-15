@@ -111,7 +111,7 @@ Using environment variables:
 	logger.Info("<=== BeeRemote Initialized ===>")
 
 	// Determine if we should use a real or mock mount point:
-	filesystem.MountPoint, err = filesystem.New(initialCfg.MountPoint)
+	mountPoint, err := filesystem.NewFromMountPoint(initialCfg.MountPoint)
 	if err != nil {
 		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
 	}
@@ -136,7 +136,7 @@ Using environment variables:
 	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
 		Id:      nodeID,
 		Address: initialCfg.Server.Address,
-	})
+	}, mountPoint)
 	if err != nil {
 		logger.Fatal("unable to initialize worker manager", zap.Error(err))
 	}
