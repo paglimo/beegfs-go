@@ -115,9 +115,6 @@ Using environment variables:
 	if err != nil {
 		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
 	}
-	if initialCfg.MountPoint == filesystem.MockFSIdentifier {
-		logger.Warn("start requested with a mock file system, operations will happen in memory only")
-	}
 
 	// Create a channel to receive OS signals to coordinate graceful shutdown:
 	sigs := make(chan os.Signal, 1)

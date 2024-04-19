@@ -92,8 +92,7 @@ func TestManage(t *testing.T) {
 		},
 	}
 
-	mountPoint, err := filesystem.NewFromMountPoint("mock")
-	require.NoError(t, err)
+	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 0))
 
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
@@ -261,8 +260,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 			},
 		},
 	}
-	mountPoint, err := filesystem.NewFromMountPoint("mock")
-	require.NoError(t, err)
+	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 10))
 	mountPoint.CreateWriteClose("/test/myfile2", make([]byte, 20))
 
@@ -570,8 +568,7 @@ func TestManageErrorHandling(t *testing.T) {
 		},
 	}
 
-	mountPoint, err := filesystem.NewFromMountPoint("mock")
-	require.NoError(t, err)
+	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 30))
 
 	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
@@ -767,8 +764,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 
-	mountPoint, err := filesystem.NewFromMountPoint("mock")
-	require.NoError(t, err)
+	mountPoint := filesystem.NewMockFS()
 	// Intentionally don't create any files in the MockFS.
 
 	// We don't need a full worker manager for this test.
@@ -843,8 +839,7 @@ func TestUpdateJobResults(t *testing.T) {
 		},
 	}
 
-	mountPoint, err := filesystem.NewFromMountPoint("mock")
-	require.NoError(t, err)
+	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 15))
 
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
