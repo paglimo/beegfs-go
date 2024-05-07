@@ -1,25 +1,28 @@
 [[remote_storage_target]]
 id = "1"
-name = "rst1"
+name = "beemac-minio"
 # FastStartMaxSize is the point at which uploads and downloads are split into multiple parts and
 # uploaded using a multipart upload. Amazon generally recommends when object sizes approach 100MB, a
 # multipart upload should be used instead of uploading the object in a single operation
 # (https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html).
-policies = { FastStartMaxSize = 104857600, localflock = true, remoteflock = true, keepdirstructure = true, keepbeegfsmetadata = true }
+policies = { FastStartMaxSize = 104857600 }
 s3.endpointUrl = "http://localhost:9000"
 # s3.partitionId = "test_partition"
 s3.region = "minio"
-s3.bucket = "s3bucket"
+s3.bucket = "mybucket"
 s3.accessKey = "access_key"
 s3.secretKey = "secret_key"
 
-# [[remote_storage_target]]
-# id = "2"
-# name = "rst2"
-# policies = { localflock = true, remoteflock = false, keepdirstructure = false, keepbeegfsmetadata = true }
-# azure.account = "azure_account"
-# azure.S3.bucket = "azure_bucket"
-# azure.S3.region = "azure_region"
+[[remote_storage_target]]
+id = "2"
+name = "oci"
+policies = { FastStartMaxSize = 104857600 }
+s3.endpointUrl = "https://<ENDPOINT>.compat.objectstorage.<REGION>.oraclecloud.com"
+# s3.partitionId = "test_partition"
+s3.region = "<REGION>"
+s3.bucket = "<BUCKET>"
+s3.accessKey = "<ACCESS_KEY>"
+s3.secretKey = "<SECRET_KEY>"
 
 [[worker]]
 id = "1"

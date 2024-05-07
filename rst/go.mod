@@ -4,19 +4,14 @@ go 1.22
 
 toolchain go1.22.0
 
-replace (
-	github.com/thinkparq/gobee => ../gobee
-	github.com/thinkparq/protobuf => ../protobuf
-)
-
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
 	github.com/google/uuid v1.6.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
-	github.com/thinkparq/gobee v0.0.0-20230905202909-056f717280de
-	github.com/thinkparq/protobuf v0.0.4
+	github.com/thinkparq/gobee v0.0.8
+	github.com/thinkparq/protobuf v0.0.6
 	go.uber.org/zap v1.26.0
 	google.golang.org/grpc v1.62.0
 	google.golang.org/protobuf v1.32.0
