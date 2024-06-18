@@ -467,13 +467,14 @@ or remove a subscriber.
 
 gRPC (gRPC Remote Procedural Calls) is an open source RPC framework developed by
 Google. It uses Protocol Buffers as its Interface Definition Language (IDL) and
-the protocol buffer definitions for BeeWatch can be found at:
-`api/proto/v1/beewatch.proto`. This file along with the Protocol Buffer compiler
-(protoc) and the gRPC plugin allows client and server code to be automatically
-generated in various programming languages including Go and C++. Generated code
-for Go is maintained at `api/proto/v1/` in files ending with `.pb.go`. See the
-list of [supported languages](https://grpc.io/docs/languages/) for how to get
-started in the language of your choice.
+the protocol buffer definitions for BeeWatch are maintained in the [protobuf](https://github.com/ThinkParQ/protobuf/tree/main)
+as [`proto/beewatch.proto`](https://github.com/ThinkParQ/protobuf/blob/main/proto/beewatch.proto).
+This file along with the Protocol Buffer compiler (protoc) and the gRPC plugin 
+allows client and server code to be automatically generated in various programming 
+languages including C++, Go, and Rust. Generated code for different languages is 
+also maintained in the protobuf repository, for example for Go these files are under 
+`go/` in files ending in `.pb.go`. See the [README](https://github.com/ThinkParQ/protobuf/tree/main?tab=readme-ov-file#beegfs-protocol-buffers-)
+in the protobuf repository for how to get started in the language of your choice.
 
 BeeWatch uses the generated gRPC client code to connect and send messages (file
 system modification events) to one or more subscribers that implement a gRPC
