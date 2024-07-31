@@ -52,16 +52,16 @@ import (
 
 // Define our flags and any other global variables needed for the demo to work.
 var (
-	logFile              = flag.String("logFile", "", "log to a file instead of stdout")
-	logDebug             = flag.Bool("logDebug", false, "enable logging at the debug level")
-	logIncomingEventRate = flag.Bool("logIncomingEventRate", false, "output events per second")
-	perfProfilingPort    = flag.Int("perfProfilingPort", 0, "specify a port where performance profiles will be made available on the localhost")
-	grpcHostname         = flag.String("grpcHostname", "localhost", "What interface this subscriber will use to listen for events from BeeWatch nodes.")
-	grpcPort             = flag.String("grpcPort", "50052", "What port this subscriber will listen on events from BeeWatch nodes.")
-	ackFrequency         = flag.Duration("ackFrequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
-	mockDBFilename       = flag.String("mockDBFilename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
-	tlsCertificate       = flag.String("tlsCert", "", "path to a certificate to use for TLS")
-	tlsKey               = flag.String("tlsKey", "", "path to the private key for the provided tlsCertificate")
+	logFile              = flag.String("log-file", "", "log to a file instead of stdout")
+	logDebug             = flag.Bool("log-debug", false, "enable logging at the debug level")
+	logIncomingEventRate = flag.Bool("log-incoming-event-rate", false, "output events per second")
+	perfProfilingPort    = flag.Int("perf-profiling-port", 0, "specify a port where performance profiles will be made available on the localhost")
+	grpcHostname         = flag.String("grpc-hostname", "localhost", "What interface this subscriber will use to listen for events from BeeWatch nodes.")
+	grpcPort             = flag.String("grpc-port", "50052", "What port this subscriber will listen on events from BeeWatch nodes.")
+	ackFrequency         = flag.Duration("ack-frequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
+	mockDBFilename       = flag.String("mock-db-filename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
+	tlsCertificate       = flag.String("tls-cert", "", "path to a certificate to use for TLS")
+	tlsKey               = flag.String("tls-key", "", "path to the private key for the provided tls-certificate")
 	db                   = &MockDB{}
 )
 
@@ -123,7 +123,7 @@ func (s *EventSubscriberServer) ReceiveEvents(stream bw.Subscriber_ReceiveEvents
 					// We should always acknowledge the latest event we've received when starting up.
 					// This allows BeeWatch to avoid ever sending us duplicate events when reconnecting.
 					// BeeWatch will wait to send new events until we acknowledge the sequence ID or
-					// the BeeWatch `handler.waitForAckAfterConnect` timer elapses.
+					// the BeeWatch `handler.max-wait-for-response-after-connect = 2` timer elapses.
 					seqID := db.GetSeqID()
 					if err := stream.Send(&bw.Response{CompletedSeq: seqID}); err != nil {
 						s.log.Error("error sending response", zap.Error(err), zap.Any("event", seqID))
@@ -210,7 +210,7 @@ func main() {
 		}
 		grpcServerOpts = append(grpcServerOpts, grpc.Creds(creds))
 	} else {
-		log.Warn("not using TLS because -tlsCertificate and/or -tlsKey were not specified")
+		log.Warn("not using TLS because -tls-certificate and/or -tls-key were not specified")
 	}
 
 	genericGRPCServer := grpc.NewServer(grpcServerOpts...)

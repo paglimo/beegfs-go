@@ -22,14 +22,14 @@ var _ subscribermgr.Configurer = &AppConfig{}
 // IMPORTANT: When updating/refactoring AppConfig these changes need to be
 // manually applied to the pflags defined in main.go.
 type AppConfig struct {
-	CfgFile     string                      `mapstructure:"cfgFile"`
+	CfgFile     string                      `mapstructure:"cfg-file"`
 	Log         logger.Config               `mapstructure:"log"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
 	Metadata    metadata.Config             `mapstructure:"metadata"`
 	Subscribers []subscriber.Config         `mapstructure:"subscriber"`
 	Developer   struct {
-		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
-		DumpConfig        bool `mapstructure:"dumpConfig"`
+		PerfProfilingPort int  `mapstructure:"perf-profiling-port"`
+		DumpConfig        bool `mapstructure:"dump-config"`
 	}
 }
 
@@ -111,7 +111,7 @@ func (c *AppConfig) ValidateConfig() error {
 	}
 
 	if c.Metadata.EventLogTarget == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no 'metadata.eventLogTarget' was specified"))
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no 'metadata.event-log-target' was specified"))
 	}
 
 	if len(c.Subscribers) == 0 && c.CfgFile == "" {

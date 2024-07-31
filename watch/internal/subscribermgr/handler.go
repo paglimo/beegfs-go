@@ -32,9 +32,9 @@ type Handler struct {
 }
 
 type HandlerConfig struct {
-	MaxReconnectBackOff            int `mapstructure:"maxReconnectBackOff"`
-	MaxWaitForResponseAfterConnect int `mapstructure:"maxWaitForResponseAfterConnect"`
-	PollFrequency                  int `mapstructure:"pollFrequency"`
+	MaxReconnectBackOff            int `mapstructure:"max-reconnect-back-off"`
+	MaxWaitForResponseAfterConnect int `mapstructure:"max-wait-for-response-after-connect"`
+	PollFrequency                  int `mapstructure:"poll-frequency"`
 }
 
 func newHandler(log *zap.Logger, subscriber *subscriber.Subscriber, metaEventBuffer *types.MultiCursorRingBuffer, config HandlerConfig) *Handler {

@@ -21,13 +21,13 @@ type Config struct {
 
 // GrpcConfig defines configuration options that only apply to gRPC subscribers.
 type GrpcConfig struct {
-	Hostname string `mapstructure:"grpcHostname"`
-	Port     string `mapstructure:"grpcPort"`
+	Hostname string `mapstructure:"grpc-hostname"`
+	Port     string `mapstructure:"grpc-port"`
 	// If AllowInsecure is unset it will default to "false", ensuring insecure
 	// connections are not allowed by default.
-	AllowInsecure         bool   `mapstructure:"grpcAllowInsecure"`
-	DisconnectTimeout     int    `mapstructure:"grpcDisconnectTimeout"`
-	SelfSignedTLSCertPath string `mapstructure:"grpcSelfSignedTLSCertPath"`
+	AllowInsecure         bool   `mapstructure:"grpc-allow-insecure"`
+	DisconnectTimeout     int    `mapstructure:"grpc-disconnect-timeout"`
+	SelfSignedTLSCertPath string `mapstructure:"grpc-self-signed-tls-cert-path"`
 }
 
 // NewSubscribersFromConfig is the standard way for initializing one or more subscribers.

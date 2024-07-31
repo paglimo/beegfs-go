@@ -83,7 +83,7 @@ subscribers without restarting BeeWatch:
 3. Start the BeeWatch service with: `systemctl start bee-watch`.
 
 4. Update the BeeGFS Metadata configuration so `sysFileEventLogTarget` points at
-   the same path as the BeeWatch eventLogTarget setting (by default
+   the same path as the BeeWatch `event-log-target` setting (by default
    `/run/beegfs/eventlog`) then start/restart the Metadata service.
     * Note the parent directory of `sysFileEventLogTarget` must be accessible by
     the user executing BeeWatch.
@@ -129,7 +129,7 @@ step-by-step:
 ```shell
 docker run \
     -v /run/beegfs:/run/beegfs \
-    ghcr.io/thinkparq/bee-watch:latest --metadata.eventLogTarget=/run/beegfs/eventlog --subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"
+    ghcr.io/thinkparq/bee-watch:latest --metadata.event-log-target=/run/beegfs/eventlog --subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"
 ```
 
 (1) The `-v /run/beegfs:/run/beegfs` bind mounts the /run/beegfs directory on
@@ -145,20 +145,21 @@ name).
 
 (3) The rest of the command are regular arguments passed to BeeWatch. First the
 path to `sysFileEventLogTarget` as
-`--metadata.eventLogTarget=/run/beegfs/eventlog`. Then the subscriber, notably
+`--metadata.event-log-target=/run/beegfs/eventlog`. Then the subscriber, notably
 providing the IP and host of the subscriber that is listening on the Docker
 bridge network:
-`--subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"`
+`--subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"`
 
-Here we provided all necessary BeeWatch arguments as flags, but they can also be
-specified using environment variables or a configuration file. For example we
-could have specified the `--metadata.eventLogTarget` as an environment variable: 
+Here we provided all necessary BeeWatch arguments as flags, but they can also be specified using
+environment variables or a configuration file. For example we could have specified the
+`--metadata.event-log-target` as an environment variable. Note the use of a double underscore
+between metadata and event which is replaced with a period by the config parser:
 
  ```shell
 docker run \
     -v /run/beegfs:/run/beegfs \
-    -e BEEWATCH_METADATA_EVENTLOGTARGET=/run/beegfs/eventlog \
-    ghcr.io/thinkparq/bee-watch:latest --subscribers="id=1,name='subscriber1',type='grpc',grpcHostname='172.17.0.1',grpcPort=50052,grpcAllowInsecure=true"
+    -e BEEWATCH_METADATA__EVENT_LOG_TARGET=/run/beegfs/eventlog \
+    ghcr.io/thinkparq/bee-watch:latest --subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"
 ```
 
 We could also have bind mounted a configuration file into the container, if we
@@ -168,8 +169,8 @@ wanted to dynamically update the subscriber configuration:
 docker run \
     -v ./build/dist/etc/beegfs:/etc/beegfs \
     -v /run/beegfs:/run/beegfs \
-    -e BEEWATCH_METADATA_EVENTLOGTARGET=/run/beegfs/eventlog \
-    ghcr.io/thinkparq/bee-watch:latest --cfgFile=/etc/beegfs/bee-watch.toml --log.type=stdout
+    -e BEEWATCH_METADATA__EVENT-LOG-TARGET=/run/beegfs/eventlog \
+    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/bee-watch.toml --log.type=stdout
 ```
 > The default configuration file sets the log.type to "logfile", but typically
 containers are setup to log to stdout which is why we override it here using a
@@ -208,16 +209,16 @@ For BeeWatch to start it requires:
 * One of the following: 
   * One or more subscribers configured using command line flags or environment
     variables. 
-  * The path to a configuration file specified using `--cfgFile`.
+  * The path to a configuration file specified using `--cfg-file`.
 
 To configure and start BeeWatch:
 
 1. Create an empty TOML file: `touch scratch/bee-watch.toml`
 2. Start BeeWatch: `go run cmd/bee-watch/main.go
-   --metadata.eventLogTarget=<PATH> --cfgFile=scratch/bee-watch.toml`
+   --metadata.event-log-target=<PATH> --cfg-file=scratch/bee-watch.toml`
    1. At this point BeeWatch will begin buffering any events it receives from
       the metadata service until it reaches the default
-      `--metadata.eventBufferSize`, then the oldest events will start to be
+      `--metadata.event-buffer-size`, then the oldest events will start to be
       dropped. This intentional default behavior keeps as many historical events
       as possible so subscribers can be added after BeeWatch has started.
 3. Add a subscriber to the `bee-watch.toml` file. Note this subscriber doesn't
@@ -228,9 +229,9 @@ To configure and start BeeWatch:
 id = 1
 name = 'test-subscriber'
 type = 'grpc'
-grpcHostname = 'localhost'
-grpcPort = '50052'
-grpcAllowInsecure = true
+grpc-hostname = 'localhost'
+grpc-port = '50052'
+grpc-allow-insecure = true
 ```
 4. From a new terminal send BeeWatch hang up signal:
    1. Determine the BeeWatch process ID by running `pgrep -a main` and ensuring
@@ -275,15 +276,17 @@ applying the following rules:
 
 * All variables that apply to BeeWatch must be prefixed with `BEEWATCH_`.
 * All letters must be uppercase. 
-* All dots (.) in the parameter name must be replaced with underscores (_).
+* All dots (.) in the parameter name must be replaced with a double underscore (__).
+* All hyphens (-) in the parameter name must be replaced with an underscore (_).
 
-For example the flag `--log.type` would be specified as `BEEWATCH_LOG_TYPE`.
+For example the flag `--log.type` would be specified as `BEEWATCH_LOG_TYPE` and the flag
+`--metadata.event-log-target` would be specified as `BEEWATCH_METADATA__EVENT_LOG_TARGET`.
 
 ### Specify Configuration using a TOML Configuration File
 
 When this option is used BeeWatch should be started with the flag
-`--cfgFile=<PATH>` where `<PATH>` is an absolute path to the configuration file
-to use. Except for `--cfgFile` all options specified in `--help` can be
+`--cfg-file=<PATH>` where `<PATH>` is an absolute path to the configuration file
+to use. Except for `--cfg-file` all options specified in `--help` can be
 specified in a configuration file. Options are specified based on TOML
 formatting rules:
 
@@ -296,12 +299,12 @@ formatting rules:
 id = 1
 name = 'subscriber-1'
 type = 'grpc'
-grpcHostname = 'localhost'
+grpc-hostname = 'localhost'
 [[subscriber]]
 id = 2
 name = 'subscriber-2'
 type = 'grpc'
-grpcHostname = 'localhost'
+grpc-hostname = 'localhost'
 ```
 
 * For all other options, the   part of each option name (preceding the dot)
@@ -390,7 +393,7 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -node
 
 (3) When configuring the subscriber in BeeWatch, specify the path to the
 self-signed certificate (`cert.pem` in this example) using
-`grpcSelfSignedTLSCertPath=<PATH>`.
+`grpc-self-signed-tls-cert-path=<PATH>`.
 
 NOTE: When the path to a self-signed certificate is specified it takes
 precedence over all other TLS configuration. Any other local installed
@@ -402,7 +405,7 @@ If the root certificate for the Certificate Authority used to sign your
 certificate is not in the operating system's default list of trusted root
 certificates or you are using a self-signed certificate, you can add your
 certificate to the the system's list of trusted certificates. This allows you to
-start the subscriber without specifying `grpcSelfSignedTLSCertPath`. The exact
+start the subscriber without specifying `grpc-self-signed-tls-cert-path`. The exact
 steps will vary based on your environment and Linux distribution, for example on
 Ubuntu you would use the following commands (note the extension change from .pem
 to .crt is intentional/required):
@@ -418,7 +421,7 @@ This option means all gRPC messages including potentially sensitive information
 about file paths/names inside the file system will be sent in clear text over
 the network.
 
-(1) When configuring the subscriber set `grpcAllowInsecure=true`. 
+(1) When configuring the subscriber set `grpc-allow-insecure=true`. 
  
 ## Updating Configuration (without restarting BeeWatch)
 
@@ -551,12 +554,12 @@ different rate than they are acknowledged.
 
 While retaining events for some period of time after they are sent to a
 subscriber is critical to avoid dropped events, there is a finite number of
-events (as defined by `--metadata.eventBufferSize`) BeeWatch will keep in its
+events (as defined by `--metadata.event-buffer-size`) BeeWatch will keep in its
 buffer before old events are dropped to make way for new ones. Thus it is
 important once subscribers handle an event they acknowledge the event sequence
 ID back to BeeWatch so the corresponding buffers can be freed. Internally
 BeeWatch performs garbage collection periodically (determined by
-`--metadata.eventBufferGCFrequency`), freeing up in bulk multiple events once
+`--metadata.event-buffer-gc-frequency`), freeing up in bulk multiple events once
 they are acknowledged by all subscribers. If subscribers fail to send
 acknowledgement (due to misconfiguration/implementation or being disconnected),
 once the BeeWatch buffer is full, we no longer do bulk garbage collection and
@@ -593,18 +596,15 @@ events every second.
 
 #### Avoid duplicate events by acknowledging the last event received when reconnecting
 
-BeeWatch keeps track of the last event sent and the last event acknowledged for
-each subscriber. Events are not removed from the buffer until they are
-acknowledged. When a subscriber disconnects it is possible some of the events
-that were sent were not actually received/processed by the subscriber. While we
-could simply start resending from the last acknowledged event, this means we
-could send the same event multiple times, which some subscribers may not expect.
-To prevent this when a subscriber connects/reconnects, BeeWatch waits for a
-brief period (based on `--handler.waitForAckAfterConnect`) for the subscriber to
-acknowledge the last event it received, which allows it to send the next event
-in the sequence. If the subscriber does not send this acknowledgement without
-period set by `--handler.waitForAckAfterConnect`, then BeeWatch starts sending
-events from the last acknowledged event.
+BeeWatch keeps track of the last event sent and the last event acknowledged for each subscriber.
+Events are not removed from the buffer until they are acknowledged. When a subscriber disconnects it
+is possible some of the events that were sent were not actually received/processed by the
+subscriber. While we could simply start resending from the last acknowledged event, this means we
+could send the same event multiple times, which some subscribers may not expect. To prevent this
+when a subscriber connects/reconnects, BeeWatch waits for a brief period (based on
+`--handler.max-wait-for-response-after-connect`) for the subscriber to acknowledge the last event it
+received, which allows it to send the next event in the sequence. If the subscriber does not send
+this acknowledgement without period set by `--handler.max-wait-for-response-after-connect`, then
+BeeWatch starts sending events from the last acknowledged event.
 
-TL;DR - After reconnecting, immediately acknowledge the sequence ID of the last
-event you received.
+TL;DR - After reconnecting, immediately acknowledge the sequence ID of the last event you received.
