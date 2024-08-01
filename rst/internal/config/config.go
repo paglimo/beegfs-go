@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/thinkparq/bee-remote/internal/job"
@@ -21,16 +22,16 @@ import (
 var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
-	MountPoint           string                      `mapstructure:"mountPoint"`
+	MountPoint           string                      `mapstructure:"mount-point"`
 	Server               server.Config               `mapstructure:"server"`
 	Log                  logger.Config               `mapstructure:"log"`
 	Job                  job.Config                  `mapstructure:"job"`
-	WorkerMgr            workermgr.Config            `mapstructure:"workerMgr"`
+	WorkerMgr            workermgr.Config            `mapstructure:"worker-mgr"`
 	Workers              []worker.Config             `mapstructure:"worker"`
-	RemoteStorageTargets []*flex.RemoteStorageTarget `mapstructure:"remote_storage_target"`
+	RemoteStorageTargets []*flex.RemoteStorageTarget `mapstructure:"remote-storage-target"`
 	Developer            struct {
-		PerfProfilingPort int  `mapstructure:"perfProfilingPort"`
-		DumpConfig        bool `mapstructure:"dumpConfig"`
+		PerfProfilingPort int  `mapstructure:"perf-profiling-port"`
+		DumpConfig        bool `mapstructure:"dump-config"`
 	}
 }
 
@@ -50,15 +51,15 @@ func (c *AppConfig) ValidateConfig() error {
 
 	var multiErr types.MultiError
 	if c.Job.PathDBPath == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.pathDBPath must be set to a valid path (provided path: '%s')", c.Job.PathDBPath))
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job.path-db-path must be set to a valid path (provided path: '%s')", c.Job.PathDBPath))
 	}
 
 	if c.Job.MinJobEntriesPerRST < 1 {
-		return fmt.Errorf("the MinJobEntriesPerRST must be one or greater (provided value: %d)", c.Job.MinJobEntriesPerRST)
+		return fmt.Errorf("the job.min-job-entries-per-rst must be one or greater (provided value: %d)", c.Job.MinJobEntriesPerRST)
 	}
 
 	if c.Job.MaxJobEntriesPerRST < c.Job.MinJobEntriesPerRST {
-		return fmt.Errorf("the MaxJobEntriesPerRST (%d) cannot be less than the MinJobEntriesPerRST (%d)", c.Job.MaxJobEntriesPerRST, c.Job.MinJobEntriesPerRST)
+		return fmt.Errorf("the job.max-job-entries-per-rst (%d) cannot be less than the job.min-job-entries-per-rst (%d)", c.Job.MaxJobEntriesPerRST, c.Job.MinJobEntriesPerRST)
 	}
 
 	// TODO: https://github.com/ThinkParQ/bee-remote/issues/29
@@ -117,11 +118,26 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 						if constructor, exists := rst.SupportedRSTTypes[key]; exists {
 							newType, newTypeField := constructor()
 							if _, alreadyExists := tmpData["Type"]; alreadyExists {
-								return nil, fmt.Errorf("configuration for different types of Remote Storage Targets was found on the same target")
+								return nil, fmt.Errorf("cannot mix configuration for different types of remote storage targets on the same target")
 							}
-							if err := mapstructure.Decode(config, &newTypeField); err != nil {
-								return nil, err
+							// Use a custom mapstructure decoder to allow the use of kebab-case for
+							// mapKeys. This is required because there is no way to add mapstructure
+							// tags to protobuf generated code. This implementation does mean that
+							// both "endpoint-url" and "endpointUrl" could be specified and only one
+							// would actually take effect (it would probably be somewhat random
+							// which one). Note this only applies to keys for different RST types,
+							// not top level RST parameters such as policies.
+							dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+								Metadata: nil,
+								Result:   &newTypeField,
+								MatchName: func(mapKey, fieldName string) bool {
+									return strings.ReplaceAll(strings.ToLower(mapKey), "-", "") == strings.ToLower(fieldName)
+								},
+							})
+							if err != nil {
+								return nil, fmt.Errorf("unexpected error setting up mapstructure decoder (probably this is a bug): %w", err)
 							}
+							dec.Decode(config)
 							tmpData["Type"] = newType
 							delete(tmpData, key)
 						}

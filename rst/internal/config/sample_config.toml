@@ -1,4 +1,4 @@
-[[remote_storage_target]]
+[[remote-storage-target]]
 id = "1"
 name = "beemac-minio"
 # FastStartMaxSize is the point at which uploads and downloads are split into multiple parts and
@@ -6,23 +6,23 @@ name = "beemac-minio"
 # multipart upload should be used instead of uploading the object in a single operation
 # (https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html).
 policies = { FastStartMaxSize = 104857600 }
-s3.endpointUrl = "http://localhost:9000"
-# s3.partitionId = "test_partition"
+s3.endpoint-url = "http://localhost:9000"
+# s3.partition-id = "test_partition"
 s3.region = "minio"
 s3.bucket = "mybucket"
-s3.accessKey = "access_key"
-s3.secretKey = "secret_key"
+s3.access-key = "access_key"
+s3.secret-key = "secret_key"
 
-[[remote_storage_target]]
+[[remote-storage-target]]
 id = "2"
 name = "oci"
 policies = { FastStartMaxSize = 104857600 }
-s3.endpointUrl = "https://<ENDPOINT>.compat.objectstorage.<REGION>.oraclecloud.com"
-# s3.partitionId = "test_partition"
+s3.endpoint-url = "https://<ENDPOINT>.compat.objectstorage.<REGION>.oraclecloud.com"
+# s3.partitionid = "test_partition"
 s3.region = "<REGION>"
 s3.bucket = "<BUCKET>"
-s3.accessKey = "<ACCESS_KEY>"
-s3.secretKey = "<SECRET_KEY>"
+s3.access-key = "<ACCESS_KEY>"
+s3.secret-key = "<SECRET_KEY>"
 
 [[worker]]
 id = "1"
@@ -30,13 +30,13 @@ name = "beesync-01"
 type = "beesync"
 hostname = "localhost"
 port = 9011
-allowInsecure = false
-selfSignedTLSCertPath = "/etc/beegfs/cert.pem"
-maxReconnectBackOff = 10
-disconnectTimeout = 30
-sendRetries = 10
-retryInterval = 10
-heartbeatInterval = 10
+allow-insecure = false
+self-signed-tls-cert-path = "/etc/beegfs/cert.pem"
+max-reconnect-back-off = 10
+disconnect-timeout = 30
+send-retries = 10
+retry-interval = 10
+heartbeat-interval = 10
 
 # [[worker]]
 # id = "2"
@@ -44,7 +44,10 @@ heartbeatInterval = 10
 # type = "beesync"
 # hostname = "localhost"
 # port = 9012
-# allowInsecure = false
-# selfSignedTLSCertPath = "/etc/beegfs/cert.pem"
-# maxReconnectBackOff = 60
-# disconnectTimeout = 30
+# allow-insecure = false
+# self-signed-tls-cert-path = "/etc/beegfs/cert.pem"
+# max-reconnect-back-off = 60
+# disconnect-timeout = 30
+# send-retries = 10
+# retry-interval = 10
+# heartbeat-interval = 10

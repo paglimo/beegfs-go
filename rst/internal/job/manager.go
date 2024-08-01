@@ -32,11 +32,11 @@ func init() {
 }
 
 type Config struct {
-	PathDBPath          string `mapstructure:"pathDBPath"`
-	PathDBCacheSize     int    `mapstructure:"pathDBCacheSize"`
-	RequestQueueDepth   int    `mapstructure:"requestQueueDepth"`
-	MinJobEntriesPerRST int    `mapstructure:"minJobEntriesPerRST"`
-	MaxJobEntriesPerRST int    `mapstructure:"maxJobEntriesPerRST"`
+	PathDBPath          string `mapstructure:"path-db-path"`
+	PathDBCacheSize     int    `mapstructure:"path-db-cache-size"`
+	RequestQueueDepth   int    `mapstructure:"request-queue-depth"`
+	MinJobEntriesPerRST int    `mapstructure:"min-job-entries-per-rst"`
+	MaxJobEntriesPerRST int    `mapstructure:"max-job-entries-per-rst"`
 }
 
 type Manager struct {

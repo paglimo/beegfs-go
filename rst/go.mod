@@ -2,7 +2,7 @@ module github.com/thinkparq/bee-remote
 
 go 1.22
 
-toolchain go1.22.0
+toolchain go1.22.5
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
@@ -10,8 +10,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
-	github.com/thinkparq/gobee v0.0.8
-	github.com/thinkparq/protobuf v0.0.6
+	github.com/thinkparq/gobee v0.0.14
+	github.com/thinkparq/protobuf v0.0.9
 	go.uber.org/zap v1.26.0
 	google.golang.org/grpc v1.62.0
 	google.golang.org/protobuf v1.32.0
@@ -64,9 +64,9 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
-	golang.org/x/net v0.21.0 // indirect
-	golang.org/x/sys v0.17.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/net v0.27.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240221002015-b0ce06bbee7c // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect

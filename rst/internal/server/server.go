@@ -20,8 +20,8 @@ import (
 
 type Config struct {
 	Address        string `mapstructure:"address"`
-	TlsCertificate string `mapstructure:"tlsCertificate"`
-	TlsKey         string `mapstructure:"tlsKey"`
+	TlsCertificate string `mapstructure:"tls-certificate"`
+	TlsKey         string `mapstructure:"tls-key"`
 }
 
 // Verify interfaces are satisfied:

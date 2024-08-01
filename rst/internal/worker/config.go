@@ -31,13 +31,13 @@ type Config struct {
 	Port     int    `mapstructure:"port"`
 	// If AllowInsecure is unset it will default to "false", ensuring insecure
 	// connections are not allowed by default.
-	AllowInsecure         bool   `mapstructure:"allowInsecure"`
-	SelfSignedTLSCertPath string `mapstructure:"selfSignedTLSCertPath"`
-	MaxReconnectBackOff   int    `mapstructure:"maxReconnectBackOff"`
-	DisconnectTimeout     int    `mapstructure:"disconnectTimeout"`
-	SendRetries           int    `mapstructure:"sendRetries"`
-	RetryInterval         int    `mapstructure:"retryInterval"`
-	HeartbeatInterval     int    `mapstructure:"heartbeatInterval"`
+	AllowInsecure         bool   `mapstructure:"allow-insecure"`
+	SelfSignedTLSCertPath string `mapstructure:"self-signed-tls-cert-path"`
+	MaxReconnectBackOff   int    `mapstructure:"max-reconnect-back-off"`
+	DisconnectTimeout     int    `mapstructure:"disconnect-timeout"`
+	SendRetries           int    `mapstructure:"send-retries"`
+	RetryInterval         int    `mapstructure:"retry-interval"`
+	HeartbeatInterval     int    `mapstructure:"heartbeat-interval"`
 	// All embedded subscriber types must specify `mapstructure:",squash"` to tell
 	// Viper to squash the fields of the embedded struct into the worker Config.
 	// Without this viper.Unmarshal(&newConfig) will omit their configuration.
