@@ -80,7 +80,7 @@ func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
 	}
 
-	s.conn, err = grpc.Dial(s.Hostname+":"+s.Port, opts...)
+	s.conn, err = grpc.NewClient(s.Hostname+":"+s.Port, opts...)
 	if err != nil {
 		return true, fmt.Errorf("unable to connect to the subscriber: %w", err)
 	}

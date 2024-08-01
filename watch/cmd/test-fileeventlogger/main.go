@@ -48,7 +48,6 @@ func main() {
 	defer conn.Close()
 
 	events := [][]byte{}
-	rand.Seed(time.Now().UnixNano())
 
 	if *pathLengths == 0 {
 		// Generate five random events:
