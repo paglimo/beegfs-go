@@ -7,7 +7,7 @@ toolchain go1.22.5
 require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
-	github.com/thinkparq/gobee v0.0.14
+	github.com/thinkparq/gobee v0.0.15
 	github.com/thinkparq/protobuf v0.0.12
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.65.0

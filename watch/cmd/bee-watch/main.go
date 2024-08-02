@@ -44,9 +44,9 @@ func main() {
 	// particular subscriber type.
 	pflag.Bool("version", false, "Print the version then exit.")
 	pflag.String("cfg-file", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
-	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
+	pflag.String("log.type", "stderr", "Where log messages should be sent ('stderr', 'stdout', 'syslog', 'logfile').")
 	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'logfile' (if needed the directory and all parent directories will be created).")
-	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
+	pflag.Int8("log.level", 3, "Adjust the logging level (0=Fatal, 1=Error, 2=Warn, 3=Info, 4+5=Debug).")
 	pflag.Int("log.max-size", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.num-rotated-files", 5, "Maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.incoming-event-rate", false, "Output the rate of incoming events per second.")
