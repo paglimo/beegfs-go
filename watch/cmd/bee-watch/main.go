@@ -43,30 +43,30 @@ func main() {
 	// Notably subscriber defaults are handled as part of initializing a
 	// particular subscriber type.
 	pflag.Bool("version", false, "Print the version then exit.")
-	pflag.String("cfgFile", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
-	pflag.String("log.type", "stdout", "Where log messages should be sent ('stdout', 'syslog', 'logfile').")
+	pflag.String("cfg-file", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
+	pflag.String("log.type", "stderr", "Where log messages should be sent ('stderr', 'stdout', 'syslog', 'logfile').")
 	pflag.String("log.file", "/var/log/beewatch/beewatch.log", "The path to the desired log file when logType is 'logfile' (if needed the directory and all parent directories will be created).")
-	pflag.Int8("log.level", 3, "Adjust the logging level (1=Warning+Error, 3=Info+Warning+Error, 5=Debug+Info+Warning+Error).")
-	pflag.Int("log.maxSize", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
-	pflag.Int("log.numRotatedFiles", 5, "Maximum number old log.file(s) to keep when log.maxSize is reached and the log is rotated.")
-	pflag.Bool("log.incomingEventRate", false, "Output the rate of incoming events per second.")
+	pflag.Int8("log.level", 3, "Adjust the logging level (0=Fatal, 1=Error, 2=Warn, 3=Info, 4+5=Debug).")
+	pflag.Int("log.max-size", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
+	pflag.Int("log.num-rotated-files", 5, "Maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
+	pflag.Bool("log.incoming-event-rate", false, "Output the rate of incoming events per second.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
-	pflag.String("metadata.eventLogTarget", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
-	pflag.Int("metadata.eventBufferSize", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
-	pflag.Int("metadata.eventBufferGCFrequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
-	pflag.Int("handler.maxReconnectBackOff", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
-	pflag.Int("handler.maxWaitForResponseAfterConnect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
-	pflag.Int("handler.pollFrequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
+	pflag.String("metadata.event-log-target", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
+	pflag.Int("metadata.event-buffer-size", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
+	pflag.Int("metadata.event-buffer-gc-frequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
+	pflag.Int("handler.max-reconnect-back-off", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
+	pflag.Int("handler.max-wait-for-response-after-connect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
+	pflag.Int("handler.poll-frequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
 	pflag.String("subscribers", "", `Specify one or more subscribers separated by semicolons.
 	The full list of subscribers should be enclosed in "double quotes".
 	The parameters for each subscriber should be specified as key='value'.
 	Include all required/desired parameters for the particular subscriber type you want to configure.
 	Example: --subscribers="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"`)
 	// Hidden flags:
-	pflag.Int("developer.perfProfilingPort", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
-	pflag.CommandLine.MarkHidden("developer.perfProfilingPort")
-	pflag.Bool("developer.dumpConfig", false, "Dump the full configuration and immediately exit.")
-	pflag.CommandLine.MarkHidden("developer.dumpConfig")
+	pflag.Int("developer.perf-profiling-port", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
+	pflag.CommandLine.MarkHidden("developer.perf-profiling-port")
+	pflag.Bool("developer.dump-config", false, "Dump the full configuration and immediately exit.")
+	pflag.CommandLine.MarkHidden("developer.dump-config")
 
 	pflag.CommandLine.SortFlags = false
 	pflag.Usage = func() {
@@ -78,12 +78,13 @@ Further info:
 	Configuration will be merged using the following precedence order (highest->lowest): (1) flags (2) environment variables (3) configuration file (4) defaults.
 	Subscribers can only be specified using one of these options, and when set using a configuration file, can be updated dynamically after the application starts without by sending a hangup signal (SIGHUP).
 Using environment variables:
-	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with underscores (_).
+	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with double underscores (__) and hyphens (-) with an underscore (_).
 	Examples: 
-	export %sLOG_DEVELOPER=true
+	export %sLOG__DEVELOPER=true
+	export %sCONFIG_FILE=/etc/beegfs/bee-watch.toml
 	export %sSUBSCRIBERS="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"
 `
-		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix)
+		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix, envVarPrefix)
 		os.Exit(0)
 	}
 

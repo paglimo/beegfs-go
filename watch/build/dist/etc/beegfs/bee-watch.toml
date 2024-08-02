@@ -17,18 +17,18 @@
 type = 'logfile'
 file = '/var/log/beegfs/bee-watch.log'
 level = 3
-maxSize = 1000
-numRotatedFiles = 5
+max-size = 1000
+num-rotated-files = 5
 
 [metadata]
-eventLogTarget = '/run/beegfs/eventlog'
-eventBufferSize = 10000000
-eventBufferGCFrequency = 100000
+event-log-target = '/run/beegfs/eventlog'
+event-buffer-size = 10000000
+event-buffer-gc-frequency = 100000
 
 [handler]
-maxReconnectBackOff = 60
-maxWaitForResponseAfterConnect = 2
-pollFrequency = 1
+max-reconnect-back-off = 60
+max-wait-for-response-after-connect = 2
+poll-frequency = 1
 
 
 #
@@ -39,28 +39,28 @@ pollFrequency = 1
 # id = 1
 # name = 'subscriber-1'
 # type = 'grpc'
-# grpcHostname = 'localhost'
-# grpcPort = '50051'
-# grpcAllowInsecure = false
-# grpcDisconnectTimeout = 30
-# grpcSelfSignedTLSCertPath = ''
+# grpc-hostname = 'localhost'
+# grpc-port = '50051'
+# grpc-allow-insecure = false
+# grpc-disconnect-timeout = 30
+# grpc-self-signed-tls-cert-path = '/etc/beegfs/cert.pem'
 
 # [[subscriber]]
 # id = 2
 # name = 'subscriber2'
 # type = 'grpc'
-# grpcHostname = 'localhost'
-# grpcPort = '50052'
-# grpcAllowInsecure = false
-# grpcDisconnectTimeout = 30
-# grpcSelfSignedTLSCertPath = ''
+# grpc-hostname = 'localhost'
+# grpc-port = '50052'
+# grpc-allow-insecure = false
+# grpc-disconnect-timeout = 30
+# grpc-self-signed-tls-cert-path = '/etc/beegfs/cert.pem'
 
 
 #
 # --- Section 2: [Command Line Arguments] ---
 #
 
-# Use the command line argument "cfgFile=/etc/anotherconfig.conf" to specify a
+# Use the command line argument "--cfg-file=/etc/anotherconfig.conf" to specify a
 # different config file for bee-watch. All other options in this file can also
 # be used as command line arguments, or set using environment variables,
 # overriding the corresponding config file values. See `bee-watch --help` for 
@@ -98,12 +98,12 @@ pollFrequency = 1
 # 5=Debug+Info+Warning+Error
 # Note: Levels above 3 might decrease performance.
 
-# [maxSize] 
+# [max-size] 
 # When type is set to 'logfile' this is the maximum size of the file in
 # megabytes before it is rotated.
 
-# [numRotatedFiles] 
-# Maximum number old file(s) to keep when log.maxSize is reached and the log
+# [num-rotated-files] 
+# Maximum number old file(s) to keep when log.max-size is reached and the log
 # is rotated.
 
 
@@ -114,17 +114,17 @@ pollFrequency = 1
 # Configuration for metadata must be specified under [metadata]. This
 # configuration cannot be updated after the application is started.
 
-# [eventLogTarget]
+# [event-log-target]
 # The path where the BeeGFS metadata service expected to log events to a unix
 # socket (should match sysFileEventLogTarget in beegfs-meta.conf).
 
-# [eventBufferSize]
+# [event-buffer-size]
 # How many events to keep in memory if the BeeGFS metadata service sends events
 # to BeeWatch faster than they can be sent to subscribers, or a subscriber is
 # temporarily disconnected. Worst case memory usage is approximately (10KB x
 # sysFileEventBufferSize). 
 
-# [eventBufferGCFrequency]
+# [event-buffer-gc-frequency]
 # After how many new events should unused buffer space be reclaimed
 # automatically. This should be set taking into consideration the buffer size.
 # More frequent garbage collection will negatively impact performance, whereas
@@ -140,19 +140,19 @@ pollFrequency = 1
 # configuration applies to all subscribers and may be updated after the
 # application has started.
 
-# [maxReconnectBackoff]
+# [max-reconnect-back-off]
 # When a connection cannot be made to a subscriber subscriber reconnection
 # attempts will be made with an exponential back off. This is the maximum time
 # in seconds between reconnection attempts to avoid increasing the back off
 # timer forever.
 
-# [waitForAckAfterConnect] 
+# [max-wait-for-response-after-connect = 2] 
 # When a subscriber connects/reconnects wait this long for the subscriber to
 # acknowledge the sequence ID of the last event it received successfully. This
 # prevents sending duplicate events if the connection was disrupted
 # unexpectedly. 
 
-# [pollFrequency]
+# [poll-frequency]
 # How often subscribers should poll the metadata buffer for new events (causes
 # more CPU utilization when idle)
 
@@ -189,13 +189,13 @@ pollFrequency = 1
 # The configuration options in this section must be specified under each
 # [[subscriber]] when the subscriber's type is set to 'grpc'.
 
-# [grpcHostname]
+# [grpc-hostname]
 # The IP address or hostname of the subscriber. No default.
 
-# [grpcPort]
+# [grpc-port]
 # What port the subscriber is listening on. No default.
 
-# [grpcDisconnectTimeout] 
+# [grpc-disconnect-timeout] 
 # When a local disconnect is requested, how long to wait (in seconds) for the
 # remote subscriber to also shutdown their end of the connection before just
 # closing the connection. If this value is to short then we may not receive
@@ -213,10 +213,10 @@ pollFrequency = 1
 # running BeeWatch, no additional steps will be required. If this is not the
 # case there are a few options: 
 
-# [grpcSelfSignedCertificatePath]
+# [grpc-self-signed-tls-cert-path]
 # Specify the path to a self-signed certificate.
 
-# [grpcAllowInsecure] 
+# [grpc-allow-insecure] 
 # Set to true to send all gRPC messages including potentially sensitive
 # information about file paths/names inside the file system will be sent in
 # clear text over the network.

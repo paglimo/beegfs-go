@@ -22,9 +22,10 @@ all: build generate-notices
 # package. The version will look like "1.0.0" if were on a commit tagged
 # "1.0.0". Otherwise it will generate a version like "1.0.0-3-g<COMMIT HASH>"
 # where "3" is the number of commits ahead of tag 1.0.0 and the <COMMIT HASH> is
-# the first ten characters of the commit hash.
+# the first ten characters of the commit hash. The only difference is appending
+# "-dev" if the current commit is dirty (i.e., has uncommitted changes).
 $(CMDS:%=build-%): build-%: check-go-version
-	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10))
+	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10 --dirty="-dev"))
 	@echo "Building $* version $(VERSION)"
 	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
 	chmod 755 $(BUILD_DIR)/$*
@@ -71,19 +72,17 @@ package-rpm: build
 # verify all code required to build the project has been properly committed.
 # Commonly this is done by running `make test` in CI, but could also be done locally.
 # If you ran `make test` locally you may want to use `git reset` to revert the changes.
-.PHONY: test test-unit check-go-version test-gofmt test-go-tidy test-go-vendor test-licenses
-test: check-go-version test-unit test-gofmt test-go-tidy test-go-vendor test-licenses
+.PHONY: test
+test: check-go-version check-gofmt check-linters check-vulnerabilities test-unit check-go-tidy check-licenses check-go-vendor
 
 check-go-version:
 	@echo "Checking Go version..."
 	@./hack/check-go-version.sh
 
-test-unit: 
-	@go test ./...
-
 # Verify that the code is formatted using gofmt: 
 # Don't run on the vendor directory to avoid false positives.
-test-gofmt:
+.PHONY: check-gofmt
+check-gofmt:
 	@echo "Checking 'go fmt' has been run..."
 	@if [ -n "$$(gofmt -l ./ | grep -v vendor)" ]; then \
 		echo "The following files have not been formatted using gofmt:"; \
@@ -92,15 +91,32 @@ test-gofmt:
 		exit 1; \
 	fi
 
+# Run the linters
+.PHONY: check-linters
+check-linters:
+	staticcheck ./...
+	go vet ./...
+
+# Check for vulnerability issues
+.PHONY: check-vulnerabilities
+check-vulnerabilities:
+	govulncheck ./...
+
+.PHONY: test-unit
+test-unit: 
+	@go test ./...
+
 # Verify that go mod tidy has been run.
-test-go-tidy: tidy
+.PHONY: check-go-tidy
+check-go-tidy: tidy
 	@echo " Checking 'go mod tidy' has been run..."
 	@if [ -n "$$(git status --porcelain go.mod go.sum)" ]; then \
 		echo "go.mod and/or go.sum are not up to date. Please run 'go mod tidy' and commit the changes."; \
 		exit 1; \
 	fi
 
-test-go-vendor:
+.PHONY: check-go-vendor
+check-go-vendor:
 	@echo "Checking 'go mod vendor' has been run..."
 	@if [ -n "$$(git status --porcelain vendor)" ]; then \
         echo "Vendor directory is not up to date. Please run 'go mod vendor' and commit the changes."; \
@@ -123,9 +139,10 @@ test-go-vendor:
 #   to manually verify our use doesn't violate the license terms. Here our use
 #   of an MPL 2.0 license is acceptable because we don't modify any of the
 #   original source. Note this exists in the project because we use Viper
-#   creating an indirect dependancy on HCL. However we don't allow users to use
+#   creating an indirect dependency on HCL. However we don't allow users to use
 #   HCL for configuration so technically we don't even use this at all.
-test-licenses: generate-notices
+.PHONY: check-licenses
+check-licenses: generate-notices
 	@echo "Checking license compliance..."
 	@go-licenses check ./cmd/bee-watch/ --ignore git.beegfs.io --ignore github.com/thinkparq --ignore github.com/hashicorp/hcl --disallowed_types=forbidden,permissive,reciprocal,restricted,unknown
 	@if [ -n "$$(git status --porcelain NOTICE.md)" ]; then \
@@ -133,10 +150,12 @@ test-licenses: generate-notices
         exit 1; \
     fi
 
-# Targets for installation of various prerequsites:
+# Targets for installation of various prerequisites:
 .PHONY: install-tools
 install-tools: 
+	go install honnef.co/go/tools/cmd/staticcheck@latest
 	go install github.com/google/go-licenses@v1.6.0
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 	sudo apt install rpm
 
 # Helper targets:

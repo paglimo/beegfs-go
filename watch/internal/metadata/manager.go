@@ -44,9 +44,9 @@ type Manager struct {
 // not support dynamic configuration updates at this time.
 // If it ever does it should also be embedded in the manager.
 type Config struct {
-	EventLogTarget         string `mapstructure:"eventLogTarget"`
-	EventBufferSize        int    `mapstructure:"eventBufferSize"`
-	EventBufferGCFrequency int    `mapstructure:"eventBufferGCFrequency"`
+	EventLogTarget         string `mapstructure:"event-log-target"`
+	EventBufferSize        int    `mapstructure:"event-buffer-size"`
+	EventBufferGCFrequency int    `mapstructure:"event-buffer-gc-frequency"`
 }
 
 // New creates a new Metadata manager that handles reading events from the
