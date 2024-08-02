@@ -10,7 +10,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.4
-	github.com/thinkparq/gobee v0.0.14
+	github.com/thinkparq/gobee v0.0.15
 	github.com/thinkparq/protobuf v0.0.9
 	go.uber.org/zap v1.26.0
 	google.golang.org/grpc v1.62.0
