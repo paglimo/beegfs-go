@@ -28,12 +28,21 @@ const (
 	nodeID = "0"
 )
 
+// Set by the build process using ldflags.
+var (
+	binaryName = "unknown"
+	version    = "unknown"
+	commit     = "unknown"
+	buildTime  = "unknown"
+)
+
 func main() {
 	// All application configuration (AppConfig) can be set using flags. The
 	// default values specified here will be used as configuration defaults.
 	// Note defaults for configuration specified using a slice are not set here.
 	// Notably remote storage target defaults are handled as part of
 	// initializing a particular RST type.
+	pflag.Bool("version", false, "Print the version then exit.")
 	pflag.String("cfg-file", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When Remote Storage Targets are configured using a file, they can be updated without restarting the application.")
 	pflag.String("mount-point", "", "The path where BeeGFS is mounted.")
 	pflag.String("log.type", "stderr", "Where log messages should be sent ('stderr', 'stdout', 'syslog', 'logfile').")
@@ -79,6 +88,11 @@ Using environment variables:
 	}
 	pflag.Parse()
 
+	if printVersion, _ := pflag.CommandLine.GetBool("version"); printVersion {
+		fmt.Printf("%s %s (commit: %s, built: %s)\n", binaryName, version, commit, buildTime)
+		os.Exit(0)
+	}
+
 	// We initialize ConfigManager first because all components require the initial config to start up.
 	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &config.AppConfig{}, config.SetRSTTypeHook())
 	if err != nil {
@@ -112,7 +126,8 @@ Using environment variables:
 	}
 	defer logger.Sync()
 	logger.Info("<=== BeeRemote Initialized ===>")
-
+	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version))
+	logger.Debug("build details", zap.String("commit", commit), zap.String("built", buildTime))
 	// Determine if we should use a real or mock mount point:
 	mountPoint, err := filesystem.NewFromMountPoint(initialCfg.MountPoint)
 	if err != nil {
