@@ -166,6 +166,7 @@ func New(jobRequest *beeremote.JobRequest) (*Job, error) {
 				Updated: timestamppb.Now(),
 			},
 		},
+		WorkResults: make(map[string]worker.WorkResult),
 	}
 
 	switch jobRequest.Type.(type) {

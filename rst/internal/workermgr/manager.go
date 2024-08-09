@@ -80,6 +80,9 @@ func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, work
 		if err != nil {
 			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}
+		if _, ok := rstMap[config.Id]; ok {
+			return nil, fmt.Errorf("found multiple remote storage targets with the same ID: %s", config.Id)
+		}
 		rstMap[config.Id] = rst
 	}
 

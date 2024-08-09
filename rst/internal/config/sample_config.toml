@@ -24,6 +24,17 @@ s3.bucket = "<BUCKET>"
 s3.access-key = "<ACCESS_KEY>"
 s3.secret-key = "<SECRET_KEY>"
 
+[[remote-storage-target]]
+id = "3"
+name = "aws"
+policies = { FastStartMaxSize = 104857600 }
+s3.endpoint-url = "https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com"
+# s3.partitionid = "test_partition"  
+s3.region = "<REGION>"
+s3.bucket = ""
+s3.access-key = "<ACCESS_KEY>"
+s3.secret-key = "<SECRET_KEY>"
+
 [[worker]]
 id = "1"
 name = "beesync-01"

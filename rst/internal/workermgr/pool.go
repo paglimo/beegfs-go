@@ -100,6 +100,8 @@ func (p *Pool) assignToLeastBusyWorker(wr *flex.WorkRequest) (string, *flex.Work
 				// the size of the work request.
 				p.next = (p.next + 1) % poolSize
 				return assignedWorker, resp, nil
+			} else {
+				p.next = (p.next + 1) % poolSize
 			}
 
 		}

@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/gobee/logger"
@@ -113,7 +112,7 @@ func (m *Manager) Start() error {
 
 	m.readyMu.Lock()
 	if m.ready {
-		return fmt.Errorf("an instance of job manager is already running")
+		return fmt.Errorf("job manager is already running")
 	}
 
 	// If anything goes wrong we want to execute all deferred functions
@@ -346,9 +345,6 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 	if err != nil {
 		return nil, fmt.Errorf("unable to generate job from job request: %w", err)
 	}
-
-	// Initialize reference types:
-	job.WorkResults = make(map[string]worker.WorkResult)
 
 	// TODO: https://github.com/ThinkParQ/gobee/issues/10
 	// Add a flag to `CreateAndLockEntry()` that will get the entry if it already exists so the

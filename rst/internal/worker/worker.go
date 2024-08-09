@@ -159,14 +159,15 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.UpdateConfigRequest, 
 	n.nodeMu.Lock()
 	defer n.nodeMu.Unlock()
 
+	// Ticker used to control the interval at which heartbeat requests are send to worker nodes.
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	// Set to true if the handler was stopped.
 	done := false
 	for {
 		if n.GetState() == OFFLINE {
 			if n.connectLoop(config, wrUpdates) {
 				n.setState(ONLINE)
-				ticker := time.NewTicker(10 * time.Second)
-				defer ticker.Stop()
 			connectedLoop:
 				for {
 					select {
