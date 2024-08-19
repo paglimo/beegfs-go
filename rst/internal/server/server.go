@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/thinkparq/bee-remote/internal/job"
+	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -140,7 +140,7 @@ func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.Upda
 	defer s.wg.Done()
 	resp, err := s.jobMgr.UpdateJob(request)
 	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		if errors.Is(err, kvstore.ErrEntryNotInDB) {
 			return nil, status.Errorf(codes.NotFound, "%s", err)
 		}
 		return nil, err

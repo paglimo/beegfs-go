@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"path"
 	"reflect"
@@ -32,7 +33,6 @@ func init() {
 
 type Config struct {
 	PathDBPath          string `mapstructure:"path-db-path"`
-	PathDBCacheSize     int    `mapstructure:"path-db-cache-size"`
 	RequestQueueDepth   int    `mapstructure:"request-queue-depth"`
 	MinJobEntriesPerRST int    `mapstructure:"min-job-entries-per-rst"`
 	MaxJobEntriesPerRST int    `mapstructure:"max-job-entries-per-rst"`
@@ -136,7 +136,7 @@ func (m *Manager) Start() error {
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
 	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
 	pathDBOpts = pathDBOpts.WithLoggingLevel(badger.INFO)
-	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]*Job](pathDBOpts, m.config.PathDBCacheSize)
+	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]*Job](pathDBOpts)
 	if err != nil {
 		return fmt.Errorf("unable to setup paths DB: %w", err)
 	}
@@ -346,27 +346,21 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		return nil, fmt.Errorf("unable to generate job from job request: %w", err)
 	}
 
-	// TODO: https://github.com/ThinkParQ/gobee/issues/10
-	// Add a flag to `CreateAndLockEntry()` that will get the entry if it already exists so the
-	// caller doesn't have to check for an error then call `GetAndLockEntry()` (likely still
-	// returning an appropriate error so the caller can adjust behavior as needed).
-	pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(job.Request.GetPath())
-	if err == kvstore.ErrEntryAlreadyExistsInDB || err == kvstore.ErrEntryAlreadyExistsInCache {
-		pathEntry, commitAndReleasePath, err = m.pathStore.GetAndLockEntry(job.Request.GetPath())
-		if err != nil {
-			return nil, fmt.Errorf("unable to get existing entry for path %s while creating job ID %s: %w", job.Request.GetPath(), job.GetId(), err)
-		}
-	} else if err != nil {
+	// Initialize reference types:
+	_, pathEntry, commitAndReleasePath, err := m.pathStore.CreateAndLockEntry(
+		job.Request.GetPath(),
+		kvstore.WithAllowExisting(true),
+		kvstore.WithValue(make(map[string]*Job)),
+	)
+	if err != nil && !errors.Is(err, kvstore.ErrEntryAlreadyExistsInDB) {
 		return nil, fmt.Errorf("unable to create new entry for path %s while creating jobID %s: %w", job.Request.GetPath(), job.GetId(), err)
-	} else {
-		// If we actually create the entry then we must initialize the value field.
-		pathEntry.Value = make(map[string]*Job)
 	}
+
 	defer func() {
 		// If there was an error creating the job and there are no other jobs for this path, clean
 		// it up when we return.
 		if len(pathEntry.Value) == 0 {
-			if err := commitAndReleasePath(kvstore.DeleteEntry); err != nil {
+			if err := commitAndReleasePath(kvstore.WithDeleteEntry(true)); err != nil {
 				m.log.Error("unable to release and cleanup path entry with no jobs", zap.Error(err))
 			}
 		} else if err := commitAndReleasePath(); err != nil {
@@ -513,7 +507,6 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 //	CANCELLED => DELETE / CANCEL
 //	COMPLETED => DELETE / CANCEL // only if ForceUpdate==true
 func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
-
 	m.readyMu.RLock()
 	defer m.readyMu.RUnlock()
 	if !m.ready {
@@ -582,7 +575,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 			// We want to delete the entry before releasing the lock, otherwise its
 			// possible someone else slips in a new job for this path and we would
 			// loose it. This is why we use the DeleteEntry release flag here.
-			err = releasePathEntry(kvstore.DeleteEntry)
+			err = releasePathEntry(kvstore.WithDeleteEntry(true))
 			if err != nil {
 				// If an error happens here we don't want to actually return the response since we
 				// don't know if the path entry was actually deleted.
@@ -633,7 +626,7 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		}
 		// Only clean up the path entry if there are no more jobs left for it:
 		if len(pathEntry.Value) == 0 {
-			if err = releasePathEntry(kvstore.DeleteEntry); err != nil {
+			if err = releasePathEntry(kvstore.WithDeleteEntry(true)); err != nil {
 				return nil, fmt.Errorf("after deleting job ID %s no jobs should remain for path %s but was unable to remove the path entry (try again): %w", query.JobId, query.Path, err)
 			}
 		} else {
@@ -766,7 +759,7 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 
 	pathEntry, commitAndRelease, err := m.pathStore.GetAndLockEntry(workResult.Path)
 	if err != nil {
-		if err == badger.ErrKeyNotFound {
+		if err == kvstore.ErrEntryNotInDB {
 			return status.Errorf(codes.NotFound, "no jobs found for path %s", workResult.Path)
 		}
 		return status.Errorf(codes.Internal, "internal database error retrieving path entry (try again later): %s: %s", workResult.Path, err)

@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
 	"github.com/thinkparq/gobee/filesystem"
+	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap/zaptest"
@@ -101,8 +101,7 @@ func TestManage(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:      tmpPathDBPath,
-		PathDBCacheSize: 1024,
+		PathDBPath: tmpPathDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -270,8 +269,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:      tmpPathDBPath,
-		PathDBCacheSize: 1024,
+		PathDBPath: tmpPathDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -358,7 +356,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 	responses := make(chan *beeremote.GetJobsResponse, 1)
 	err = jobManager.GetJobs(context.Background(), getJobRequestsByPath, responses)
-	assert.ErrorIs(t, err, badger.ErrKeyNotFound)
+	assert.ErrorIs(t, err, kvstore.ErrEntryNotInDB)
 
 	////////////////////////////////
 	// Then test deleting by job ID:
@@ -427,7 +425,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 	responses = make(chan *beeremote.GetJobsResponse, 1)
 	err = jobManager.GetJobs(context.Background(), getJobRequestsByID, responses)
-	assert.ErrorIs(t, err, badger.ErrKeyNotFound)
+	assert.ErrorIs(t, err, kvstore.ErrEntryNotInDB)
 
 	////////////////////////////////
 	// Test deleting completed jobs:
@@ -503,13 +501,13 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	assert.Contains(t, deleteJobByIDResp.Message, "")
 	assert.Len(t, deleteJobByIDResp.Results, 1)
 	assert.Equal(t, beeremote.Job_COMPLETED, deleteJobByPathResp.Results[0].Job.Status.State)
-	assert.Contains(t, deleteJobByPathResp.Results[0].Job.Status.Message, "job scheduled for deletion")
+	assert.Contains(t, deleteJobByIDResp.Results[0].Job.Status.Message, "job scheduled for deletion")
 
 	responses = make(chan *beeremote.GetJobsResponse, 1)
 	err = jobManager.GetJobs(context.Background(), &beeremote.GetJobsRequest{
 		Query: &beeremote.GetJobsRequest_ByExactPath{ByExactPath: "response.Job.Request.Path"},
 	}, responses)
-	assert.ErrorIs(t, badger.ErrKeyNotFound, err)
+	assert.ErrorIs(t, kvstore.ErrEntryNotInDB, err)
 }
 
 // Test fault conditions
@@ -577,8 +575,7 @@ func TestManageErrorHandling(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:      tmpPathDBPath,
-		PathDBCacheSize: 1024,
+		PathDBPath: tmpPathDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -773,8 +770,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	jobMgrConfig := Config{
-		PathDBPath:      tmpPathDBPath,
-		PathDBCacheSize: 1024,
+		PathDBPath: tmpPathDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
@@ -847,8 +843,7 @@ func TestUpdateJobResults(t *testing.T) {
 	require.NoError(t, workerManager.Start())
 
 	jobMgrConfig := Config{
-		PathDBPath:      tmpPathDBPath,
-		PathDBCacheSize: 1024,
+		PathDBPath: tmpPathDBPath,
 	}
 
 	jobManager := NewManager(logger, jobMgrConfig, workerManager)
