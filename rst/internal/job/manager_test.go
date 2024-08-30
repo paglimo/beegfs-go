@@ -95,7 +95,7 @@ func TestManage(t *testing.T) {
 	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 0))
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 0, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: 1, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -113,7 +113,7 @@ func TestManage(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
-		RemoteStorageTarget: "0",
+		RemoteStorageTarget: 0,
 	}
 
 	_, err = jobManager.SubmitJobRequest(&testJobRequest)
@@ -164,7 +164,7 @@ func TestManage(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
-		RemoteStorageTarget: "1",
+		RemoteStorageTarget: 1,
 	}
 	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
 	assert.NoError(t, err)
@@ -263,7 +263,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 10))
 	mountPoint.CreateWriteClose("/test/myfile2", make([]byte, 20))
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: "1", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 0, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}, {Id: 1, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -281,14 +281,14 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
-		RemoteStorageTarget: "0",
+		RemoteStorageTarget: 0,
 	}
 	testJobRequest2 := beeremote.JobRequest{
 		Path:                "/test/myfile2",
 		Name:                "test job 2",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 2}},
-		RemoteStorageTarget: "1",
+		RemoteStorageTarget: 1,
 	}
 
 	_, err = jobManager.SubmitJobRequest(&testJobRequest1)
@@ -569,7 +569,7 @@ func TestManageErrorHandling(t *testing.T) {
 	mountPoint := filesystem.NewMockFS()
 	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 30))
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 0, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -588,7 +588,7 @@ func TestManageErrorHandling(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 4}},
-		RemoteStorageTarget: "0",
+		RemoteStorageTarget: 0,
 	}
 	jobManager.JobRequests <- &testJobRequest
 	time.Sleep(2 * time.Second)
@@ -765,7 +765,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	// Intentionally don't create any files in the MockFS.
 
 	// We don't need a full worker manager for this test.
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "1", Type: &flex.RemoteStorageTarget_S3_{}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 1, Type: &flex.RemoteStorageTarget_S3_{}}}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 
@@ -779,7 +779,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	require.NoError(t, err)
 	jobRequest := &beeremote.JobRequest{
 		Path:                "/foo/bar",
-		RemoteStorageTarget: "1",
+		RemoteStorageTarget: 1,
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &flex.SyncJob{
 				Operation: flex.SyncJob_UPLOAD,
@@ -802,7 +802,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: "0", Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 0, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
 	workerConfigs := []worker.Config{
 		{
 			ID:                  "0",
@@ -854,7 +854,7 @@ func TestUpdateJobResults(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Type:                &beeremote.JobRequest_Mock{Mock: &flex.MockJob{NumTestSegments: 2}},
-		RemoteStorageTarget: "0",
+		RemoteStorageTarget: 0,
 	}
 
 	// Verify once all WRs are in the same terminal state the job state
