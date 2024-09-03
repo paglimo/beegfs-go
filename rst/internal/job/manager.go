@@ -374,7 +374,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		jobConflict := false
 		// Add jobs in a terminal state to a map based on their RST ID.
 		// We limit the number of historical jobs kept for each RST.
-		terminalJobsByRST := make(map[string][]*Job, 0)
+		terminalJobsByRST := make(map[uint32][]*Job, 0)
 
 		for _, existingJob := range pathEntry.Value {
 			if existingJob.Request.GetRemoteStorageTarget() == job.Request.GetRemoteStorageTarget() && !existingJob.InTerminalState() {
@@ -417,14 +417,14 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 			// with a higher ID that would be retained longer than the active
 			// job. We want the job with the highest ID for a particular RST
 			// to always be the latest job result for that path+RST combo.
-			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %s (cancel or wait for it to complete first)", job.Request.GetPath(), job.Request.GetRemoteStorageTarget())
+			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %d (cancel or wait for it to complete first)", job.Request.GetPath(), job.Request.GetRemoteStorageTarget())
 		}
 
 	}
 
 	rstClient, ok := m.workerManager.RemoteStorageTargets[job.Request.GetRemoteStorageTarget()]
 	if !ok {
-		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %s", job.Request.GetRemoteStorageTarget())
+		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %d", job.Request.GetRemoteStorageTarget())
 	}
 
 	jobSubmission, retry, err := job.GenerateSubmission(m.ctx, rstClient)
@@ -811,7 +811,7 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 		// this. Most likely a user updated the configuration and removed the RST so there is
 		// nothing we can do unless they were to add it back.
 		job.GetStatus().State = beeremote.Job_FAILED
-		job.GetStatus().Message = fmt.Sprintf("unable to complete job because the RST no longer exists: %s (add it back or manually cleanup any artifacts from this job)", job.Request.GetRemoteStorageTarget())
+		job.GetStatus().Message = fmt.Sprintf("unable to complete job because the RST no longer exists: %d (add it back or manually cleanup any artifacts from this job)", job.Request.GetRemoteStorageTarget())
 		return nil
 	}
 

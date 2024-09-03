@@ -41,7 +41,7 @@ type Manager struct {
 	// Allow RST configuration to be dynamically updated. This is complicated
 	// because we'll have to add locking and figure out how to handle when there
 	// are existing jobs for a changed/removed RST.
-	RemoteStorageTargets map[string]rst.Provider
+	RemoteStorageTargets map[uint32]rst.Provider
 }
 
 // JobSubmission is used to submit a Job and its associated work requests to be
@@ -71,7 +71,7 @@ type JobUpdate struct {
 func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, workerConfigs []worker.Config, rstConfigs []*flex.RemoteStorageTarget, beeRmtConfig *flex.BeeRemoteNode, mountPoint filesystem.Provider) (*Manager, error) {
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
-	rstMap := make(map[string]rst.Provider)
+	rstMap := make(map[uint32]rst.Provider)
 	for _, config := range rstConfigs {
 		// We could provide a real context here it it ever became necessary, however `NewManager()`
 		// is not expected to be run in a separate goroutine so we shouldn't become blocked if the
@@ -81,7 +81,7 @@ func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, work
 			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}
 		if _, ok := rstMap[config.Id]; ok {
-			return nil, fmt.Errorf("found multiple remote storage targets with the same ID: %s", config.Id)
+			return nil, fmt.Errorf("found multiple remote storage targets with the same ID: %d", config.Id)
 		}
 		rstMap[config.Id] = rst
 	}
