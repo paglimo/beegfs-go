@@ -39,10 +39,11 @@ type Config struct {
 }
 
 type Manager struct {
-	log    *zap.Logger
-	ctx    context.Context
-	cancel context.CancelFunc
-	config Config
+	log       *zap.Logger
+	wg        sync.WaitGroup
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	config    Config
 	// Ready indicates the Manage() loop has been started and finished setting
 	// up all MapStores and their backing databases. Methods besides the
 	// Manage() loop must check the ready state before interacting with the
@@ -90,7 +91,7 @@ func NewManager(log *zap.Logger, config Config, workerManager *workermgr.Manager
 	return &Manager{
 		log:           log,
 		ctx:           ctx,
-		cancel:        cancel,
+		ctxCancel:     cancel,
 		config:        config,
 		ready:         false,
 		workerManager: workerManager,
@@ -149,14 +150,22 @@ func (m *Manager) Start() error {
 
 	// Start a separate goroutine that will handle closing the databases when
 	// the Manager shuts down.
+	m.wg.Add(1)
 	go func() {
+
 		defer func() {
+			m.log.Info("shutting down because the app is shutting down")
+			m.readyMu.Lock()
+			m.ready = false
+			m.readyMu.Unlock()
+
 			// Deferred function calls should happen LIFO.
 			for i := len(deferredFuncs) - 1; i >= 0; i-- {
 				if err := deferredFuncs[i](); err != nil {
 					m.log.Error("encountered an error shutting down JobMgr", zap.Error(err))
 				}
 			}
+			m.wg.Done()
 		}()
 
 		m.log.Info("now accepting job requests and work responses")
@@ -165,10 +174,6 @@ func (m *Manager) Start() error {
 		for {
 			select {
 			case <-m.ctx.Done():
-				m.log.Info("shutting down because the app is shutting down")
-				m.readyMu.Lock()
-				m.ready = false
-				m.readyMu.Unlock()
 				return
 			case jobRequest := <-m.jobRequests:
 				response, err := m.SubmitJobRequest(jobRequest)
@@ -866,11 +871,16 @@ func (m *Manager) GetRSTConfig() ([]*flex.RemoteStorageTarget, error) {
 func (m *Manager) Stop() {
 
 	m.readyMu.Lock()
-	defer m.readyMu.Unlock()
 	if !m.ready {
+		m.readyMu.Unlock()
 		return // Nothing to do.
 	}
+	m.readyMu.Unlock()
 
-	m.cancel()
-	m.ready = false
+	// Canceling the manager's context initiates the shutdown process. During this process, the manager updates the
+	// m.ready flag while holding the readyMu lock. Any further attempts to acquire the readyMu lock after this point
+	// can lead to a deadlock.
+	m.ctxCancel()
+	m.wg.Wait()
+	m.log.Info("stopped manager")
 }
