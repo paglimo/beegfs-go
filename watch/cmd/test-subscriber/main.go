@@ -56,12 +56,11 @@ var (
 	logDebug             = flag.Bool("log-debug", false, "enable logging at the debug level")
 	logIncomingEventRate = flag.Bool("log-incoming-event-rate", false, "output events per second")
 	perfProfilingPort    = flag.Int("perf-profiling-port", 0, "specify a port where performance profiles will be made available on the localhost")
-	grpcHostname         = flag.String("grpc-hostname", "localhost", "What interface this subscriber will use to listen for events from BeeWatch nodes.")
-	grpcPort             = flag.String("grpc-port", "50052", "What port this subscriber will listen on events from BeeWatch nodes.")
+	grpcAddress          = flag.String("grpc-address", "localhost:50051", "What hostname:port this subscriber will use to listen for events from BeeWatch nodes.")
 	ackFrequency         = flag.Duration("ack-frequency", 1*time.Second, "how often to acknowledge events back to BeeWatch (0 disables sending acks)")
 	mockDBFilename       = flag.String("mock-db-filename", "scratch", "where store sequence IDs to allow the app to be restarted and detect dropped events")
-	tlsCertificate       = flag.String("tls-cert", "", "path to a certificate to use for TLS")
-	tlsKey               = flag.String("tls-key", "", "path to the private key for the provided tls-certificate")
+	tlsCertificate       = flag.String("tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of the subscriber gRPC server.")
+	tlsKey               = flag.String("tls-key-file", "/etc/beegfs/key.pem", "Path to a key file belonging to the certificate for the subscriber gRPC server.")
 	db                   = &MockDB{}
 )
 
@@ -195,7 +194,7 @@ func main() {
 
 	// STEP 3: Identify a local network address that will be used to listen for
 	// gRPC event streams:
-	lis, err := net.Listen("tcp", *grpcHostname+":"+*grpcPort)
+	lis, err := net.Listen("tcp", *grpcAddress)
 	if err != nil {
 		log.Fatal("failed to setup listener for BeeWatch events", zap.Error(err))
 	}

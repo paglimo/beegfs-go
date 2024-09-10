@@ -18,7 +18,7 @@ import (
 	"github.com/thinkparq/bee-watch/internal/config"
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
-	"github.com/thinkparq/gobee/beegfs/mgmtd"
+	"github.com/thinkparq/gobee/beegfs/beegrpc"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
@@ -54,8 +54,9 @@ func main() {
 	pflag.Bool("log.incoming-event-rate", false, "Output the rate of incoming events per second.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
 	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management service.")
+	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a CA certificate (signed or self-signed) for server verification.")
+	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication.")
 	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
-	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a custom (e.g., self-signed) CA certificate for server verification.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
 	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
 	pflag.String("metadata.event-log-target", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
@@ -150,11 +151,33 @@ Using environment variables:
 		cancel()
 	}()
 
+	// The mgmtd gRPC client expects the cert and auth file to already be read from their respective
+	// sources (files in this case) and provided as a byte slice.
+	var cert []byte
+	if initialCfg.Management.TLSCaCert != "" {
+		cert, err = os.ReadFile(initialCfg.Management.TLSCaCert)
+		if err != nil && pflag.Lookup("management.tls-ca-cert").Changed {
+			logger.Fatal("unable to read management TLS certificate", zap.Error(err))
+		}
+	}
+	var authSecret []byte
+	if !initialCfg.Management.AuthDisable {
+		authSecret, err = os.ReadFile(initialCfg.Management.AuthFile)
+		if err != nil {
+			logger.Fatal("unable to read management secret from auth file", zap.Error(err))
+		}
+	}
 	// The only thing currently requiring a mgmtd client is license verification. Immediately
 	// disconnect client after determining the license status to discourage reuse without first
 	// evaluating if a more robust strategy to manage long-term connections to the mgmtd is required
 	// for future use cases (such as downloading configuration from mgmtd).
-	if mgmtdClient, err := mgmtd.New(mgmtd.Config(initialCfg.Management)); err != nil {
+	if mgmtdClient, err := beegrpc.NewMgmtd(
+		initialCfg.Management.Address,
+		beegrpc.WithTLSDisable(initialCfg.Management.TLSDisable),
+		beegrpc.WithTLSDisableVerification(initialCfg.Management.TLSDisableVerification),
+		beegrpc.WithTLSCaCert(cert),
+		beegrpc.WithAuthSecret(authSecret),
+	); err != nil {
 		// If the mgmtd is actually offline, usually we'll never get to this point. Startup will
 		// hang earlier trying to determine the BeeGFS mount point. This is why we don't do any
 		// extra retry logic here, the client will already try to reconnect and return an error

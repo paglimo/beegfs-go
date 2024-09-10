@@ -2,17 +2,18 @@ package subscriber
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/thinkparq/gobee/beegfs/beegrpc"
 	"github.com/thinkparq/gobee/types"
 	pb "github.com/thinkparq/protobuf/go/beewatch"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // A GRPCSubscriber implements a gRPC client that sends messages to a subscriber over gRPC.
@@ -57,30 +58,19 @@ type ComparableGRPCSubscriber struct {
 
 func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 
-	var opts []grpc.DialOption
-	// We specify the option to use a self-signed certificate first so it take
-	// precedence. We also ensure these options are mutually exclusive, for
-	// example if we allowed a self-signed cert and AllowInsecure to be
-	// specified, a vague `error reading server preface: EOF` will be returned.
-	if s.SelfSignedTLSCertPath != "" {
-		creds, err := credentials.NewClientTLSFromFile(s.SelfSignedTLSCertPath, "")
+	var cert []byte
+	if s.TlsCaCert != "" {
+		cert, err = os.ReadFile(s.TlsCaCert)
 		if err != nil {
-			// If something goes wrong setting up TLS there is no point to retrying.
-			return false, err
+			return false, fmt.Errorf("reading certificate file failed: %w", err)
 		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	} else if s.AllowInsecure {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		// By default we'll use the system-wide store of trusted root
-		// certificates on the system running BeeWatch. This requires the
-		// certificate the subscriber is using to have been signed by a trusted
-		// root CA. Or the certificate would have needed to been added manually
-		// as a trusted certificate.
-		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{})))
 	}
-
-	s.conn, err = grpc.NewClient(s.Hostname+":"+s.Port, opts...)
+	s.conn, err = beegrpc.NewClientConn(
+		s.Address,
+		beegrpc.WithTLSCaCert(cert),
+		beegrpc.WithTLSDisableVerification(s.TLSDisableVerification),
+		beegrpc.WithTLSDisable(s.TlsDisable),
+	)
 	if err != nil {
 		return true, fmt.Errorf("unable to connect to the subscriber: %w", err)
 	}
@@ -92,6 +82,14 @@ func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 	s.stream, err = s.client.ReceiveEvents(context.TODO())
 
 	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.
+			// Note this is just a hint to the user, other error conditions may have the same
+			// message so we don't adjust behavior (i.e., treat it as fatal).
+			if strings.Contains(st.Message(), "error reading server preface: EOF") {
+				return true, fmt.Errorf("%w (hint: check TLS is configured correctly on the client and server)", err)
+			}
+		}
 		return true, fmt.Errorf("unable to setup gRPC client stream: %w", err)
 	}
 
