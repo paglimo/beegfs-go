@@ -250,8 +250,8 @@ github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcU
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
-github.com/thinkparq/gobee v0.0.17 h1:SHZ+OUrw1lGK596vijP+Q8nKkZhiDvGwt9jcLIO+NMI=
-github.com/thinkparq/gobee v0.0.17/go.mod h1:/1FhrRF/1JgHSvsSubEbd6s50gy99ftuUJKJvnUTGDA=
+github.com/thinkparq/gobee v0.0.20-0.20240910175722-36f5e74e4a29 h1:BTrBlxZRvL42xoNF2N4kge+n1XYuH0x/AfpS70bO7LQ=
+github.com/thinkparq/gobee v0.0.20-0.20240910175722-36f5e74e4a29/go.mod h1:Da7ys9PkbnG8eV0JGPxrtWN8QIi+t4t4Et6H1EWaK0c=
 github.com/thinkparq/protobuf v0.0.15 h1:8jNBpt6YOI5iNBrcqEzOLQgGMnBt2tK7EFesiYUkWjM=
 github.com/thinkparq/protobuf v0.0.15/go.mod h1:ECPwmpoEIFcGYMXQTkXF+ZfvcygtsL4QKQfagRXftPk=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

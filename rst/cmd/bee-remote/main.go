@@ -15,6 +15,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/gobee/beegfs/mgmtd"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/logger"
@@ -25,7 +26,8 @@ import (
 const (
 	envVarPrefix = "BEEREMOTE_"
 	// Note the concept of a BeeRemote nodeID will be used to support multiple BeeRemote nodes in the future.
-	nodeID = "0"
+	nodeID            = "0"
+	FeatureLicenseStr = "io.beegfs.flex"
 )
 
 // Set by the build process using ldflags.
@@ -51,6 +53,11 @@ func main() {
 	pflag.Int("log.max-size", 1000, "Maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.num-rotated-files", 5, "Maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
+	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management service.")
+	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
+	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a custom (e.g., self-signed) CA certificate for server verification.")
+	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
+	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
 	pflag.String("server.address", "127.0.0.1:9010", "The hostname:port where BeeRemote should listen for job requests.")
 	pflag.String("server.tls-certificate", "/etc/beegfs/cert.pem", "Path to a certificate file.")
 	pflag.String("server.tls-key", "/etc/beegfs/key.pem", "Path to a key file.")
@@ -129,6 +136,8 @@ Using environment variables:
 	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version))
 	logger.Debug("build details", zap.String("commit", commit), zap.String("built", buildTime))
 	// Determine if we should use a real or mock mount point:
+	logger.Info("checking BeeGFS mount point")
+	// If we hang here, probably BeeGFS itself is not reachable.
 	mountPoint, err := filesystem.NewFromMountPoint(initialCfg.MountPoint)
 	if err != nil {
 		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
@@ -147,6 +156,30 @@ Using environment variables:
 		<-sigs
 		cancel()
 	}()
+
+	// The only thing currently requiring a mgmtd client is license verification. Immediately
+	// disconnect client after determining the license status to discourage reuse without first
+	// evaluating if a more robust strategy to manage long-term connections to the mgmtd is required
+	// for future use cases (such as downloading configuration from mgmtd).
+	if mgmtdClient, err := mgmtd.New(mgmtd.Config(initialCfg.Management)); err != nil {
+		// If the mgmtd is actually offline, usually we'll never get to this point. Startup will
+		// hang earlier trying to determine the BeeGFS mount point. This is why we don't do any
+		// extra retry logic here, the client will already try to reconnect and return an error
+		// after some time. If we do get to this point it is more likely there is a configuration
+		// error (for example the wrong mgmtd is configured on BeeRemote). The exception is if the
+		// mgmtd just went offline and the client hasn't yet set targets probably-offline. But in
+		// that scenario its probably better to refuse to startup prompting investigation.
+		logger.Fatal("unable to initialize BeeGFS mgmtd client", zap.Error(err))
+	} else {
+		licenseDetails, err := mgmtdClient.VerifyLicense(ctx, FeatureLicenseStr)
+		mgmtdClient.Cleanup()
+		if licenseDetails != nil {
+			logger.Info("downloaded license from BeeGFS management service", licenseDetails...)
+		}
+		if err != nil {
+			logger.Fatal("unable to verify license", zap.Error(err))
+		}
+	}
 
 	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
 		Id:      nodeID,

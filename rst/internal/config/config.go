@@ -10,6 +10,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/worker"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/gobee/beegfs/mgmtd"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/rst"
@@ -23,6 +24,7 @@ var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
 	MountPoint           string                      `mapstructure:"mount-point"`
+	Management           mgmtd.Config                `mapstructure:"management"`
 	Server               server.Config               `mapstructure:"server"`
 	Log                  logger.Config               `mapstructure:"log"`
 	Job                  job.Config                  `mapstructure:"job"`
