@@ -20,6 +20,11 @@ level = 3
 max-size = 1000
 num-rotated-files = 5
 
+[management]
+address = "127.0.0.1:8010"
+tls-ca-cert = "/etc/beegfs/cert.pem"
+tls-disable = false
+
 [metadata]
 event-log-target = '/run/beegfs/eventlog'
 event-buffer-size = 10000000
@@ -106,13 +111,32 @@ poll-frequency = 1
 # Maximum number old file(s) to keep when log.max-size is reached and the log
 # is rotated.
 
+#
+# --- Section 3.2: [Management Settings] ---
+#
+
+# Configuration for the BeeGFS management service must be specified under 
+# [management]. This configuration is used to verify licensing and cannot 
+# be updated after the application is started.
+
+# [address]
+# The IP address and gRPC port for the BeeGFS management service. 
+
+# [tls-ca-cert]
+# Specify the path to a self-signed certificate.
+
+# [tls-disable]
+# Set to true to send all gRPC messages including potentially sensitive
+# information about file paths/names inside the file system will be sent in
+# clear text over the network.
 
 #
-# --- Section 3.2: [Metadata Settings] ---
+# --- Section 3.3: [Metadata Settings] ---
 #
 
-# Configuration for metadata must be specified under [metadata]. This
-# configuration cannot be updated after the application is started.
+# Configuration for the BeeGFS metadata service BeeWatch is listening to
+# must be specified under [metadata]. This configuration cannot be updated 
+# after the application is started.
 
 # [event-log-target]
 # The path where the BeeGFS metadata service expected to log events to a unix
@@ -133,7 +157,7 @@ poll-frequency = 1
 
 
 #
-# --- Section 3.3: [Handler Settings] ---
+# --- Section 3.4: [Handler Settings] ---
 #
 
 # Configuration for subscriber handlers must be specified under [handler]. This

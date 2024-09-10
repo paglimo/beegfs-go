@@ -7,6 +7,7 @@ import (
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscriber"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
+	"github.com/thinkparq/gobee/beegfs/mgmtd"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/types"
@@ -24,6 +25,7 @@ var _ subscribermgr.Configurer = &AppConfig{}
 type AppConfig struct {
 	CfgFile     string                      `mapstructure:"cfg-file"`
 	Log         logger.Config               `mapstructure:"log"`
+	Management  mgmtd.Config                `mapstructure:"management"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
 	Metadata    metadata.Config             `mapstructure:"metadata"`
 	Subscribers []subscriber.Config         `mapstructure:"subscriber"`

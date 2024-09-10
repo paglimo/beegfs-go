@@ -18,6 +18,7 @@ import (
 	"github.com/thinkparq/bee-watch/internal/config"
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
+	"github.com/thinkparq/gobee/beegfs/mgmtd"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/logger"
 	"go.uber.org/zap"
@@ -32,7 +33,8 @@ var (
 )
 
 const (
-	envVarPrefix = "BEEWATCH_"
+	envVarPrefix      = "BEEWATCH_"
+	FeatureLicenseStr = "io.beegfs.watch"
 )
 
 func main() {
@@ -51,6 +53,11 @@ func main() {
 	pflag.Int("log.num-rotated-files", 5, "Maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.incoming-event-rate", false, "Output the rate of incoming events per second.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
+	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management service.")
+	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
+	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a custom (e.g., self-signed) CA certificate for server verification.")
+	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
+	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
 	pflag.String("metadata.event-log-target", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
 	pflag.Int("metadata.event-buffer-size", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
 	pflag.Int("metadata.event-buffer-gc-frequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
@@ -135,6 +142,37 @@ Using environment variables:
 	// Create a channel to receive OS signals to coordinate graceful shutdown:
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	// General context used to signal application shutdown was requested. Components should not use
+	// this context unless they do not have ordering constraints for how they are stopped.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-sigs
+		cancel()
+	}()
+
+	// The only thing currently requiring a mgmtd client is license verification. Immediately
+	// disconnect client after determining the license status to discourage reuse without first
+	// evaluating if a more robust strategy to manage long-term connections to the mgmtd is required
+	// for future use cases (such as downloading configuration from mgmtd).
+	if mgmtdClient, err := mgmtd.New(mgmtd.Config(initialCfg.Management)); err != nil {
+		// If the mgmtd is actually offline, usually we'll never get to this point. Startup will
+		// hang earlier trying to determine the BeeGFS mount point. This is why we don't do any
+		// extra retry logic here, the client will already try to reconnect and return an error
+		// after some time. If we do get to this point it is more likely there is a configuration
+		// error (for example the wrong mgmtd is configured on BeeRemote). The exception is if the
+		// mgmtd just went offline and the client hasn't yet set targets probably-offline. But in
+		// that scenario its probably better to refuse to startup prompting investigation.
+		logger.Fatal("unable to initialize BeeGFS mgmtd client", zap.Error(err))
+	} else {
+		licenseDetails, err := mgmtdClient.VerifyLicense(ctx, FeatureLicenseStr)
+		mgmtdClient.Cleanup()
+		if licenseDetails != nil {
+			logger.Info("downloaded license from BeeGFS management service", licenseDetails...)
+		}
+		if err != nil {
+			logger.Fatal("unable to verify license", zap.Error(err))
+		}
+	}
 
 	// We'll use a wait group to coordinate shutdown of all components including
 	// verifying individual subscribers are disconnected:
@@ -174,7 +212,7 @@ Using environment variables:
 	configCtx, configCancel := context.WithCancel(context.Background())
 	go cfgMgr.Manage(configCtx, logger.Logger)
 
-	<-sigs // Block here and wait for a signal to shutdown.
+	<-ctx.Done() // Block here and wait for a signal to shutdown.
 	logger.Info("shutdown signal received, no longer accepting events from the metadata service and waiting for outstanding events to be sent to subscribers before exiting (send another SIGINT or SIGTERM to shutdown immediately)")
 	metaCancel() // When shutting down first stop adding events to the metadata buffer.
 
