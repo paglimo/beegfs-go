@@ -15,7 +15,7 @@ import (
 	"github.com/thinkparq/bee-remote/internal/job"
 	"github.com/thinkparq/bee-remote/internal/server"
 	"github.com/thinkparq/bee-remote/internal/workermgr"
-	"github.com/thinkparq/gobee/beegfs/mgmtd"
+	"github.com/thinkparq/gobee/beegfs/beegrpc"
 	"github.com/thinkparq/gobee/configmgr"
 	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/logger"
@@ -54,13 +54,14 @@ func main() {
 	pflag.Int("log.num-rotated-files", 5, "Maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
 	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management service.")
+	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a CA certificate (signed or self-signed) for server verification.")
+	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication.")
 	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
-	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a custom (e.g., self-signed) CA certificate for server verification.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
 	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
 	pflag.String("server.address", "127.0.0.1:9010", "The hostname:port where BeeRemote should listen for job requests.")
-	pflag.String("server.tls-certificate", "/etc/beegfs/cert.pem", "Path to a certificate file.")
-	pflag.String("server.tls-key", "/etc/beegfs/key.pem", "Path to a key file.")
+	pflag.String("server.tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of the BeeRemote gRPC server.")
+	pflag.String("server.tls-key-file", "/etc/beegfs/key.pem", "Path to a key file belonging to the certificate for the BeeRemote gRPC server.")
 	pflag.String("job.path-db-path", "/var/lib/beegfs/beeremotePathDB", "Path where the jobs database will be created/maintained.")
 	pflag.Int("job.path-db-cache-size", 4096, "How many entries from the database should be kept in-memory to speed up access. Entries are evicted first-in-first-out so actual utilization may be higher for any requests actively being modified.")
 	pflag.Int("job.request-queue-depth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
@@ -110,7 +111,6 @@ Using environment variables:
 	if !ok {
 		log.Fatalf("configuration manager returned invalid configuration (expected BeeRemote application configuration)")
 	}
-
 	if initialCfg.Developer.DumpConfig {
 		fmt.Printf("Dumping AppConfig and exiting...\n\n")
 		fmt.Printf("%+v\n", initialCfg)
@@ -157,11 +157,33 @@ Using environment variables:
 		cancel()
 	}()
 
+	// The mgmtd gRPC client expects the cert and auth file to already be read from their respective
+	// sources (files in this case) and provided as a byte slice.
+	var cert []byte
+	if initialCfg.Management.TLSCaCert != "" {
+		cert, err = os.ReadFile(initialCfg.Management.TLSCaCert)
+		if err != nil && pflag.Lookup("management.tls-ca-cert").Changed {
+			logger.Fatal("unable to read management TLS certificate", zap.Error(err))
+		}
+	}
+	var authSecret []byte
+	if !initialCfg.Management.AuthDisable {
+		authSecret, err = os.ReadFile(initialCfg.Management.AuthFile)
+		if err != nil {
+			logger.Fatal("unable to read management secret from auth file", zap.Error(err))
+		}
+	}
 	// The only thing currently requiring a mgmtd client is license verification. Immediately
 	// disconnect client after determining the license status to discourage reuse without first
 	// evaluating if a more robust strategy to manage long-term connections to the mgmtd is required
 	// for future use cases (such as downloading configuration from mgmtd).
-	if mgmtdClient, err := mgmtd.New(mgmtd.Config(initialCfg.Management)); err != nil {
+	if mgmtdClient, err := beegrpc.NewMgmtd(
+		initialCfg.Management.Address,
+		beegrpc.WithTLSDisable(initialCfg.Management.TLSDisable),
+		beegrpc.WithTLSDisableVerification(initialCfg.Management.TLSDisableVerification),
+		beegrpc.WithTLSCaCert(cert),
+		beegrpc.WithAuthSecret(authSecret),
+	); err != nil {
 		// If the mgmtd is actually offline, usually we'll never get to this point. Startup will
 		// hang earlier trying to determine the BeeGFS mount point. This is why we don't do any
 		// extra retry logic here, the client will already try to reconnect and return an error
