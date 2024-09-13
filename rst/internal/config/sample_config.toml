@@ -1,3 +1,9 @@
+[management]
+address = "127.0.0.1:8010"
+tls-ca-cert = "/etc/beegfs/cert.pem"
+tls-disable-verification = false
+tls-disable = false
+
 [[remote-storage-target]]
 id = "1"
 name = "beemac-minio"
@@ -39,10 +45,11 @@ s3.secret-key = "<SECRET_KEY>"
 id = "1"
 name = "beesync-01"
 type = "beesync"
-hostname = "localhost"
-port = 9011
-allow-insecure = false
-self-signed-tls-cert-path = "/etc/beegfs/cert.pem"
+address = "localhost:9011"
+tls-ca-cert = "/etc/beegfs/cert.pem"
+tls-ca-cert-must-exist = true
+tls-disable-verification = false
+tls-disable = false
 max-reconnect-back-off = 10
 disconnect-timeout = 30
 send-retries = 10
@@ -53,10 +60,11 @@ heartbeat-interval = 10
 # id = "2"
 # name = "beesync-02"
 # type = "beesync"
-# hostname = "localhost"
-# port = 9012
-# allow-insecure = false
-# self-signed-tls-cert-path = "/etc/beegfs/cert.pem"
+# address = "localhost:9012"
+# tls-ca-cert = "/etc/beegfs/cert.pem"
+# tls-ca-cert-must-exist = true
+# tls-disable-verification = false
+# tls-disable = false
 # max-reconnect-back-off = 60
 # disconnect-timeout = 30
 # send-retries = 10

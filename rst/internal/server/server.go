@@ -19,9 +19,9 @@ import (
 )
 
 type Config struct {
-	Address        string `mapstructure:"address"`
-	TlsCertificate string `mapstructure:"tls-certificate"`
-	TlsKey         string `mapstructure:"tls-key"`
+	Address     string `mapstructure:"address"`
+	TlsCertFile string `mapstructure:"tls-cert-file"`
+	TlsKeyFile  string `mapstructure:"tls-key-file"`
 }
 
 // Verify interfaces are satisfied:
@@ -50,8 +50,8 @@ func New(log *zap.Logger, config Config, jobMgr *job.Manager) (*BeeRemoteServer,
 	}
 
 	var grpcServerOpts []grpc.ServerOption
-	if s.TlsCertificate != "" && s.TlsKey != "" {
-		creds, err := credentials.NewServerTLSFromFile(s.TlsCertificate, s.TlsKey)
+	if s.TlsCertFile != "" && s.TlsKeyFile != "" {
+		creds, err := credentials.NewServerTLSFromFile(s.TlsCertFile, s.TlsKeyFile)
 		if err != nil {
 			return nil, err
 		}

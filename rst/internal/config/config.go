@@ -23,6 +23,7 @@ var _ configmgr.Configurable = &AppConfig{}
 
 type AppConfig struct {
 	MountPoint           string                      `mapstructure:"mount-point"`
+	Management           MgmtdConfig                 `mapstructure:"management"`
 	Server               server.Config               `mapstructure:"server"`
 	Log                  logger.Config               `mapstructure:"log"`
 	Job                  job.Config                  `mapstructure:"job"`
@@ -33,6 +34,15 @@ type AppConfig struct {
 		PerfProfilingPort int  `mapstructure:"perf-profiling-port"`
 		DumpConfig        bool `mapstructure:"dump-config"`
 	}
+}
+
+type MgmtdConfig struct {
+	Address                string `mapstructure:"address"`
+	TLSCaCert              string `mapstructure:"tls-ca-cert"`
+	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
+	TLSDisable             bool   `mapstructure:"tls-disable"`
+	AuthFile               string `mapstructure:"auth-file"`
+	AuthDisable            bool   `mapstructure:"auth-disable"`
 }
 
 // NewEmptyInstance() returns an empty AppConfig for ConfigManager to use with

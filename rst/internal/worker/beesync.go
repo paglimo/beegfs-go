@@ -2,8 +2,11 @@ package worker
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/thinkparq/gobee/beegfs/beegrpc"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -27,8 +30,20 @@ func newBeeSyncNode(baseNode *baseNode) Worker {
 }
 
 func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex.BulkUpdateWorkRequest) (bool, error) {
+	var cert []byte
 	var err error
-	n.conn, err = getGRPCClientConnection(n.config)
+	if n.config.TlsCaCert != "" {
+		cert, err = os.ReadFile(n.config.TlsCaCert)
+		if err != nil {
+			return false, fmt.Errorf("reading certificate file failed: %w", err)
+		}
+	}
+	n.conn, err = beegrpc.NewClientConn(
+		n.config.Address,
+		beegrpc.WithTLSCaCert(cert),
+		beegrpc.WithTLSDisableVerification(n.config.TLSDisableVerification),
+		beegrpc.WithTLSDisable(n.config.TlsDisable),
+	)
 	if err != nil {
 		return false, err
 	}
@@ -37,6 +52,14 @@ func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex
 
 	configureResp, err := n.client.UpdateConfig(n.rpcCtx, config)
 	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.
+			// Note this is just a hint to the user, other error conditions may have the same
+			// message so we don't adjust behavior (i.e., treat it as fatal).
+			if strings.Contains(st.Message(), "error reading server preface: EOF") {
+				return true, fmt.Errorf("%w (hint: check TLS is configured correctly on the client and server)", err)
+			}
+		}
 		return true, err
 	}
 
