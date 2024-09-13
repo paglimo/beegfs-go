@@ -12,9 +12,8 @@ var testConfig = []Config{
 		ID:   1,
 		Name: "bee-remote",
 		GrpcConfig: GrpcConfig{
-			Hostname:      "br-1",
-			Port:          "1234",
-			AllowInsecure: true,
+			Address:    "br-1:1234",
+			TlsDisable: true,
 		},
 	},
 	{
@@ -22,9 +21,8 @@ var testConfig = []Config{
 		ID:   2,
 		Name: "beegfs-mon",
 		GrpcConfig: GrpcConfig{
-			Hostname:          "bm-1",
-			Port:              "512312",
-			AllowInsecure:     false,
+			Address:           "bm-1:512312",
+			TlsDisable:        false,
 			DisconnectTimeout: 1,
 		},
 	},
@@ -48,9 +46,8 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 				Name: "bee-remote",
 				Type: "grpc",
 				GrpcConfig: GrpcConfig{
-					Hostname:      "br-1",
-					Port:          "1234",
-					AllowInsecure: true,
+					Address:    "br-1:1234",
+					TlsDisable: true,
 				},
 			},
 			State: State{
@@ -58,9 +55,8 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 			},
 			Interface: &GRPCSubscriber{
 				GrpcConfig: GrpcConfig{
-					Hostname:          "br-1",
-					Port:              "1234",
-					AllowInsecure:     true,
+					Address:           "br-1:1234",
+					TlsDisable:        true,
 					DisconnectTimeout: 30,
 				},
 			},
@@ -70,9 +66,8 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 				Name: "beegfs-mon",
 				Type: "grpc",
 				GrpcConfig: GrpcConfig{
-					Hostname:          "bm-1",
-					Port:              "512312",
-					AllowInsecure:     false,
+					Address:           "bm-1:512312",
+					TlsDisable:        false,
 					DisconnectTimeout: 1,
 				},
 			},
@@ -81,9 +76,8 @@ func TestNewSubscribersFromConfig(t *testing.T) {
 			},
 			Interface: &GRPCSubscriber{
 				GrpcConfig: GrpcConfig{
-					Hostname:          "bm-1",
-					Port:              "512312",
-					AllowInsecure:     false,
+					Address:           "bm-1:512312",
+					TlsDisable:        false,
 					DisconnectTimeout: 1,
 				},
 			},

@@ -24,6 +24,7 @@ var _ subscribermgr.Configurer = &AppConfig{}
 type AppConfig struct {
 	CfgFile     string                      `mapstructure:"cfg-file"`
 	Log         logger.Config               `mapstructure:"log"`
+	Management  MgmtdConfig                 `mapstructure:"management"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
 	Metadata    metadata.Config             `mapstructure:"metadata"`
 	Subscribers []subscriber.Config         `mapstructure:"subscriber"`
@@ -31,6 +32,15 @@ type AppConfig struct {
 		PerfProfilingPort int  `mapstructure:"perf-profiling-port"`
 		DumpConfig        bool `mapstructure:"dump-config"`
 	}
+}
+
+type MgmtdConfig struct {
+	Address                string `mapstructure:"address"`
+	TLSCaCert              string `mapstructure:"tls-ca-cert"`
+	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
+	TLSDisable             bool   `mapstructure:"tls-disable"`
+	AuthFile               string `mapstructure:"auth-file"`
+	AuthDisable            bool   `mapstructure:"auth-disable"`
 }
 
 // The GetXConfig() functions are used by components that support dynamic configuration updates.
@@ -94,17 +104,6 @@ func (c *AppConfig) ValidateConfig() error {
 
 	// TODO: Consider moving validation checks into the respective packages where the config is defined.
 	var multiErr types.MultiError
-
-	switch c.Log.Type {
-	case logger.LogFile:
-		if c.Log.File == "" {
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("log.type is set to 'logfile' but no log.file was specified"))
-		}
-	case logger.StdOut:
-	case logger.Syslog:
-	default:
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("provided log.type is invalid: %s (valid types: %s)", c.Log.Type, logger.SupportedLogTypes))
-	}
 
 	if !(c.Log.Level == 1 || c.Log.Level == 3 || c.Log.Level == 5) {
 		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the provided log.level is invalid (must be 1, 3, or 5)"))

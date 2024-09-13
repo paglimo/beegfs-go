@@ -20,6 +20,12 @@ level = 3
 max-size = 1000
 num-rotated-files = 5
 
+[management]
+address = "127.0.0.1:8010"
+tls-ca-cert = "/etc/beegfs/cert.pem"
+tls-disable-verification = false
+tls-disable = false
+
 [metadata]
 event-log-target = '/run/beegfs/eventlog'
 event-buffer-size = 10000000
@@ -39,21 +45,21 @@ poll-frequency = 1
 # id = 1
 # name = 'subscriber-1'
 # type = 'grpc'
-# grpc-hostname = 'localhost'
-# grpc-port = '50051'
-# grpc-allow-insecure = false
+# grpc-address = 'localhost:50051'
+# grpc-tls-disable-verification = false
+# grpc-tls-disable = false
+# grpc-tls-ca-cert = '/etc/beegfs/cert.pem'
 # grpc-disconnect-timeout = 30
-# grpc-self-signed-tls-cert-path = '/etc/beegfs/cert.pem'
 
 # [[subscriber]]
 # id = 2
 # name = 'subscriber2'
 # type = 'grpc'
-# grpc-hostname = 'localhost'
-# grpc-port = '50052'
-# grpc-allow-insecure = false
+# grpc-address = 'localhost:50052'
+# grpc-tls-disable-verification = false
+# grpc-tls-disable = false
+# grpc-tls-ca-cert = '/etc/beegfs/cert.pem'
 # grpc-disconnect-timeout = 30
-# grpc-self-signed-tls-cert-path = '/etc/beegfs/cert.pem'
 
 
 #
@@ -106,13 +112,38 @@ poll-frequency = 1
 # Maximum number old file(s) to keep when log.max-size is reached and the log
 # is rotated.
 
+#
+# --- Section 3.2: [Management Settings] ---
+#
+
+# Configuration for the BeeGFS management service must be specified under 
+# [management]. This configuration is used to verify licensing and cannot 
+# be updated after the application is started.
+
+# [address]
+# The IP address and gRPC port for the BeeGFS management service. 
+
+# [tls-disable-verification] 
+# Set to true to skip verifying the management TLS certificate. This allows
+# traffic to be encrypted, but puts the client at risk of a man-in-the-middle
+# attack since it cannot verify the management service is the expected one.
+
+# [tls-ca-cert]
+# Specify the path to a CA certificate (signed or self-signed) that should
+# be used to verify the BeeGFS management service.
+
+# [tls-disable]
+# Set to true to send all gRPC messages including potentially sensitive
+# information about file paths/names inside the file system will be sent in
+# clear text over the network.
 
 #
-# --- Section 3.2: [Metadata Settings] ---
+# --- Section 3.3: [Metadata Settings] ---
 #
 
-# Configuration for metadata must be specified under [metadata]. This
-# configuration cannot be updated after the application is started.
+# Configuration for the BeeGFS metadata service BeeWatch is listening to
+# must be specified under [metadata]. This configuration cannot be updated 
+# after the application is started.
 
 # [event-log-target]
 # The path where the BeeGFS metadata service expected to log events to a unix
@@ -133,7 +164,7 @@ poll-frequency = 1
 
 
 #
-# --- Section 3.3: [Handler Settings] ---
+# --- Section 3.4: [Handler Settings] ---
 #
 
 # Configuration for subscriber handlers must be specified under [handler]. This
@@ -189,11 +220,8 @@ poll-frequency = 1
 # The configuration options in this section must be specified under each
 # [[subscriber]] when the subscriber's type is set to 'grpc'.
 
-# [grpc-hostname]
-# The IP address or hostname of the subscriber. No default.
-
-# [grpc-port]
-# What port the subscriber is listening on. No default.
+# [grpc-address]
+# The IP address or hostname and port of the subscriber. No default.
 
 # [grpc-disconnect-timeout] 
 # When a local disconnect is requested, how long to wait (in seconds) for the
@@ -213,10 +241,16 @@ poll-frequency = 1
 # running BeeWatch, no additional steps will be required. If this is not the
 # case there are a few options: 
 
-# [grpc-self-signed-tls-cert-path]
-# Specify the path to a self-signed certificate.
+# [grpc-tls-ca-cert]
+# Specify the path to a CA certificate (signed or self-signed) that should
+# be used to verify the subscriber's gRPC server.
 
-# [grpc-allow-insecure] 
+# [grpc-tls-disable-verification] 
+# Set to true to skip verifying the subscribers TLS certificate. This allows
+# traffic to be encrypted, but puts the client at risk of a man-in-the-middle
+# attack since it cannot verify the subscriber is the expected one.
+
+# [grpc-tls-disable] 
 # Set to true to send all gRPC messages including potentially sensitive
 # information about file paths/names inside the file system will be sent in
 # clear text over the network.
