@@ -1,29 +1,21 @@
 # force the usage of /bin/bash instead of /bin/sh
 SHELL := /bin/bash
 
-# Name of the binary to build
-CMD = bee-remote
+# Trigger a "local-only" release using goreleaser to generate OS packages that can be used locally
+# (Ref: https://goreleaser.com/quick-start/ and https://goreleaser.com/customization/snapshots/):
+.PHONY: package-all
+package-all:
+	@command -v goreleaser >/dev/null 2>&1 || { \
+		echo >&2 "ERROR: goreleaser is not installed, it can be installed with 'go install github.com/goreleaser/goreleaser/v2@latest' (see https://goreleaser.com/install/#install for additional options)."; \
+		exit 1; \
+	}
+	@goreleaser --clean --snapshot --skip sign
+	@echo "INFO: OS packages and other artifacts are available under dist/."
 
-# Variables that can be overridden: 
-BUILD_DIR ?= build/dist/opt/beegfs/sbin
-
-# Build Targets
-all: build generate-notices
-
-# Use the same strategy as BeeGFS to generate a $VERSION for the binary and
-# package. The version will look like "1.0.0" if were on a commit tagged
-# "1.0.0". Otherwise it will generate a version like "1.0.0-3-g<COMMIT HASH>"
-# where "3" is the number of commits ahead of tag 1.0.0 and the <COMMIT HASH> is
-# the first ten characters of the commit hash. The only difference is appending
-# "-dev" if the current commit is dirty (i.e., has uncommitted changes).
-.PHONY: build
-build: check-go-version
-	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10 --dirty="-dev"))
-	@echo "Building $* version $(VERSION)"
-	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$(CMD) -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$(CMD) cmd/$(CMD)/main.go
-	chmod 755 $(BUILD_DIR)/$*
-
-build: $(CMDS:%=build-%)
+# Generate NOTICE file.
+.PHONY: generate-notices
+generate-notices:
+	@go-licenses report ./... --template build/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets:
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -33,10 +25,21 @@ build: $(CMDS:%=build-%)
 .PHONY: test
 test: check-go-version check-gofmt check-linters check-go-tidy test-unit check-vulnerabilities check-licenses
 
+# This check is primarily meant to ensure when the Go version in go.mod changes, CI workflows are
+# also updated to use this version of Go.
 .PHONY: check-go-version
 check-go-version:
 	@echo "Checking Go version..."
-	@./hack/check-go-version.sh
+	@{ \
+		GO_MOD_VERSION=go$$(grep '^go ' go.mod | awk '{print $$2}'); \
+		INSTALLED_VERSION=$$(go version | { read _ _ ver _; echo $${ver}; }); \
+		if [ "$$INSTALLED_VERSION" = "$$GO_MOD_VERSION" ]; then \
+			echo "INFO: go.mod requests ($$GO_MOD_VERSION) and the build environment has $$INSTALLED_VERSION."; \
+		else \
+			echo "ERROR: go.mod requests $$GO_MOD_VERSION but the build environment has $$INSTALLED_VERSION."; \
+			exit 1; \
+		fi \
+	} || { echo >&2 "ERROR: determining version of Go failed"; exit 1; }
 
 # Verify that the code is formatted using gofmt: 
 # Don't run on the vendor directory to avoid false positives.
@@ -75,10 +78,6 @@ check-go-tidy: tidy
 		exit 1; \
 	fi
 
-.PHONY: generate-notices
-generate-notices:
-	@go-licenses report ./cmd/$(CMD) --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
-
 # For details on what licenses are disallowed see
 # https://github.com/google/go-licenses#check 
 #
@@ -115,13 +114,6 @@ install-tools:
 	go install honnef.co/go/tools/cmd/staticcheck@latest
 	go install github.com/google/go-licenses@v1.6.0
 	go install golang.org/x/vuln/cmd/govulncheck@latest
-
-# Helper targets:
-.PHONY: clean
-clean:
-	rm -f bin/*
-	rm -f build/dist/opt/beegfs/sbin/*
-	rm -rf $(PACKAGE_DIR)
 
 .PHONY: tidy
 tidy :
