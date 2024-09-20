@@ -1,0 +1,17 @@
+[Unit]
+Description=BeeGFS Remote (Remote Storage Targets Coordinator)
+Documentation=http://www.beegfs.com/content/documentation/
+After=remote-fs.target beegfs-client.service
+Wants=basic.target
+
+[Service]
+Type=simple
+ExecStart=/opt/beegfs/sbin/beegfs-remote --cfg-file=/etc/beegfs/beegfs-remote.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# The default value here is 2x the 30s default for the worker.disconnect-timeout setting to ensure
+# enough time is allowed for workers to disconnect before shutting down.
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

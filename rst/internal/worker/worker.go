@@ -160,7 +160,7 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.UpdateConfigRequest, 
 	defer n.nodeMu.Unlock()
 
 	// Ticker used to control the interval at which heartbeat requests are send to worker nodes.
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(time.Duration(n.config.HeartbeatInterval) * time.Second)
 	defer ticker.Stop()
 	// Set to true if the handler was stopped.
 	done := false

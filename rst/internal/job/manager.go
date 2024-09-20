@@ -32,7 +32,7 @@ func init() {
 }
 
 type Config struct {
-	PathDBPath          string `mapstructure:"path-db-path"`
+	PathDBPath          string `mapstructure:"path-db"`
 	RequestQueueDepth   int    `mapstructure:"request-queue-depth"`
 	MinJobEntriesPerRST int    `mapstructure:"min-job-entries-per-rst"`
 	MaxJobEntriesPerRST int    `mapstructure:"max-job-entries-per-rst"`
