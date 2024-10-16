@@ -27,7 +27,7 @@ const (
 	envVarPrefix = "BEEREMOTE_"
 	// Note the concept of a BeeRemote nodeID will be used to support multiple BeeRemote nodes in the future.
 	nodeID            = "0"
-	FeatureLicenseStr = "io.beegfs.flex"
+	FeatureLicenseStr = "io.beegfs.rst"
 )
 
 // Set by the build process using ldflags.
