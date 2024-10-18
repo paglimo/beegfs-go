@@ -1,71 +1,19 @@
 # force the usage of /bin/bash instead of /bin/sh
 SHELL := /bin/bash
 
-# List of commands to build:
-CMDS = bee-watch
-
-# Variables that can be overridden: 
-BUILD_DIR ?= build/dist/opt/beegfs/sbin
-IMAGE_NAME ?= ghcr.io/thinkparq/bee-watch
-PACKAGE_DIR ?= packages/
-PACKAGE_DEB_OUT ?= $(PACKAGE_DIR)deb
-PACKAGE_RPM_OUT ?= $(PACKAGE_DIR)rpm
-PACKAGE_DEB_BUILD ?= $(PACKAGE_DIR)debbuild
-PACKAGE_RPM_BUILD ?= $(PACKAGE_DIR)rpmbuild
-
-# Build Targets
-all: build generate-notices
-
-.PHONY: build-% build clean generate-notices
-
-# Use the same strategy as BeeGFS to generate a $VERSION for the binary and
-# package. The version will look like "1.0.0" if were on a commit tagged
-# "1.0.0". Otherwise it will generate a version like "1.0.0-3-g<COMMIT HASH>"
-# where "3" is the number of commits ahead of tag 1.0.0 and the <COMMIT HASH> is
-# the first ten characters of the commit hash. The only difference is appending
-# "-dev" if the current commit is dirty (i.e., has uncommitted changes).
-$(CMDS:%=build-%): build-%: check-go-version
-	$(eval VERSION := $(shell git describe --tags --match '*.*' --abbrev=10 --dirty="-dev"))
-	@echo "Building $* version $(VERSION)"
-	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.binaryName=$* -X main.commit=$(shell git rev-parse HEAD) -X main.buildTime=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ')" -o $(BUILD_DIR)/$* cmd/$*/main.go
-	chmod 755 $(BUILD_DIR)/$*
-
-build: $(CMDS:%=build-%)
+# Trigger a "local-only" release using goreleaser to generate OS packages that can be used locally
+# (Ref: https://goreleaser.com/quick-start/ and https://goreleaser.com/customization/snapshots/):
+.PHONY: package-all
+package-all:
+	@command -v goreleaser >/dev/null 2>&1 || { \
+		echo >&2 "ERROR: goreleaser is not installed, it can be installed with 'go install github.com/goreleaser/goreleaser/v2@latest' (see https://goreleaser.com/install/#install for additional options)."; \
+		exit 1; \
+	}
+	@goreleaser --clean --snapshot --skip sign,docker
+	@echo "INFO: OS packages and other artifacts are available under dist/."
 
 generate-notices:
-	@go-licenses report ./cmd/bee-watch --template hack/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
-
-.PHONY: package-docker
-package-docker: build
-	docker build -t $(IMAGE_NAME):$(VERSION) . --build-arg BUILD_DIR=$(BUILD_DIR)
-
-.PHONY: package-deb 
-package-deb: build
-	@! [ -d '$(PACKAGE_DEB_BUILD)' ] || { echo "Cannot use $(PACKAGE_DEB_BUILD) as the PACKAGE_DEB_BUILD directory (already exists). Please run `make clean` or choose a new directory for PACKAGE_DIR." >&2; false; }
-	@echo "Building Debian packages for version $(VERSION)"
-	@mkdir -p $(PACKAGE_DEB_BUILD)/DEBIAN
-	@cp -r build/dist/* $(PACKAGE_DEB_BUILD)
-	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/DEBIAN/control.template > $(PACKAGE_DEB_BUILD)/DEBIAN/control
-	@sed 's/VERSION_PLACEHOLDER/$(VERSION)/' build/DEBIAN/changelog.template >  $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
-	@sed -i -e 's/DATE_PLACEHOLDER/$(shell date -R)/' $(PACKAGE_DEB_BUILD)/DEBIAN/changelog
-	@mkdir -p $(PACKAGE_DEB_OUT)
-	@fakeroot chown root:root -R $(PACKAGE_DEB_BUILD)
-	@fakeroot dpkg-deb --build $(PACKAGE_DEB_BUILD)/ $(PACKAGE_DEB_OUT)
-	@rm -rf $(PACKAGE_DEB_BUILD)
-
-# RPMs don't allow hypens, replace with an underscore the same way we do for BeeGFS.
-# We don't use an epoch as this typically only applies if we need to override an older versioning scheme.
-.PHONY: package-rpm
-package-rpm: build
-	@! [ -d '$(PACKAGE_RPM_BUILD)' ] || { echo "Cannot use $(PACKAGE_RPM_BUILD) as the PACKAGE_RPM_BUILD directory (already exists). Please run `make clean` or choose a new directory for PACKAGE_DIR." >&2; false; }
-	$(eval BEEGFS_VERSION_RPM := $(subst -,_,$(VERSION)))
-	@echo "Building RPM packages for version $(BEEGFS_VERSION_RPM)"
-	@mkdir -p $(PACKAGE_RPM_BUILD)/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-	@tar czvf $(PACKAGE_RPM_BUILD)/SOURCES/beewatch.tar.gz --exclude DEBIAN -C build/ dist/
-	@sed 's/VERSION_PLACEHOLDER/$(BEEGFS_VERSION_RPM)/' build/beewatch.spec.template > $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec
-	@sed -i -e 's/DATE_PLACEHOLDER/$(shell date "+%a %b %d %Y")/' $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec
-	@rpmbuild --clean -bb $(PACKAGE_RPM_BUILD)/SPECS/beewatch.spec --define '_topdir $(abspath $(PACKAGE_RPM_BUILD))' --define "_rpmdir $(abspath $(PACKAGE_RPM_OUT))"
-	@rm -rf $(PACKAGE_RPM_BUILD)
+	@go-licenses report ./cmd/bee-watch --template build/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets: 
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -75,9 +23,22 @@ package-rpm: build
 .PHONY: test
 test: check-go-version check-gofmt check-linters check-vulnerabilities test-unit check-go-tidy check-licenses check-go-vendor
 
+# This check is primarily meant to ensure when the Go version in go.mod changes, CI workflows are
+# also updated to use this version of Go.
+.PHONY: check-go-version
 check-go-version:
 	@echo "Checking Go version..."
-	@./hack/check-go-version.sh
+	@{ \
+		GO_MOD_VERSION=go$$(grep '^go ' go.mod | awk '{print $$2}'); \
+		INSTALLED_VERSION=$$(go version | { read _ _ ver _; echo $${ver}; }); \
+		if [ "$$INSTALLED_VERSION" = "$$GO_MOD_VERSION" ]; then \
+			echo "INFO: go.mod requests ($$GO_MOD_VERSION) and the build environment has $$INSTALLED_VERSION."; \
+		else \
+			echo "ERROR: go.mod requests $$GO_MOD_VERSION but the build environment has $$INSTALLED_VERSION."; \
+			exit 1; \
+		fi \
+	} || { echo >&2 "ERROR: determining version of Go failed"; exit 1; }
+
 
 # Verify that the code is formatted using gofmt: 
 # Don't run on the vendor directory to avoid false positives.
@@ -156,13 +117,7 @@ install-tools:
 	go install honnef.co/go/tools/cmd/staticcheck@latest
 	go install github.com/google/go-licenses@v1.6.0
 	go install golang.org/x/vuln/cmd/govulncheck@latest
-	sudo apt install rpm
 
-# Helper targets:
-clean:
-	rm -f bin/*
-	rm -f build/dist/opt/beegfs/sbin/*
-	rm -rf $(PACKAGE_DIR)
-
+.PHONY: tidy
 tidy :
 	@go mod tidy

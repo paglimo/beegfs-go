@@ -1,7 +1,7 @@
 BeeWatch <!-- omit in toc -->
 ========
-[![Build, Test, and
-Publish](https://github.com/ThinkParQ/bee-watch/actions/workflows/build-test-publish.yaml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/build-test-publish.yaml)
+[![Checks](https://github.com/ThinkParQ/bee-watch/actions/workflows/checks.yml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/checks.yml)
+[![Release](https://github.com/ThinkParQ/bee-watch/actions/workflows/release.yml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/release.yml)
 
 # Contents <!-- omit in toc -->
 
@@ -58,8 +58,8 @@ is only ever sent to a subscriber once.
 
 The following steps walk through installing and configuring BeeWatch using an
 Debian or RPM package. By default when installed using a package BeeWatch will
-use the default configuration file installed at `/etc/beegfs/bee-watch.toml`
-that will setup BeeWatch to log to a file at `/var/log/beegfs/bee-watch.log` and
+use the default configuration file installed at `/etc/beegfs/beegfs-watch.toml`
+that will setup BeeWatch to log to a file at `/var/log/beegfs/beegfs-watch.log` and
 listen for Metadata events at `/run/beegfs/eventlog`. This section will use the
 default configuration to initially start BeeWatch, then show how to configure
 subscribers without restarting BeeWatch:
@@ -67,20 +67,15 @@ subscribers without restarting BeeWatch:
 1. On the BeeGFS metadata server where you want to use BeeWatch to forward file
    system modification events, download the appropriate package for your Linux
    distribution. Eventually packages will be made available through the BeeGFS
-   package repositories but until then there are two options to use a package: 
-   1. A GitHub actions workflow will automatically build packages for PRs,
-      merges to the main branch, or when a version is tagged. These packages are
-      available for download as an artifact on the [workflow
-      run](https://github.com/ThinkParQ/bee-watch/actions). Note currently
-      artifacts are only retained for 90 days before they are purged based on
-      the ThinkParQ GitHub organization settings.
-   2. Clone the GitHub repository and [build the packages
-      yourself](build/README.md).
+   package repositories but until then there are two options to use a package:
+   1. Pre-built packages are available under
+      [releases](https://github.com/ThinkParQ/bee-watch/releases).
+   2. Clone the GitHub repository and [build the packages yourself](build/README.md).
 
 2. Install the selected package using your package manager. For example on
-   Ubuntu run: `sudo dpkg -i bee-watch_0.0.2_amd64.deb`.
+   Ubuntu run: `sudo dpkg -i beegfs-watch-8.0.0-alpha.1-linux.amd64.deb`.
 
-3. Start the BeeWatch service with: `systemctl start bee-watch`.
+3. Start the BeeWatch service with: `systemctl start beegfs-watch`.
 
 4. Update the BeeGFS Metadata configuration so `sysFileEventLogTarget` points at
    the same path as the BeeWatch `event-log-target` setting (by default
@@ -91,17 +86,17 @@ subscribers without restarting BeeWatch:
 5. On all BeeGFS clients configure the `sysFileEventLogMask` parameter to include
    the event types you are interested in, then remount BeeGFS.
 
-6. In the `/etc/beegfs/bee-watch.toml` file configure one or more subscribers
+6. In the `/etc/beegfs/beegfs-watch.toml` file configure one or more subscribers
    following the inline directions. 
 
-7. Reload the configuration by running `systemctl reload bee-watch`. 
+7. Reload the configuration by running `systemctl reload beegfs-watch`. 
 
-8. Verify the new configuration was applied successfully by looking at the
-   BeeWatch log at `/var/log/beegfs/bee-watch.log`. 
+8. Verify the new configuration was applied successfully by looking at the logs using `journalctl -u
+   beegfs-watch`.
 
-9.  If you want to uninstall/cleanup stop BeeWatch with `systemctl stop
-   bee-watch` then use the package manager to remove it. For example on Ubuntu
-   run `sudo dpkg -r bee-watch`. 
+9.  If you want to uninstall/cleanup stop BeeWatch with `systemctl stop beegfs-watch` then use the
+   package manager to remove it. For example on Ubuntu run `sudo dpkg -r beegfs-watch` to uninstall
+   the service and binaries or `sudo dpkg --purge beegfs-watch` to also remove configuration files.
 
 ## Using Container Images
 
@@ -170,7 +165,7 @@ docker run \
     -v ./build/dist/etc/beegfs:/etc/beegfs \
     -v /run/beegfs:/run/beegfs \
     -e BEEWATCH_METADATA__EVENT-LOG-TARGET=/run/beegfs/eventlog \
-    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/bee-watch.toml --log.type=stdout
+    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml --log.type=stdout
 ```
 > The default configuration file sets the log.type to "logfile", but typically
 containers are setup to log to stdout which is why we override it here using a
@@ -213,15 +208,15 @@ For BeeWatch to start it requires:
 
 To configure and start BeeWatch:
 
-1. Create an empty TOML file: `touch scratch/bee-watch.toml`
+1. Create an empty TOML file: `touch scratch/beegfs-watch.toml`
 2. Start BeeWatch: `go run cmd/bee-watch/main.go
-   --metadata.event-log-target=<PATH> --cfg-file=scratch/bee-watch.toml`
+   --metadata.event-log-target=<PATH> --cfg-file=scratch/beegfs-watch.toml`
    1. At this point BeeWatch will begin buffering any events it receives from
       the metadata service until it reaches the default
       `--metadata.event-buffer-size`, then the oldest events will start to be
       dropped. This intentional default behavior keeps as many historical events
       as possible so subscribers can be added after BeeWatch has started.
-3. Add a subscriber to the `bee-watch.toml` file. Note this subscriber doesn't
+3. Add a subscriber to the `beegfs-watch.toml` file. Note this subscriber doesn't
    actually have to exist if you just want to experiment with BeeWatch (it will
    simply log unable to connect):
 ```toml
@@ -444,7 +439,7 @@ configuration is immutable. To update the configuration first make the
 appropriate changes to the configuration file then send the BeeWatch process a
 signal hang up (SIGUP). For example by running `kill -HUP <PID>` where PID is
 the process ID from `pgrep`. If BeeWatch was started using systemd then you can
-run `systemctl reload bee-watch`.
+run `systemctl reload beegfs-watch`.
 
 # Shutting Down BeeWatch 
 

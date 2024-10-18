@@ -1,0 +1,93 @@
+version: 2
+
+# These before hooks shouldn't be necessary because checks/testing should have already run in a
+# separate workflow on whatever commit is tagged for release. If it was deemed necessary we could
+# also run some checks here as well.
+# before:
+#   hooks:
+#     - make install-tools
+#     - make test
+
+builds:
+  - id: beegfs_watch
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.binaryName=beegfs-watch
+      - -X main.commit={{ .Commit }}
+      - -X main.buildTime={{ .Date }}
+    binary: beegfs-watch
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: cmd/bee-watch/main.go
+
+nfpms:
+  - id: beegfs_watch
+    package_name: beegfs-watch
+    file_name_template: "beegfs-watch-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
+    vendor: "ThinkparQ GmbH"
+    homepage: https://www.beegfs.io
+    maintainer: BeeGFS Maintainers <packages@beegfs.com>
+    description: BeeGFS Watch
+    provides:
+      - beegfs-watch
+    license: BeeGFS EULA
+    formats:
+      - rpm
+      - deb
+    bindir: /opt/beegfs/sbin/
+    contents:
+      - src: /opt/beegfs/sbin/beegfs-watch
+        dst: /usr/sbin/beegfs-watch
+        type: "symlink"
+      - src: build/beegfs-watch.service
+        dst: /usr/lib/systemd/system/beegfs-watch.service
+        type: config
+      - src: build/beegfs-watch.toml
+        dst: /etc/beegfs/beegfs-watch.toml
+        type: config
+      - src: NOTICE.md
+        dst: /usr/share/doc/beegfs-watch/NOTICE.md
+      - src: LICENSE.md
+        dst: /usr/share/doc/beegfs-watch/LICENSE.md
+
+# TODO (https://github.com/ThinkParQ/bee-watch/issues/31): Add support for building multi-platform
+# (amd64+arm64) images using GitHub Actions.
+dockers:
+  - image_templates: ["ghcr.io/thinkparq/beegfs-watch:{{ .Version }}"]
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - --label=org.opencontainers.image.title="beegfs-watch"
+      - --label=org.opencontainers.image.description="BeeGFS file system modification event watcher"
+      - --label=org.opencontainers.image.url=https://github.com/thinkparq/bee-watch
+      - --label=org.opencontainers.image.source=https://github.com/thinkparq/bee-watch
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=Proprietary
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+signs:
+  # Note we could optionally limit what artifacts are signed instead of specifying 'all'. For example
+  # only signing the checksums file is common.
+  - artifacts: checksum
+    cmd: gpg2
+    args:
+      - "--batch"
+      - "-u"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"

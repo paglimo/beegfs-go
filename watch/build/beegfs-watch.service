@@ -6,7 +6,7 @@ Wants=basic.target
 
 [Service]
 Type=simple
-ExecStart=/opt/beegfs/sbin/bee-watch --cfgFile=/etc/beegfs/bee-watch.toml
+ExecStart=/opt/beegfs/sbin/beegfs-watch --cfg-file=/etc/beegfs/beegfs-watch.toml
 ExecReload=/bin/kill -HUP $MAINPID
 
 # When we shutdown we first disconnect the metadata socket then try to send all
