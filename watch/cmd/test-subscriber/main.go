@@ -266,7 +266,6 @@ type MockDB struct {
 	events         chan *bw.Event
 	lastSeqID      uint64
 	lastDroppedSeq uint64
-	lastMissedSeq  uint64
 }
 
 func newDB(ctx context.Context, log *zap.Logger) *MockDB {
@@ -336,15 +335,15 @@ func (db *MockDB) Run(wg *sync.WaitGroup) {
 	dataCleaned := strings.TrimSpace(string(data))
 
 	if dataCleaned != "" {
-		_, err := fmt.Sscanf(dataCleaned, "%d,%d,%d", &db.lastSeqID, &db.lastDroppedSeq, &db.lastMissedSeq)
+		_, err := fmt.Sscanf(dataCleaned, "%d,%d", &db.lastSeqID, &db.lastDroppedSeq)
 		if err != nil {
 			db.log.Fatal("unable to parse file", zap.Error(err))
 		} else {
-			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSeq", db.lastMissedSeq))
+			db.log.Info("using sequence IDs from file", zap.Any("lastSeqID", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq))
 		}
 	} else {
 		db.log.Info("resetting sequence IDs (file not found or empty)", zap.Any("mockDBFilename", *mockDBFilename))
-		db.lastSeqID, db.lastDroppedSeq, db.lastMissedSeq = 0, 0, 0
+		db.lastSeqID, db.lastDroppedSeq = 0, 0
 	}
 
 	if *logIncomingEventRate {
@@ -377,15 +376,10 @@ readEvents:
 				db.log.Error("warning: metadata service dropped event(s)", zap.Any("lastDroppedSeq", db.lastDroppedSeq), zap.Any("currentDroppedSeq", event.DroppedSeq))
 				db.lastDroppedSeq = event.DroppedSeq
 			}
-
-			if event.MissedSeq != db.lastMissedSeq {
-				db.log.Error("warning: metadata service missed event(s)", zap.Any("lastMisedSeq", db.lastMissedSeq), zap.Any("currentMissedSeq", event.MissedSeq))
-				db.lastMissedSeq = event.MissedSeq
-			}
 		}
 	}
 
-	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq), zap.Any("lastMissedSequence", db.lastMissedSeq))
+	db.log.Info("writing out sequence IDs and shutting down", zap.Any("lastSeq", db.lastSeqID), zap.Any("lastDroppedSequence", db.lastDroppedSeq))
 
 	file, err = os.OpenFile(*mockDBFilename, os.O_RDWR|os.O_TRUNC, 0755)
 	if err != nil {
@@ -394,7 +388,7 @@ readEvents:
 
 	defer file.Close()
 
-	_, err = file.WriteString(fmt.Sprintf("%d,%d,%d", db.lastSeqID, db.lastDroppedSeq, db.lastMissedSeq))
+	_, err = file.WriteString(fmt.Sprintf("%d,%d", db.lastSeqID, db.lastDroppedSeq))
 	if err != nil {
 		db.log.Error("error writing out updated sequence IDs", zap.Error(err))
 	}

@@ -7,132 +7,107 @@ import (
 	pb "github.com/thinkparq/protobuf/go/beewatch"
 )
 
-var (
-	lenStart  uint32 = 28
-	lenEnd    uint32 = 28 + 4
-	strLength uint32
-)
-
-const (
-	enableLengthBasedStringDeserialization = true
-)
-
 // deserialize takes a buffer and the number of bytes to deserialize from that buffer into an event.
-// This allows it to work with a reusable fixed sized buffer to minimize allocations.
-// If successful it will return a pointer to a new event that should be reused until sent to all subscribers.
-// The the format of the deserialized event is defined as part of the external API at api/proto.
+// This allows it to work with a reusable fixed sized buffer to minimize allocations. If successful
+// it will return a pointer to a new event that should be reused until sent to all subscribers. The
+// the format of the deserialized event is defined as part of the external API at:
+// https://github.com/ThinkParQ/protobuf/blob/main/proto/beewatch.proto.
 func deserialize(buf []byte, numBytes int) (*pb.Event, error) {
 
 	var event pb.Event
-
+	// If for some reason we received a packet that doesn't contain enough bytes for a header (28) we should bail out.
 	if numBytes < 28 {
-		// If for some reason we received a packet that doesn't contain enough bytes for a header we should bail out.
 		return &event, fmt.Errorf("unable to deserialize any packet fields because the provided buffer was smaller than the expected header size (packet size: %d)", numBytes)
 	}
 
-	// Integer values are easy to deserialize based on their sizes:
-	event.FormatVersionMajor = uint32(binary.LittleEndian.Uint16(buf[0:2]))
-	event.FormatVersionMinor = uint32(binary.LittleEndian.Uint16(buf[2:4]))
-	event.Size = binary.LittleEndian.Uint32(buf[4:8])
+	// Deserialize the header to determine the event version:
+	major := binary.LittleEndian.Uint16(buf[0:2])
+	minor := binary.LittleEndian.Uint16(buf[2:4])
+	size := binary.LittleEndian.Uint32(buf[4:8])
+
+	if numBytes < int(size) {
+		// If the size parsed from the packet is smaller than bytes read into the buffer we should
+		// bail, otherwise stale data in the buffer may be interpreted as fields for this event.
+		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", size, numBytes)
+	}
+
 	event.DroppedSeq = binary.LittleEndian.Uint64(buf[8:16])
-	event.MissedSeq = binary.LittleEndian.Uint64(buf[16:24])
-	event.Type = pb.Event_Type(binary.LittleEndian.Uint32(buf[24:28]))
-
-	if event.FormatVersionMajor == 1 && event.FormatVersionMinor == 0 {
-		// Starting in BeeGFS v8 new event types were added and events now start at 1 with zero
-		// representing an invalid event. This allows backwards compatibility with the 1.0 events.
-		event.Type = event.Type + 1
-		if event.Type > 12 {
-			return &event, fmt.Errorf("received unknown event type for event version (major version: %d, minor version: %d): %d", event.GetFormatVersionMajor(), event.GetFormatVersionMinor(), event.Type)
-		}
-	} else if event.FormatVersionMajor != 2 || event.FormatVersionMinor != 0 {
-		return &event, fmt.Errorf("received unsupported event version (major version: %d, minor version: %d)", event.GetFormatVersionMajor(), event.GetFormatVersionMinor())
-	} else if event.Type == 0 {
-		// As of format version 2.0 we treat event type zero as invalid.
-		return &event, fmt.Errorf("received unknown event type: 0")
+	if major == 2 && minor == 0 {
+		event.EventData = parseV2Event(buf)
+	} else if major == 1 && minor == 0 {
+		event.EventData = parseV1Event(buf)
+	} else {
+		return &event, fmt.Errorf("received unsupported event version (major version: %d, minor version: %d)", major, minor)
 	}
-
-	if numBytes < int(event.Size) {
-		// If the packet size we parsed is smaller than the buffer we were provided we should bail out to avoid a panic.
-		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", event.Size, numBytes)
-	}
-
-	// TODO: Evaluate if we want to keep or remove this.
-	// If we're not sure could leave in and expose a better way to enable/disable it.
-	// It seems to be faster if the event size is larger. So we could also use it based on event size.
-	// While at it evaluate if the global variables are actually helping improve performance.
-	if enableLengthBasedStringDeserialization {
-		// The remaining strings are separated by a uint32 value indicating the length of the string to follow.
-		// Use that to calculate the start and end index of each string.
-		lenStart = 28
-		lenEnd = 28 + 4
-
-		// Get the entry ID:
-		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
-		event.EntryId = string(buf[lenEnd : lenEnd+strLength])
-
-		// Get the parent entry ID:
-		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
-		lenEnd = lenStart + 4
-		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
-		event.ParentEntryId = string(buf[lenEnd : lenEnd+strLength])
-
-		// Get the path:
-		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
-		lenEnd = lenStart + 4
-		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
-		event.Path = string(buf[lenEnd : lenEnd+strLength])
-
-		// Get the target path:
-		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
-		lenEnd = lenStart + 4
-		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
-		if strLength == 0 {
-			return &event, nil
-		}
-		event.TargetPath = string(buf[lenEnd : lenEnd+strLength])
-
-		// Get the target parent ID:
-		lenStart = lenEnd + strLength + 1 // The length doesn't include the null terminator.
-		lenEnd = lenStart + 4
-		strLength = binary.LittleEndian.Uint32(buf[lenStart:lenEnd])
-		event.TargetParentId = string(buf[lenEnd : lenEnd+strLength])
-
-		return &event, nil
-	}
-
-	// The rest of the packet is an array of strings.
-	// Each entry starts with a uint32 value indicating the length of the string to follow.
-	// Each string also ends with a null character (\x00).
-	// While we could deserialize the length of each string then parse the actual string,
-	// we can also just ignore the length values and parse this as a null-terminated character array.
-	// Probably there is little actual difference in performance between these two approaches.
-	// However deserializing the length of each string then parsing may require more memory allocations depending on implementation.
-	start := 32 // We known the first string is here:
-
-	for end := start + 1; end < int(event.Size); end++ {
-		if buf[end] == '\x00' {
-			if event.EntryId == "" {
-				event.EntryId = string(buf[start:end])
-			} else if event.ParentEntryId == "" {
-				event.ParentEntryId = string(buf[start:end])
-			} else if event.Path == "" {
-				event.Path = string(buf[start:end])
-			} else if event.TargetPath == "" {
-				event.TargetPath = string(buf[start:end])
-			} else if event.TargetParentId == "" {
-				event.TargetParentId = string(buf[start:end])
-			}
-			// We know each entry is padded with a uint32 so we'll just skip to the expected start of the string portion:
-			start = end + 5
-			end = start + 1
-			// Check if we have additional strings to parse.
-			// Notably TargetPath and TargetParentId are only included with some event types.
-			if buf[start] == '\x00' {
-				break // Terminate early so we don't loop over empty bytes.
-			}
-		}
-	}
-
 	return &event, nil
+}
+
+func parseV2Event(buf []byte) *pb.Event_V2 {
+	entryID, ParentEntryID, path, targetPath, targetParentID, nextOffset := parseCStrings(buf)
+	eventData := &pb.Event_V2{
+		V2: &pb.V2Event{
+			NumLinks:       binary.LittleEndian.Uint64(buf[16:24]),
+			Type:           pb.V2Event_Type(binary.LittleEndian.Uint32(buf[24:28])),
+			EntryId:        entryID,
+			ParentEntryId:  ParentEntryID,
+			Path:           path,
+			TargetPath:     targetPath,
+			TargetParentId: targetParentID,
+			MsgUserId:      binary.LittleEndian.Uint32(buf[nextOffset : nextOffset+4]),
+			Timestamp:      int64(binary.LittleEndian.Uint64(buf[nextOffset+4 : nextOffset+12])),
+			// The end of the uint64 is 8 bytes plus 4 bytes for the previous uint32. Note the
+			// casting from uint64 to int64 is intentional, Go will handle the interpretation
+			// correctly if the original value was supposed to represent a negative number.
+		},
+	}
+	return eventData
+}
+
+func parseV1Event(buf []byte) *pb.Event_V1 {
+	entryID, ParentEntryID, path, targetPath, targetParentID, _ := parseCStrings(buf)
+	eventData := &pb.Event_V1{
+		V1: &pb.V1Event{
+			MissedSeq:      binary.LittleEndian.Uint64(buf[16:24]),
+			Type:           pb.V1Event_Type(binary.LittleEndian.Uint32(buf[24:28])),
+			EntryId:        entryID,
+			ParentEntryId:  ParentEntryID,
+			Path:           path,
+			TargetPath:     targetPath,
+			TargetParentId: targetParentID,
+		},
+	}
+	return eventData
+}
+
+const (
+	// eventPacketHeaderSize is the location at which data specific to this event type is encoded.
+	eventPacketHeaderSize = 28
+	uint32Size            = 4
+)
+
+// parseCStrings is used to parse several strings encoded as c-strings from both V1 and V2 event
+// buffers. Each string starts with a uint32 value indicating the length of the string to follow.
+// Each string is terminated by a NULL character (\x00). The starting offset of these strings inside
+// the buffer is the same for V1 and V2. However V2 also needs to known the offset of the next byte
+// to continue parsing the remaining fields which is returned as nextOffset.
+func parseCStrings(buf []byte) (entryID, parentEntryID, path, targetPath, targetParentID string, nextOffset uint32) {
+	nextOffset = uint32(eventPacketHeaderSize)
+	entryID = parseCString(buf, &nextOffset)
+	parentEntryID = parseCString(buf, &nextOffset)
+	path = parseCString(buf, &nextOffset)
+	// While only some event types like rename have a targetPath/targetParentID, we still need to
+	// parse the remaining sizes so we can set nextOffset correctly.
+	targetPath = parseCString(buf, &nextOffset)
+	targetParentID = parseCString(buf, &nextOffset)
+	return
+}
+
+func parseCString(buf []byte, offset *uint32) string {
+	strLength := binary.LittleEndian.Uint32(buf[*offset : *offset+uint32Size])
+	*offset += uint32Size
+	str := string(buf[*offset : *offset+strLength])
+	// The length doesn't include the null terminator so we need to move the offset to the location
+	// where any remaining data in the buffer is expected.
+	*offset += strLength + 1
+	return str
 }

@@ -251,12 +251,6 @@ func (m *Manager) readConnection(conn net.Conn, connMutex *sync.Mutex, cancelCon
 			// Hopefully this would only come up in development when network protocols and packet versions may be in flux.
 			// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
 			m.log.Warn("unable to correctly deserialize packet due to an error (ignoring)", zap.Error(err))
-		} else if bytesRead < int(event.Size) {
-			// In "theory" this shouldn't happen.
-			// If the connection broke while we were reading from it, we should get an error earlier.
-			// Likely If this happens the BeeGFS meta service is sending us malformed event packets.
-			// TODO - Consider if we should do something besides warn here (panic or return a nil packet to reset the connection?)
-			m.log.Warn("received a packet that is smaller than the expected packet size (ignoring)", zap.Uint32("expected size", event.Size), zap.Int("actual size", bytesRead))
 		}
 
 		// TODO: https://github.com/ThinkParQ/bee-watch/issues/15
