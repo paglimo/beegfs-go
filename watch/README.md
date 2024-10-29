@@ -108,7 +108,8 @@ Prerequisites:
 
 * BeeGFS Metadata service logging events on the base OS at
   `sysFileEventLogTarget=/run/beegfs/eventlog`.
-* A configuration file with one or more subscribers at `/etc/beegfs/beegfs-watch.toml`.
+* A configuration file with the desired metadata configuration and one or more subscribers at
+  `/etc/beegfs/beegfs-watch.toml`.
 * A subscriber listening on the default Docker bridge network at
   `172.17.0.1:50052`.
 * Docker installed on the same server as the Metadata service.
@@ -127,7 +128,6 @@ docker run \
     -v /run/beegfs:/run/beegfs \
     -v /etc/beegfs/:/etc/beegfs \
     ghcr.io/thinkparq/bee-watch:latest \
-    --metadata.event-log-target=/run/beegfs/eventlog \
     --cfg-file=/etc/beegfs/beegfs-watch.toml \
     --log.type=stdout
 ```
@@ -136,31 +136,31 @@ docker run \
 filesystem into the container. This is what allows the containerized BeeWatch service to access the
 Unix socket where the metadata service expects to output events.
 
-(2) The `-v /etc/beegfs:/etc/beegfs` bind mounts the configuration file with the subscriber list into the container.
+(2) The `-v /etc/beegfs:/etc/beegfs` bind mounts the configuration file with the metadata
+configuration and subscriber list into the container.
 
 (3) The `ghcr.io/thinkparq/bee-watch:latest` is the name of the container image. If you just want to
 download the latest image from GitHub Container Registry this can be used as is. Otherwise specify
 name of the container image built using `make packaged-docker` (then see `docker images` if you're
 not sure the name).
 
-(4) The rest of the command are regular arguments passed to BeeWatch. First the path to
-`sysFileEventLogTarget` as `--metadata.event-log-target=/run/beegfs/eventlog` then the path to the
-config file containing one or more subscribers `--cfg-file=/etc/beegfs/beegfs-watch.toml` and lastly
-the desired log type.
+(4) The rest of the command are regular arguments passed to Watch and at minimum should specify the
+path to the config file (inside the container) with the metadata and subscriber configuration
+`--cfg-file=/etc/beegfs/beegfs-watch.toml`. Here the log type is also set to stdout using a flag.
 
 > The default configuration file sets the log.type to "logfile", but typically containers are setup
 to log to stdout which is why we override it here using a flag. Adjust as needed based on your
 requirements.
 
 Here we provided some BeeWatch arguments as flags, but they can also be specified using environment
-variables or a configuration file. For example we could have specified the
-`--metadata.event-log-target` as an environment variable. Note the use of a double underscore
-between metadata and event which is replaced with a period by the config parser:
+variables or a configuration file. For example we could have specified the `--log.type` as an
+environment variable. Note the use of a double underscore between log and type which is replaced
+with a period by the config parser:
 
  ```shell
 docker run \
     -v /run/beegfs:/run/beegfs \
-    -e BEEWATCH_METADATA__EVENT_LOG_TARGET=/run/beegfs/eventlog \
+    -e BEEWATCH_LOG__TYPE=stdout \
     ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml
 ```
 
@@ -200,14 +200,19 @@ For BeeWatch to start it requires:
 
 To configure and start BeeWatch:
 
-1. Create an empty TOML file: `touch scratch/beegfs-watch.toml`
-2. Start BeeWatch: `go run cmd/bee-watch/main.go
-   --metadata.event-log-target=<PATH> --cfg-file=scratch/beegfs-watch.toml`
-   1. At this point BeeWatch will begin buffering any events it receives from
-      the metadata service until it reaches the default
-      `--metadata.event-buffer-size`, then the oldest events will start to be
-      dropped. This intentional default behavior keeps as many historical events
-      as possible so subscribers can be added after BeeWatch has started.
+1. Create an empty TOML file: `touch scratch/beegfs-watch.toml` and define the metadata service you
+   want to watch:
+```toml
+[[metadata]]
+event-log-target = '/run/beegfs/eventlog'
+event-buffer-size = 10000000
+event-buffer-gc-frequency = 100000
+```
+2. Start BeeWatch: `go run cmd/bee-watch/main.go --cfg-file=scratch/beegfs-watch.toml`
+   1. At this point BeeWatch will begin buffering any events it receives from the metadata service
+      until it reaches the `event-buffer-size`, then the oldest events will start to be dropped.
+      This default behavior keeps as many historical events as possible so subscribers can be added
+      after BeeWatch has started.
 3. Add a subscriber to the `beegfs-watch.toml` file. Note this subscriber doesn't
    actually have to exist if you just want to experiment with BeeWatch (it will
    simply log unable to connect):
@@ -266,8 +271,7 @@ applying the following rules:
 * All dots (.) in the parameter name must be replaced with a double underscore (__).
 * All hyphens (-) in the parameter name must be replaced with an underscore (_).
 
-For example the flag `--log.type` would be specified as `BEEWATCH_LOG_TYPE` and the flag
-`--metadata.event-log-target` would be specified as `BEEWATCH_METADATA__EVENT_LOG_TARGET`.
+For example the flag `--log.type` would be specified as `BEEWATCH_LOG_TYPE`.
 
 ### Specify Configuration using a TOML Configuration File
 
@@ -541,22 +545,18 @@ generally subscribers are expected to use one thread to read new events and
 another thread to send acknowledgements so events can be received/processed at a
 different rate than they are acknowledged.
 
-While retaining events for some period of time after they are sent to a
-subscriber is critical to avoid dropped events, there is a finite number of
-events (as defined by `--metadata.event-buffer-size`) BeeWatch will keep in its
-buffer before old events are dropped to make way for new ones. Thus it is
-important once subscribers handle an event they acknowledge the event sequence
-ID back to BeeWatch so the corresponding buffers can be freed. Internally
-BeeWatch performs garbage collection periodically (determined by
-`--metadata.event-buffer-gc-frequency`), freeing up in bulk multiple events once
-they are acknowledged by all subscribers. If subscribers fail to send
-acknowledgement (due to misconfiguration/implementation or being disconnected),
-once the BeeWatch buffer is full, we no longer do bulk garbage collection and
-fallback to deleting individual events as new events are received from the
-Metadata service. While this minimizes the number of events dropped due to a
-buffer overflow, it will incur a severe performance penalty, thus subscribers
-should not rely on events eventually being dropped when the buffer overflows in
-lieu of properly acknowledging events.
+While retaining events for some period of time after they are sent to a subscriber is critical to
+avoid dropped events, there is a finite number of events (as defined by the `event-buffer-size`
+configuration) BeeWatch will keep in its buffer before old events are dropped to make way for new
+ones. Thus it is important once subscribers handle an event they acknowledge the event sequence ID
+back to BeeWatch so the corresponding buffers can be freed. Internally BeeWatch performs garbage
+collection periodically (determined by `event-buffer-gc-frequency`), freeing up in bulk multiple
+events once they are acknowledged by all subscribers. If subscribers fail to send acknowledgement
+(due to misconfiguration/implementation or being disconnected), once the BeeWatch buffer is full, we
+no longer do bulk garbage collection and fallback to deleting individual events as new events are
+received from the Metadata service. While this minimizes the number of events dropped due to a
+buffer overflow, it will incur a severe performance penalty, thus subscribers should not rely on
+events eventually being dropped when the buffer overflows in lieu of properly acknowledging events.
 
 TL;DR - Don't think sending acknowledgements is optional.
 

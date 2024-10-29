@@ -52,8 +52,8 @@ github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
 github.com/thinkparq/beegfs-go v0.0.0-beta.1 h1:ehEioogq8ayayWkzTMw9nrIljFP3EnYMxLtfv0c2+Ms=
 github.com/thinkparq/beegfs-go v0.0.0-beta.1/go.mod h1:B7sgDubUogHoYyQGoCH/+z4LLSkKLUh3F5ZiTvIG1Ew=
-github.com/thinkparq/protobuf v0.0.19-0.20241029222846-9ab40cc933e2 h1:ny25iZCz7+GtEKKU7UZOA4PYiUjdXdtoYXv5R4OZ2zU=
-github.com/thinkparq/protobuf v0.0.19-0.20241029222846-9ab40cc933e2/go.mod h1:ECPwmpoEIFcGYMXQTkXF+ZfvcygtsL4QKQfagRXftPk=
+github.com/thinkparq/protobuf v0.0.20-0.20241202171005-2af0dd505982 h1:FN5LrqxOZvIMfH/IzEmW6udAI/V0jtwjEFAxI9W+5uc=
+github.com/thinkparq/protobuf v0.0.20-0.20241202171005-2af0dd505982/go.mod h1:ECPwmpoEIFcGYMXQTkXF+ZfvcygtsL4QKQfagRXftPk=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
 go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=

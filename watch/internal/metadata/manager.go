@@ -5,6 +5,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path"
@@ -57,7 +58,16 @@ type Config struct {
 // used to initialize other components before we actually start receiving
 // events from the metadata service. This helps avoid dropped events in case
 // some other component was misconfigured.
-func New(ctx context.Context, log *zap.Logger, config Config) (*Manager, func(), error) {
+func New(ctx context.Context, log *zap.Logger, metaConfigs []Config) (*Manager, func(), error) {
+
+	// TODO (https://github.com/ThinkParQ/bee-watch/issues/24): Support multiple metadata services.
+	// This is also checked in ValidateConfig() but we should also check here to avoid an index out
+	// of range panic.
+	var config Config
+	if len(metaConfigs) != 1 {
+		return nil, nil, fmt.Errorf("multiple metadata services were specified but currently only one is supported")
+	}
+	config = metaConfigs[0]
 
 	// Cleanup old socket if needed:
 	stat, err := os.Stat(config.EventLogTarget)
@@ -74,7 +84,7 @@ func New(ctx context.Context, log *zap.Logger, config Config) (*Manager, func(),
 	socket, err := net.Listen("unixpacket", config.EventLogTarget)
 
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("error listening for unix packets using socket %s: %w", config.EventLogTarget, err)
 	}
 
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
@@ -258,6 +268,7 @@ func (m *Manager) readConnection(conn net.Conn, connMutex *sync.Mutex, cancelCon
 		// Remove once the BeeGFS metadata service starts sending us sequence IDs.
 		m.seqId++
 		event.SeqId = m.seqId
+		event.MetaId = 0
 		m.EventBuffer.Push(event)
 
 	}

@@ -371,11 +371,6 @@ readEvents:
 			}
 
 			db.lastSeqID = event.SeqId
-
-			if event.DroppedSeq != db.lastDroppedSeq {
-				db.log.Error("warning: metadata service dropped event(s)", zap.Any("lastDroppedSeq", db.lastDroppedSeq), zap.Any("currentDroppedSeq", event.DroppedSeq))
-				db.lastDroppedSeq = event.DroppedSeq
-			}
 		}
 	}
 

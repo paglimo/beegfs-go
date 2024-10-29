@@ -59,9 +59,6 @@ func main() {
 	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
 	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
-	pflag.String("metadata.event-log-target", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
-	pflag.Int("metadata.event-buffer-size", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
-	pflag.Int("metadata.event-buffer-gc-frequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
 	pflag.Int("handler.max-reconnect-back-off", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
 	pflag.Int("handler.max-wait-for-response-after-connect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
 	pflag.Int("handler.poll-frequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
@@ -200,7 +197,7 @@ Using environment variables:
 
 	metaMgr, metaCleanup, err := metadata.New(metaCtx, logger.Logger, initialCfg.Metadata)
 	if err != nil {
-		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.EventLogTarget))
+		logger.Fatal("failed to start metadata manager", zap.Error(err))
 	}
 	defer metaCleanup()
 
