@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thinkparq/gobee/beegfs/beegrpc"
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
+	"github.com/thinkparq/beegfs-go/common/types"
 	pb "github.com/thinkparq/protobuf/go/beewatch"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"

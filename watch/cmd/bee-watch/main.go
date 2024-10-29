@@ -18,9 +18,9 @@ import (
 	"github.com/thinkparq/bee-watch/internal/config"
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
-	"github.com/thinkparq/gobee/beegfs/beegrpc"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
 	"go.uber.org/zap"
 )
 

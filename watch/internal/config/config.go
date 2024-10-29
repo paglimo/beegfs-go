@@ -7,9 +7,9 @@ import (
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscriber"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/common/types"
 )
 
 // We use ConfigManager to handle configuration updates.
