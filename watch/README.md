@@ -108,6 +108,7 @@ Prerequisites:
 
 * BeeGFS Metadata service logging events on the base OS at
   `sysFileEventLogTarget=/run/beegfs/eventlog`.
+* A configuration file with one or more subscribers at `/etc/beegfs/beegfs-watch.toml`.
 * A subscriber listening on the default Docker bridge network at
   `172.17.0.1:50052`.
 * Docker installed on the same server as the Metadata service.
@@ -124,29 +125,35 @@ step-by-step:
 ```shell
 docker run \
     -v /run/beegfs:/run/beegfs \
-    ghcr.io/thinkparq/bee-watch:latest --metadata.event-log-target=/run/beegfs/eventlog --subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"
+    -v /etc/beegfs/:/etc/beegfs \
+    ghcr.io/thinkparq/bee-watch:latest \
+    --metadata.event-log-target=/run/beegfs/eventlog \
+    --cfg-file=/etc/beegfs/beegfs-watch.toml \
+    --log.type=stdout
 ```
 
-(1) The `-v /run/beegfs:/run/beegfs` bind mounts the /run/beegfs directory on
-the host machine's filesystem into the container. This is what allows the
-containerized BeeWatch service to access the Unix socket where the metadata
-service expects to output events.
+(1) The `-v /run/beegfs:/run/beegfs` bind mounts the /run/beegfs directory on the host machine's
+filesystem into the container. This is what allows the containerized BeeWatch service to access the
+Unix socket where the metadata service expects to output events.
 
-(2) The `ghcr.io/thinkparq/bee-watch:latest` is the name of the container image.
-If you just want to download the latest image from GitHub Container Registry
-this can be used as is. Otherwise specify name of the container image built
-using `make packaged-docker` (then see `docker images` if you're not sure the
-name).
+(2) The `-v /etc/beegfs:/etc/beegfs` bind mounts the configuration file with the subscriber list into the container.
 
-(3) The rest of the command are regular arguments passed to BeeWatch. First the
-path to `sysFileEventLogTarget` as
-`--metadata.event-log-target=/run/beegfs/eventlog`. Then the subscriber, notably
-providing the IP and host of the subscriber that is listening on the Docker
-bridge network:
-`--subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"`
+(3) The `ghcr.io/thinkparq/bee-watch:latest` is the name of the container image. If you just want to
+download the latest image from GitHub Container Registry this can be used as is. Otherwise specify
+name of the container image built using `make packaged-docker` (then see `docker images` if you're
+not sure the name).
 
-Here we provided all necessary BeeWatch arguments as flags, but they can also be specified using
-environment variables or a configuration file. For example we could have specified the
+(4) The rest of the command are regular arguments passed to BeeWatch. First the path to
+`sysFileEventLogTarget` as `--metadata.event-log-target=/run/beegfs/eventlog` then the path to the
+config file containing one or more subscribers `--cfg-file=/etc/beegfs/beegfs-watch.toml` and lastly
+the desired log type.
+
+> The default configuration file sets the log.type to "logfile", but typically containers are setup
+to log to stdout which is why we override it here using a flag. Adjust as needed based on your
+requirements.
+
+Here we provided some BeeWatch arguments as flags, but they can also be specified using environment
+variables or a configuration file. For example we could have specified the
 `--metadata.event-log-target` as an environment variable. Note the use of a double underscore
 between metadata and event which is replaced with a period by the config parser:
 
@@ -154,25 +161,11 @@ between metadata and event which is replaced with a period by the config parser:
 docker run \
     -v /run/beegfs:/run/beegfs \
     -e BEEWATCH_METADATA__EVENT_LOG_TARGET=/run/beegfs/eventlog \
-    ghcr.io/thinkparq/bee-watch:latest --subscribers="id=1,name='subscriber1',type='grpc',grpc-hostname='172.17.0.1',grpc-port=50052,grpc-allow-insecure=true"
+    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml
 ```
 
-We could also have bind mounted a configuration file into the container, if we
-wanted to dynamically update the subscriber configuration:
-
- ```shell
-docker run \
-    -v ./build/dist/etc/beegfs:/etc/beegfs \
-    -v /run/beegfs:/run/beegfs \
-    -e BEEWATCH_METADATA__EVENT-LOG-TARGET=/run/beegfs/eventlog \
-    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml --log.type=stdout
-```
-> The default configuration file sets the log.type to "logfile", but typically
-containers are setup to log to stdout which is why we override it here using a
-flag. Adjust as needed based on your requirements.
-
-The ability to use a mix of flags, environment variables, and a configuration
-file provides flexibility when running BeeWatch in a container.
+The ability to use a mix of flags, environment variables, and a configuration file provides
+flexibility when running BeeWatch in a container.
 
 ## For Developers
 
@@ -201,10 +194,9 @@ For BeeWatch to start it requires:
   is actually sending events to the socket.
   * Note the parent directory of `sysFileEventLogTarget` must be accessible by
     the user executing BeeWatch.
-* One of the following: 
-  * One or more subscribers configured using command line flags or environment
-    variables. 
-  * The path to a configuration file specified using `--cfg-file`.
+* A path to a configuration file that will be used to specify subscribers using `--cfg-file`. Note
+  it is possible to start Watch and later add subscribers to the file reloading the configuration by
+  sending Watch a hangup signal.
 
 To configure and start BeeWatch:
 
@@ -285,9 +277,8 @@ to use. Except for `--cfg-file` all options specified in `--help` can be
 specified in a configuration file. Options are specified based on TOML
 formatting rules:
 
-* The list of subscribers (`--subscribers`) is specified as individual
-  subscribers using a TOML array (`[[subscriber]]`) with options for that
-  subscriber specified beneath as `key=value`. For example: 
+* The list of subscribers is specified as individual subscribers using a TOML array
+  (`[[subscriber]]`) with options for that subscriber specified beneath as `key=value`. For example: 
 
 ```toml
 [[subscriber]]
@@ -324,6 +315,9 @@ pairs](https://toml.io/en/v1.0.0#keyvalue-pair), notably:
   * All boolean (true/false) values are listed with no quotes. 
 
 ## Configuring Subscribers
+
+IMPORTANT: At this time it is only possible to configure subscribers using a configuration file.
+Configuring subscribers using environment variables or flags is not supported.
 
 When configuring subscribers, the following options must be specified for each
 subscriber regardless of type: 
