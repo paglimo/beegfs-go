@@ -10,8 +10,8 @@ import (
 	"slices"
 
 	"github.com/google/uuid"
-	"github.com/thinkparq/bee-remote/internal/worker"
-	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/bee-remote/remote/internal/worker"
+	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
 	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"

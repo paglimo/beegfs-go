@@ -2,7 +2,7 @@
 
 This NOTICE file is provided in compliance with the open source licenses of the components used in this software.
 
-## BeeRemote
+## BeeGFS Remote
 **Copyright (C) 2024 ThinkParQ**
 
 This software includes code and libraries from:

@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/thinkparq/bee-remote/internal/workermgr"
+	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
 	"github.com/thinkparq/gobee/kvstore"
 	"github.com/thinkparq/gobee/logger"
 	"github.com/thinkparq/gobee/rst"

@@ -15,7 +15,7 @@ package-all:
 # Generate NOTICE file.
 .PHONY: generate-notices
 generate-notices:
-	@go-licenses report ./... --template build/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
+	@go-licenses report ./remote/... --template remote/build/notice.tpl > remote/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets:
 # Test targets may make change to the local repository (e.g. running go mod tidy) to

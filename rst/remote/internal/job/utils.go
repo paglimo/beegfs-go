@@ -1,7 +1,7 @@
 package job
 
 import (
-	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/beeremote"
 )
 

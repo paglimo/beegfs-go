@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/thinkparq/bee-remote/internal/worker"
+	"github.com/thinkparq/bee-remote/remote/internal/worker"
 	"github.com/thinkparq/gobee/filesystem"
 	"github.com/thinkparq/gobee/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
