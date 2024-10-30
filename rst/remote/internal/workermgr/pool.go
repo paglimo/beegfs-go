@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/thinkparq/bee-remote/remote/internal/worker"
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/types"
 	"github.com/thinkparq/protobuf/go/flex"
 )
 

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/thinkparq/gobee/beegfs/beegrpc"
+	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc"

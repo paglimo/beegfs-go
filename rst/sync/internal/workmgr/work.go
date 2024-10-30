@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/thinkparq/bee-remote/sync/internal/beeremote"
-	"github.com/thinkparq/gobee/kvstore"
-	"github.com/thinkparq/gobee/rst"
+	"github.com/thinkparq/beegfs-go/common/kvstore"
+	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"

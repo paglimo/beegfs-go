@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/types"
 	"go.uber.org/zap"
 )
 

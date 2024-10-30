@@ -10,10 +10,10 @@ import (
 	"github.com/thinkparq/bee-remote/remote/internal/server"
 	"github.com/thinkparq/bee-remote/remote/internal/worker"
 	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
-	"github.com/thinkparq/gobee/rst"
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/common/types"
 	"github.com/thinkparq/protobuf/go/flex"
 )
 

@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/thinkparq/bee-remote/remote/internal/job"
-	"github.com/thinkparq/gobee/kvstore"
+	"github.com/thinkparq/beegfs-go/common/kvstore"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

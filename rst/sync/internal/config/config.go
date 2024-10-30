@@ -6,8 +6,8 @@ import (
 	"github.com/thinkparq/bee-remote/sync/internal/beeremote"
 	"github.com/thinkparq/bee-remote/sync/internal/server"
 	"github.com/thinkparq/bee-remote/sync/internal/workmgr"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
 )
 
 // We use ConfigManager to handle configuration updates.
