@@ -16,6 +16,7 @@ package-all:
 .PHONY: generate-notices
 generate-notices:
 	@go-licenses report ./remote/... --template remote/build/notice.tpl > remote/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
+	@go-licenses report ./sync/... --template sync/build/notice.tpl > sync/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets:
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -103,10 +104,14 @@ check-licenses: generate-notices
 		--ignore git.beegfs.io \
 		--ignore github.com/thinkparq \
 		--ignore github.com/hashicorp/hcl
-	@if [ -n "$$(git status --porcelain NOTICE.md)" ]; then \
-        echo "NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+	@if [ -n "$$(git status --porcelain remote/NOTICE.md)" ]; then \
+        echo "BeeGFS Remote NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
         exit 1; \
     fi
+	@if [ -n "$$(git status --porcelain sync/NOTICE.md)" ]; then \
+        echo "BeeGFS Sync NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi	
 
 # Targets for installation of various prerequisites:
 .PHONY: install-tools

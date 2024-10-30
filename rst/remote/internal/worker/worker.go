@@ -29,7 +29,7 @@ type Worker interface {
 	// means the request could not be sent to the node or created due to an internal node error.
 	SubmitWork(*flex.WorkRequest) (*flex.Work, error)
 	UpdateWork(*flex.UpdateWorkRequest) (*flex.Work, error)
-	// TODO: https://github.com/ThinkParQ/bee-sync/issues/6
+	// TODO: https://github.com/ThinkParQ/bee-remote/issues/55
 	// Require UpdateConfig() once dynamic configuration updates are supported.
 	//   UpdateConfig(*flex.WorkerNodeConfigRequest) (*flex.WorkerNodeConfigResponse, error)
 }
