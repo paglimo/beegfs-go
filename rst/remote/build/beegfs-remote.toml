@@ -18,6 +18,7 @@ mount-point = "/mnt/beegfs"
 
 [management]
 address = "127.0.0.1:8010"
+auth-file = "/etc/beegfs/conn.auth"
 tls-ca-cert = ""
 tls-disable-verification = false
 tls-disable = false
