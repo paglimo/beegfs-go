@@ -1,0 +1,55 @@
+# .github/workflows/auto-update.yml
+name: auto-update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  auto_update_dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Go version
+        id: extract_go_version
+        shell: bash
+        run: |
+          VERSION=$(awk '/^go /{print $2}' go.mod)
+          if [ -z "$VERSION" ]; then
+            echo "Go version not found in go.mod"
+            exit 1
+          fi
+          echo "GO_VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+        env:
+          GO_VERSION: ${{ env.GO_VERSION }}
+      - name: Install toolchains and tools
+        run: make install-tools
+      - name: Update ThinkParQ dependencies if needed
+        run: |
+          go get -u github.com/thinkparq/protobuf@latest
+          go get -u github.com/thinkparq/beegfs-go@latest
+      - name: Ensure all dependencies have been tidied and the NOTICE file is up-to-date
+        run: |
+          go mod tidy        
+          make generate-notices
+      - name: Submit Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bot/update-thinkparq-dependencies
+          commit-message: |
+            Update ThinkParQ dependencies
+          title: "[Bot] Update ThinkParQ Dependencies"
+          body: |
+            Created by the GitHub Actions auto-update workflow.
+          delete-branch: true
+          reviewers: |
+            iamjoemccormick
