@@ -24,7 +24,23 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: cmd/bee-remote/main.go
+    main: remote/cmd/beegfs-remote/main.go
+  - id: beegfs_sync
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.binaryName=beegfs-sync
+      - -X main.commit={{ .Commit }}
+      - -X main.buildTime={{ .Date }}
+    binary: beegfs-sync
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: sync/cmd/beegfs-sync/main.go
 
 nfpms:
   - id: beegfs_remote
@@ -45,16 +61,44 @@ nfpms:
       - src: /opt/beegfs/sbin/beegfs-remote
         dst: /usr/sbin/beegfs-remote
         type: "symlink"
-      - src: build/beegfs-remote.service
+      - src: remote/build/beegfs-remote.service
         dst: /usr/lib/systemd/system/beegfs-remote.service
         type: config
-      - src: build/beegfs-remote.toml
+      - src: remote/build/beegfs-remote.toml
         dst: /etc/beegfs/beegfs-remote.toml
         type: config
-      - src: NOTICE.md
+      - src: remote/NOTICE.md
         dst: /usr/share/doc/beegfs-remote/NOTICE.md
       - src: LICENSE.md
         dst: /usr/share/doc/beegfs-remote/LICENSE.md
+  - id: beegfs_sync
+    package_name: beegfs-sync
+    file_name_template: "beegfs-sync-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
+    vendor: "ThinkparQ GmbH"
+    homepage: https://www.beegfs.io
+    maintainer: BeeGFS Maintainers <packages@beegfs.com>
+    description: BeeGFS Sync (Remote Storage Targets Syncer)
+    provides:
+      - beegfs-sync
+    license: BeeGFS EULA
+    formats:
+      - rpm
+      - deb
+    bindir: /opt/beegfs/sbin/
+    contents:
+      - src: /opt/beegfs/sbin/beegfs-sync
+        dst: /usr/sbin/beegfs-sync
+        type: "symlink"
+      - src: sync/build/beegfs-sync.service
+        dst: /usr/lib/systemd/system/beegfs-sync.service
+        type: config
+      - src: sync/build/beegfs-sync.toml
+        dst: /etc/beegfs/beegfs-sync.toml
+        type: config
+      - src: sync/NOTICE.md
+        dst: /usr/share/doc/beegfs-sync/NOTICE.md
+      - src: LICENSE.md
+        dst: /usr/share/doc/beegfs-sync/LICENSE.md
 
 # This can be enabled when/if a Dockerfile is added to the project.
 # dockers:
