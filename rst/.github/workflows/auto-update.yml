@@ -31,12 +31,19 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
         env:
           GO_VERSION: ${{ env.GO_VERSION }}
+      - name: Configure git
+        # Make sure the runner has access to the internal repos repo using an access token
+        run: git config --global url."https://${{ secrets.CI_PROTOBUF_ACCESS }}@github.com/thinkparq".insteadOf https://github.com/thinkparq
       - name: Install toolchains and tools
         run: make install-tools
       - name: Update ThinkParQ dependencies if needed
         run: |
           go get -u github.com/thinkparq/protobuf@latest
           go get -u github.com/thinkparq/beegfs-go@latest
+        env:
+          # This is required to update dependencies using go get.
+          GOPRIVATE: github.com/thinkparq/*
+
       - name: Ensure all dependencies have been tidied and the NOTICE file is up-to-date
         run: |
           go mod tidy        
