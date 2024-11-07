@@ -57,6 +57,7 @@ jobs:
           title: "[Bot] Update ThinkParQ Dependencies"
           body: |
             Created by the GitHub Actions auto-update workflow.
+            After verifying the changes in this PR, manually trigger required CI checks.
           delete-branch: true
           reviewers: |
             iamjoemccormick
