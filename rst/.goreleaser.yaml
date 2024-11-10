@@ -44,6 +44,8 @@ builds:
 
 nfpms:
   - id: beegfs_remote
+    builds:
+      - beegfs_remote
     package_name: beegfs-remote
     file_name_template: "beegfs-remote-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
     vendor: "ThinkparQ GmbH"
@@ -72,6 +74,8 @@ nfpms:
       - src: LICENSE.md
         dst: /usr/share/doc/beegfs-remote/LICENSE.md
   - id: beegfs_sync
+    builds:
+      - beegfs_sync
     package_name: beegfs-sync
     file_name_template: "beegfs-sync-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
     vendor: "ThinkparQ GmbH"

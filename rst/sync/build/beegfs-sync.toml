@@ -28,7 +28,7 @@ journal-db = "/var/lib/beegfs/sync/journal.badger"
 job-db = "/var/lib/beegfs/sync/job.badger"
 
 [remote]
-tls-ca-cert = ""
+tls-ca-cert = "/etc/beegfs/cert.pem"
 tls-disable-verification = false
 tls-disable = false
 

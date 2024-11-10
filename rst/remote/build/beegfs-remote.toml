@@ -19,7 +19,7 @@ mount-point = "/mnt/beegfs"
 [management]
 address = "127.0.0.1:8010"
 auth-file = "/etc/beegfs/conn.auth"
-tls-ca-cert = ""
+tls-ca-cert = "/etc/beegfs/cert.pem"
 tls-disable-verification = false
 tls-disable = false
 
@@ -44,7 +44,7 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # name = "beesync-01"
 # type = "beesync"
 # address = "localhost:9011"
-# tls-ca-cert = ""
+# tls-ca-cert = "/etc/beegfs/cert.pem"
 # tls-disable-verification = false
 # tls-disable = false
 
@@ -53,7 +53,7 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # name = "beesync-02"
 # type = "beesync"
 # address = "localhost:9012"
-# tls-ca-cert = ""
+# tls-ca-cert = "/etc/beegfs/cert.pem"
 # tls-disable-verification = false
 # tls-disable = false
 
