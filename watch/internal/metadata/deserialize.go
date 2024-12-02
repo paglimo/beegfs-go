@@ -31,7 +31,6 @@ func deserialize(buf []byte, numBytes int) (*pb.Event, error) {
 		return &event, fmt.Errorf("only the packet header could be deserialized because the provided buffer was smaller than the indicated packet size (expected size: %d, actual size: %d)", size, numBytes)
 	}
 
-	event.DroppedSeq = binary.LittleEndian.Uint64(buf[8:16])
 	if major == 2 && minor == 0 {
 		event.EventData = parseV2Event(buf)
 	} else if major == 1 && minor == 0 {
@@ -67,6 +66,7 @@ func parseV1Event(buf []byte) *pb.Event_V1 {
 	entryID, ParentEntryID, path, targetPath, targetParentID, _ := parseCStrings(buf)
 	eventData := &pb.Event_V1{
 		V1: &pb.V1Event{
+			DroppedSeq:     binary.LittleEndian.Uint64(buf[8:16]),
 			MissedSeq:      binary.LittleEndian.Uint64(buf[16:24]),
 			Type:           pb.V1Event_Type(binary.LittleEndian.Uint32(buf[24:28])),
 			EntryId:        entryID,

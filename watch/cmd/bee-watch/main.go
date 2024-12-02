@@ -18,9 +18,9 @@ import (
 	"github.com/thinkparq/bee-watch/internal/config"
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
-	"github.com/thinkparq/gobee/beegfs/beegrpc"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
+	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
 	"go.uber.org/zap"
 )
 
@@ -59,17 +59,9 @@ func main() {
 	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
 	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
-	pflag.String("metadata.event-log-target", "", "The path where the BeeGFS metadata service expected to log events to a unix socket (should match sysFileEventLogTarget in beegfs-meta.conf).")
-	pflag.Int("metadata.event-buffer-size", 10000000, "How many events to keep in memory if the BeeGFS metadata service sends events to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.\nWorst case memory usage is approximately (10KB x sysFileEventBufferSize).")
-	pflag.Int("metadata.event-buffer-gc-frequency", 100000, "After how many new events should unused buffer space be reclaimed automatically. \nThis should be set taking into consideration the buffer size. \nMore frequent garbage collection will negatively impact performance, whereas less frequent garbage collection risks running out of memory and dropping events.")
 	pflag.Int("handler.max-reconnect-back-off", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
 	pflag.Int("handler.max-wait-for-response-after-connect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
 	pflag.Int("handler.poll-frequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
-	pflag.String("subscribers", "", `Specify one or more subscribers separated by semicolons.
-	The full list of subscribers should be enclosed in "double quotes".
-	The parameters for each subscriber should be specified as key='value'.
-	Include all required/desired parameters for the particular subscriber type you want to configure.
-	Example: --subscribers="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"`)
 	// Hidden flags:
 	pflag.Int("developer.perf-profiling-port", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perf-profiling-port")
@@ -84,15 +76,14 @@ func main() {
 Further info:
 	Except for subscribers, configuration may be set using a mix of flags, environment variables, and values from a TOML configuration file. 
 	Configuration will be merged using the following precedence order (highest->lowest): (1) flags (2) environment variables (3) configuration file (4) defaults.
-	Subscribers can only be specified using one of these options, and when set using a configuration file, can be updated dynamically after the application starts without by sending a hangup signal (SIGHUP).
+	Subscribers can only be specified using a configuration file and can be updated without a restart by sending a hangup signal (SIGHUP).
 Using environment variables:
 	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with double underscores (__) and hyphens (-) with an underscore (_).
 	Examples: 
 	export %sLOG__DEVELOPER=true
 	export %sCONFIG_FILE=/etc/beegfs/bee-watch.toml
-	export %sSUBSCRIBERS="id=1,name='subscriber1',type='grpc';id=2,name='subscriber2',type='grpc'"
 `
-		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix, envVarPrefix)
+		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix)
 		os.Exit(0)
 	}
 
@@ -206,7 +197,7 @@ Using environment variables:
 
 	metaMgr, metaCleanup, err := metadata.New(metaCtx, logger.Logger, initialCfg.Metadata)
 	if err != nil {
-		logger.Fatal("failed to listen for unix packets on socket path", zap.Error(err), zap.String("socket", initialCfg.Metadata.EventLogTarget))
+		logger.Fatal("failed to start metadata manager", zap.Error(err))
 	}
 	defer metaCleanup()
 

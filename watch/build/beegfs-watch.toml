@@ -23,7 +23,7 @@ tls-ca-cert = ""
 tls-disable-verification = false
 tls-disable = false
 
-[metadata]
+[[metadata]]
 event-log-target = '/run/beegfs/eventlog'
 event-buffer-size = 10000000
 event-buffer-gc-frequency = 100000
@@ -66,14 +66,14 @@ poll-frequency = 1
 # Use the command line argument "--cfg-file=/etc/anotherconfig.conf" to specify a different config
 # file for bee-watch. All other options in this file can also be used as command line arguments, or
 # set using environment variables, overriding the corresponding config file values. See `bee-watch
-# --help` for details on how to configure BeeWatch using flags and/or environment variables.
+# --help` for details on how to configure Watch using flags and/or environment variables.
 
 
 #
 # --- Section 3: [Basic Settings Documentation] ---
 #
 
-# Where indicated, BeeWatch configuration can be updated without restarting BeeWatch by updating
+# Where indicated, Watch configuration can be updated without restarting Watch by updating
 # this file then running `systemctl reload bee-watch`.
 
 
@@ -128,17 +128,18 @@ poll-frequency = 1
 # about file paths/names inside the file system will be sent in clear text over the network.
 
 #
-# --- Section 3.3: [Metadata Settings] ---
+# --- Section 3.3: [[Metadata Settings]] ---
 #
 
-# Configuration for the BeeGFS metadata service BeeWatch is listening to must be specified under
-# [metadata]. This configuration cannot be updated after the application is started.
+# Configuration for the BeeGFS metadata service Watch is listening to must be specified under
+# [[metadata]]. Currently only a single metadata service can be specified. This configuration cannot
+# be updated after the application is started.
 
 # event-log-target: The path where the BeeGFS metadata service expected to log events to a unix
 # socket (should match sysFileEventLogTarget in beegfs-meta.conf).
 
 # event-buffer-size: How many events to keep in memory if the BeeGFS metadata service sends events
-# to BeeWatch faster than they can be sent to subscribers, or a subscriber is temporarily
+# to Watch faster than they can be sent to subscribers, or a subscriber is temporarily
 # disconnected. Worst case memory usage is approximately (10KB x sysFileEventBufferSize). 
 
 # event-buffer-gc-frequency: After how many new events should unused buffer space be reclaimed
@@ -199,14 +200,14 @@ poll-frequency = 1
 # the remote subscriber to also shutdown their end of the connection before just closing the
 # connection. If this value is to short then we may not receive acknowledgement of events the
 # subscriber has processed (subscribers should resend the acknowledgement when they reconnect). If
-# this value is to long, then reconfiguration attempts or shutting down BeeWatch may hang for an
+# this value is to long, then reconfiguration attempts or shutting down Watch may hang for an
 # inconvenient amount of time. Default: 30 (seconds).
 
 # Using TLS to encrypt events sent to subscribers: Because file system modification events can carry
 # potentially sensitive information, it is recommended to use TLS to authenticate subscribers and
 # encrypt all communication. If subscribers are configured to use a valid certificate signed by a
 # recognized Certificate Authority (CA), or your organization is using its own signing server and
-# adding the necessary certificate(s) to the system running BeeWatch, no additional steps will be
+# adding the necessary certificate(s) to the system running Watch, no additional steps will be
 # required. If this is not the case there are a few options: 
 
 # tls-ca-cert: Specify the path to a trusted Certificate Authority (CA) certificate for verifying

@@ -7,9 +7,9 @@ import (
 	"github.com/thinkparq/bee-watch/internal/metadata"
 	"github.com/thinkparq/bee-watch/internal/subscriber"
 	"github.com/thinkparq/bee-watch/internal/subscribermgr"
-	"github.com/thinkparq/gobee/configmgr"
-	"github.com/thinkparq/gobee/logger"
-	"github.com/thinkparq/gobee/types"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
+	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/common/types"
 )
 
 // We use ConfigManager to handle configuration updates.
@@ -26,7 +26,7 @@ type AppConfig struct {
 	Log         logger.Config               `mapstructure:"log"`
 	Management  MgmtdConfig                 `mapstructure:"management"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
-	Metadata    metadata.Config             `mapstructure:"metadata"`
+	Metadata    []metadata.Config           `mapstructure:"metadata"`
 	Subscribers []subscriber.Config         `mapstructure:"subscriber"`
 	Developer   struct {
 		PerfProfilingPort int  `mapstructure:"perf-profiling-port"`
@@ -75,7 +75,7 @@ func (c *AppConfig) UpdateAllowed(newConfig configmgr.Configurable) error {
 	if nc.Developer != c.Developer {
 		return fmt.Errorf("rejecting configuration update: unable to change developer configuration settings after startup (current settings: %+v | proposed settings: %+v)", c.Developer, nc.Developer)
 	}
-	if nc.Metadata != c.Metadata {
+	if !reflect.DeepEqual(nc.Metadata, c.Metadata) {
 		return fmt.Errorf("rejecting configuration update: unable to change metadata configuration settings after startup (current settings: %+v | proposed settings: %+v)", c.Metadata, nc.Metadata)
 	}
 	if nc.Log != c.Log {
@@ -105,12 +105,19 @@ func (c *AppConfig) ValidateConfig() error {
 	// TODO: Consider moving validation checks into the respective packages where the config is defined.
 	var multiErr types.MultiError
 
-	if !(c.Log.Level == 1 || c.Log.Level == 3 || c.Log.Level == 5) {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the provided log.level is invalid (must be 1, 3, or 5)"))
-	}
-
-	if c.Metadata.EventLogTarget == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no 'metadata.event-log-target' was specified"))
+	// TODO (https://github.com/ThinkParQ/bee-watch/issues/24): Support multiple metadata services.
+	if len(c.Metadata) != 1 {
+		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("exactly one metadata service must be specified"))
+	} else {
+		if c.Metadata[0].EventLogTarget == "" {
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the event-log-target for this metadata service must be specified"))
+		}
+		if c.Metadata[0].EventBufferGCFrequency == 0 {
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the event-buffer-gc-frequency for this metadata service cannot be 0"))
+		}
+		if c.Metadata[0].EventBufferSize == 0 {
+			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the event-buffer-size for this metadata service cannot be 0"))
+		}
 	}
 
 	if len(c.Subscribers) == 0 && c.CfgFile == "" {

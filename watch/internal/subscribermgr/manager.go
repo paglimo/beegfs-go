@@ -16,7 +16,7 @@ import (
 
 	"github.com/thinkparq/bee-watch/internal/subscriber"
 	"github.com/thinkparq/bee-watch/internal/types"
-	"github.com/thinkparq/gobee/configmgr"
+	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"go.uber.org/zap"
 )
 
