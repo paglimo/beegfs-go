@@ -5,8 +5,8 @@ go 1.23.1
 require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
-	github.com/thinkparq/beegfs-go v0.0.0-beta.1
-	github.com/thinkparq/protobuf v0.0.20-0.20241202171005-2af0dd505982
+	github.com/thinkparq/beegfs-go v0.0.0-beta.3.0.20241219155816-fa426df411f5
+	github.com/thinkparq/protobuf v0.0.0-beta.3
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.66.2
 )
