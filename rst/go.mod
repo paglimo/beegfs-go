@@ -8,8 +8,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
-	github.com/thinkparq/beegfs-go v0.0.0-beta.2
-	github.com/thinkparq/protobuf v0.0.19
+	github.com/thinkparq/beegfs-go v0.0.0-beta.3.0.20241219155816-fa426df411f5
+	github.com/thinkparq/protobuf v0.0.0-beta.3
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.66.2
 	google.golang.org/protobuf v1.34.2

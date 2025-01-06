@@ -138,8 +138,9 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 							// which one). Note this only applies to keys for different RST types,
 							// not top level RST parameters such as policies.
 							dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-								Metadata: nil,
-								Result:   &newTypeField,
+								Metadata:    nil,
+								Result:      &newTypeField,
+								ErrorUnused: true, // Ensure any unknown configuration will return an error.
 								MatchName: func(mapKey, fieldName string) bool {
 									return strings.ReplaceAll(strings.ToLower(mapKey), "-", "") == strings.ToLower(fieldName)
 								},
@@ -147,7 +148,10 @@ func SetRSTTypeHook() mapstructure.DecodeHookFuncType {
 							if err != nil {
 								return nil, fmt.Errorf("unexpected error setting up mapstructure decoder (probably this is a bug): %w", err)
 							}
-							dec.Decode(config)
+							err = dec.Decode(config)
+							if err != nil {
+								return nil, fmt.Errorf("%s: %w", key, err)
+							}
 							tmpData["Type"] = newType
 							delete(tmpData, key)
 						}

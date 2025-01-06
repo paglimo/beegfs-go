@@ -78,9 +78,9 @@ func main() {
 		pflag.PrintDefaults()
 		helpText := `
 Further info:
-	Except for Remote Storage Targets, configuration may be set using a mix of flags, environment variables, and values from a TOML configuration file. 
+	Except for Remote Storage Targets and workers, configuration may be set using a mix of flags, environment variables, and values from a TOML configuration file. 
 	Configuration will be merged using the following precedence order (highest->lowest): (1) flags (2) environment variables (3) configuration file (4) defaults.
-	Remote Storage Targets can only be configured using a TOML config file.
+	Remote Storage Targets and workers can only be configured using a TOML config file.
 Using environment variables:
 	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with a double underscore (__) and hyphens (-) with an underscore (_).
 	Examples: 
