@@ -54,14 +54,15 @@ func main() {
 	pflag.Int("log.num-rotated-files", 5, "When log.type is 'logfile' the maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
 	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management node.")
-	pflag.String("management.tls-ca-cert", "", "Use a CA certificate (signed or self-signed) for server verification. Leave empty to use the system's default certificate pool to verify the server.")
-	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication.")
-	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
+	pflag.String("management.tls-cert-file", "/etc/beegfs/cert.pem", "Use the specified certificate to verify and encrypt gRPC traffic to the Management node. Leave empty to only use the system's default certificate pool.")
+	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication to the Management node.")
+	pflag.Bool("management.tls-disable", false, "Disable TLS entirely for gRPC communication to the Management node.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the shared secret for BeeGFS connection authentication.")
 	pflag.Bool("management.auth-disable", false, "Disable BeeGFS connection authentication (not recommended).")
-	pflag.String("server.address", "0.0.0.0:9010", "The hostname:port where BeeRemote should listen for job requests.")
-	pflag.String("server.tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of the BeeRemote gRPC server.")
-	pflag.String("server.tls-key-file", "/etc/beegfs/key.pem", "Path to a key file belonging to the certificate for the BeeRemote gRPC server.")
+	pflag.String("server.address", "0.0.0.0:9010", "The hostname:port where this Remote node should listen for job requests from the BeeGFS CTL tool.")
+	pflag.String("server.tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of this Remote node's gRPC server.")
+	pflag.String("server.tls-key-file", "/etc/beegfs/key.pem", "Path to the key file belonging to the certificate for this Remote node's gRPC server.")
+	pflag.Bool("server.tls-disable", false, "Disable TLS entirely for gRPC communication to this Remote node's gRPC server.")
 	pflag.String("job.path-db", "/var/lib/beegfs/remote/path.badger", "Path where the database tracking jobs for each path will be created/maintained.")
 	pflag.Int("job.request-queue-depth", 1024, "Number of requests that can be made to JobMgr before new requests are blocked.")
 	pflag.Int("job.min-job-entries-per-rst", 2, "This many jobs for each RST configured for a particular path is guaranteed to be retained. At minimum this should be set to 1 so we always know the last sync result for an RST.")
@@ -158,9 +159,9 @@ Using environment variables:
 	// The mgmtd gRPC client expects the cert and auth file to already be read from their respective
 	// sources (files in this case) and provided as a byte slice.
 	var cert []byte
-	if initialCfg.Management.TLSCaCert != "" {
-		cert, err = os.ReadFile(initialCfg.Management.TLSCaCert)
-		if err != nil && pflag.Lookup("management.tls-ca-cert").Changed {
+	if !initialCfg.Management.TLSDisable && initialCfg.Management.TLSCertFile != "" {
+		cert, err = os.ReadFile(initialCfg.Management.TLSCertFile)
+		if err != nil {
 			logger.Fatal("unable to read management TLS certificate", zap.Error(err))
 		}
 	}
@@ -222,7 +223,7 @@ Using environment variables:
 
 	jobServer, err := server.New(logger.Logger, initialCfg.Server, jobManager)
 	if err != nil {
-		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
+		logger.Fatal("failed to initialize Remote gRPC server", zap.Error(err))
 	}
 	go jobServer.ListenAndServe()
 

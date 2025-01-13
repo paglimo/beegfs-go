@@ -38,7 +38,7 @@ type AppConfig struct {
 
 type MgmtdConfig struct {
 	Address                string `mapstructure:"address"`
-	TLSCaCert              string `mapstructure:"tls-ca-cert"`
+	TLSCertFile            string `mapstructure:"tls-cert-file"`
 	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
 	TLSDisable             bool   `mapstructure:"tls-disable"`
 	AuthFile               string `mapstructure:"auth-file"`

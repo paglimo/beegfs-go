@@ -43,16 +43,17 @@ func main() {
 	pflag.Int("log.max-size", 1000, "When log.type is 'logfile' the maximum size of the log.file in megabytes before it is rotated.")
 	pflag.Int("log.num-rotated-files", 5, "When log.type is 'logfile' the maximum number old log.file(s) to keep when log.max-size is reached and the log is rotated.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
-	pflag.String("server.address", "127.0.0.1:9011", "The hostname:port where BeeSync should listen for work requests.")
-	pflag.String("server.tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of the BeeSync gRPC server.")
-	pflag.String("server.tls-key-file", "/etc/beegfs/key.pem", "Path to a key file belonging to the certificate for the BeeSync gRPC server.")
+	pflag.String("server.address", "127.0.0.1:9011", "The hostname:port where this Sync node should listen for work requests.")
+	pflag.String("server.tls-cert-file", "/etc/beegfs/cert.pem", "Path to a certificate file that provides the identify of this Sync node's gRPC server.")
+	pflag.String("server.tls-key-file", "/etc/beegfs/key.pem", "Path to the key file belonging to the certificate for this Sync node's gRPC server.")
+	pflag.Bool("server.tls-disable", false, "Disable TLS entirely for gRPC communication to this Sync node's gRPC server.")
 	pflag.String("manager.journal-db", "/var/lib/beegfs/sync/journal.badger", "The path where a journal of all work requests assigned to this node will be kept.")
 	pflag.String("manager.job-db", "/var/lib/beegfs/sync/job.badger", "The path where a database of all jobs with active work requests on this node is stored.")
 	pflag.Int("manager.active-work-queue-size", 50000, "The number of work requests to keep in memory. Set this as high as possible, ideally large enough it can contain all work requests assigned to this node.")
 	pflag.Int("manager.num-workers", runtime.GOMAXPROCS(0), "The number of workers used to execute work requests in parallel. By default this is automatically set to the number of CPUs.")
-	pflag.String("remote.tls-ca-cert", "", "Use a CA certificate (signed or self-signed) for server verification. Leave empty to use the system's default certificate pool to verify the server.")
+	pflag.String("remote.tls-cert-file", "/etc/beegfs/cert.pem", "Use the specified certificate to verify and encrypt gRPC traffic to the Remote node. Leave empty to only use the system's default certificate pool.")
 	pflag.Bool("remote.tls-disable-verification", false, "If TLS verification should be disabled when connecting to BeeGFS Remote (not recommended).")
-	pflag.Bool("remote.tls-disable", false, "If TLS should be disabled when connecting to BeeGFS Remote (not recommended).")
+	pflag.Bool("remote.tls-disable", false, "Disable TLS entirely for gRPC communication to the Remote node.")
 	// Hidden flags:
 	pflag.Int("developer.perf-profiling-port", 0, "Specify a port where performance profiles will be made available on the localhost via pprof (0 disables performance profiling).")
 	pflag.CommandLine.MarkHidden("developer.perf-profiling-port")
@@ -127,7 +128,7 @@ Using environment variables:
 
 	beeRemoteClient, err := beeremote.New(initialCfg.BeeRemote)
 	if err != nil {
-		logger.Fatal("failed to initialize BeeRemote client", zap.Error(err))
+		logger.Fatal("failed to initialize Remote gRPC client", zap.Error(err))
 	}
 
 	workMgr, err := workmgr.NewAndStart(logger.Logger, initialCfg.WorkMgr, beeRemoteClient, mountPoint)
@@ -137,7 +138,7 @@ Using environment variables:
 
 	jobServer, err := server.New(logger.Logger, initialCfg.Server, workMgr)
 	if err != nil {
-		logger.Fatal("failed to initialize BeeRemote server", zap.Error(err))
+		logger.Fatal("failed to initialize Sync gRPC server", zap.Error(err))
 	}
 	go jobServer.ListenAndServe()
 

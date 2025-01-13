@@ -15,7 +15,7 @@ import (
 type Config struct {
 	// Dynamic configuration is typically set by BeeRemote through the gRPC server.
 	dynamic                *flex.BeeRemoteNode
-	TlsCaCert              string `mapstructure:"tls-ca-cert"`
+	TlsCertFile            string `mapstructure:"tls-cert-file"`
 	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
 	TlsDisable             bool   `mapstructure:"tls-disable"`
 }
@@ -87,8 +87,15 @@ func (c *Client) UpdateConfig(newCfg *flex.BeeRemoteNode) error {
 		c.Provider = &MockProvider{}
 		return nil
 	} else if c.config.dynamic.Address != "" {
-		c.Provider = &grpcProvider{}
-		return c.init(c.config)
+		newProvider := &grpcProvider{}
+		if err := newProvider.init(c.config); err != nil {
+			return fmt.Errorf("unable to initialize Remote client: %w", err)
+		}
+		// Note when adding new Providers, this should only be set to a fully initialized provider.
+		// Even if this function returns an error, the connection handling logic will still call
+		// disconnect if the provider is not nil. Depending on the Provider this may cause a panic.
+		c.Provider = newProvider
+		return nil
 	}
 	return ErrInvalidAddress
 }

@@ -32,8 +32,8 @@ func newBeeSyncNode(baseNode *baseNode) Worker {
 func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex.BulkUpdateWorkRequest) (bool, error) {
 	var cert []byte
 	var err error
-	if n.config.TlsCaCert != "" {
-		cert, err = os.ReadFile(n.config.TlsCaCert)
+	if !n.config.TlsDisable && n.config.TlsCertFile != "" {
+		cert, err = os.ReadFile(n.config.TlsCertFile)
 		if err != nil {
 			return false, fmt.Errorf("reading certificate file failed: %w", err)
 		}

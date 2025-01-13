@@ -19,7 +19,7 @@ mount-point = "/mnt/beegfs"
 [management]
 address = "127.0.0.1:8010"
 auth-file = "/etc/beegfs/conn.auth"
-tls-ca-cert = "/etc/beegfs/cert.pem"
+tls-cert-file = "/etc/beegfs/cert.pem"
 tls-disable-verification = false
 tls-disable = false
 
@@ -31,6 +31,7 @@ type = 'syslog'
 address = "0.0.0.0:9010"
 tls-cert-file = "/etc/beegfs/cert.pem"
 tls-key-file = "/etc/beegfs/key.pem"
+tls-disable = false
 
 [job]
 path-db = "/var/lib/beegfs/remote/path.badger"
@@ -44,7 +45,7 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # name = "beesync-01"
 # type = "beesync"
 # address = "localhost:9011"
-# tls-ca-cert = "/etc/beegfs/cert.pem"
+# tls-cert-file = "/etc/beegfs/cert.pem"
 # tls-disable-verification = false
 # tls-disable = false
 
@@ -53,7 +54,7 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # name = "beesync-02"
 # type = "beesync"
 # address = "localhost:9012"
-# tls-ca-cert = "/etc/beegfs/cert.pem"
+# tls-cert-file = "/etc/beegfs/cert.pem"
 # tls-disable-verification = false
 # tls-disable = false
 
@@ -124,13 +125,13 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
 # cannot verify the management node is the expected one.
 
-# tls-ca-cert: Specify the path to a trusted Certificate Authority (CA) certificate for verifying
-# the Management node's identity. If left empty, the system's default certificate pool will be used
-# to verify the node. Alternatively, a path to a specific CA certificate (either signed by a trusted
-# authority or self-signed) can be provided. Example: /etc/beegfs/cert.pem
+# tls-cert-file: Specify the path to a certificate used to verify the identity of the Management
+# node and to encrypt communication. If this parameter is left empty, the application will use the
+# system's default certificate pool. This parameter is ignored if tls-disable is set. 
+# Example: /etc/beegfs/cert.pem
 
-# tls-disable: Set to true to send all gRPC messages including potentially sensitive information
-# about file paths/names inside the file system will be sent in clear text over the network.
+# tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
 
 # auth-file: The file containing the shared secret for BeeGFS connection authentication.
 
@@ -179,6 +180,9 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 
 # tls-key-file: The private key file belonging to tls-cert-file.
 
+# tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
+
 
 #
 # --- Section 3.4: [Job Settings] ---
@@ -218,17 +222,17 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 
 # address:  The IP/hostname and port where the worker node is listening for work requests.
 
-# tls-ca-cert: Specify the path to a trusted Certificate Authority (CA) certificate for verifying
-# the worker node's identity. If left empty, the system's default certificate pool will be used to
-# verify the node. Alternatively, a path to a specific CA certificate (either signed by a trusted
-# authority or self-signed) can be provided. Example: /etc/beegfs/cert.pem
+# tls-cert-file: Specify the path to a certificate used to verify the identity of the worker node
+# and to encrypt communication. If this parameter is left empty, the application will use the
+# system's default certificate pool. This parameter is ignored if tls-disable is set. 
+# Example: /etc/beegfs/cert.pem
 
 # tls-disable-verification: Set to true to skip verifying the worker's TLS certificate. This allows
 # traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it cannot
 # verify the worker is the expected one.
 
-# tls-disable: Set to true to disable TLS encryption and send gRPC messages in clear text over the
-# network. This is discouraged and could leak sensitive information, such as file paths/names.
+# tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
 
 
 #

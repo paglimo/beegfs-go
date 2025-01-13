@@ -18,6 +18,7 @@ type Config struct {
 	Address     string `mapstructure:"address"`
 	TlsCertFile string `mapstructure:"tls-cert-file"`
 	TlsKeyFile  string `mapstructure:"tls-key-file"`
+	TlsDisable  bool   `mapstructure:"tls-disable"`
 }
 
 var _ flex.WorkerNodeServer = &WorkerNodeServer{}
@@ -44,14 +45,14 @@ func New(log *zap.Logger, config Config, workMgr *workmgr.Manager) (*WorkerNodeS
 	}
 
 	var grpcServerOpts []grpc.ServerOption
-	if s.TlsCertFile != "" && s.TlsKeyFile != "" {
+	if !s.TlsDisable && s.TlsCertFile != "" && s.TlsKeyFile != "" {
 		creds, err := credentials.NewServerTLSFromFile(s.TlsCertFile, s.TlsKeyFile)
 		if err != nil {
 			return nil, err
 		}
 		grpcServerOpts = append(grpcServerOpts, grpc.Creds(creds))
 	} else {
-		s.log.Warn("not using TLS because certificate and/or key were not specified")
+		s.log.Warn("not using TLS because it was explicitly disabled or a certificate and/or key were not specified")
 	}
 	s.grpcServer = grpc.NewServer(grpcServerOpts...)
 	flex.RegisterWorkerNodeServer(s.grpcServer, &s)

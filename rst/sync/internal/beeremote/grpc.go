@@ -23,8 +23,8 @@ var _ Provider = &grpcProvider{}
 func (c *grpcProvider) init(config Config) error {
 	var cert []byte
 	var err error
-	if config.TlsCaCert != "" {
-		cert, err = os.ReadFile(config.TlsCaCert)
+	if !config.TlsDisable && config.TlsCertFile != "" {
+		cert, err = os.ReadFile(config.TlsCertFile)
 		if err != nil {
 			return fmt.Errorf("reading certificate file failed: %w", err)
 		}

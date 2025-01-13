@@ -24,14 +24,11 @@ const (
 
 // Configuration for a single worker node.
 type Config struct {
-	ID      string `mapstructure:"id"`
-	Name    string `mapstructure:"name"`
-	Type    Type   `mapstructure:"type"`
-	Address string `mapstructure:"address"`
-	// If TlsDisable is unset it will default to "false", ensuring insecure
-	// connections are not allowed by default.
-	TlsCaCert              string `mapstructure:"tls-ca-cert"`
-	TLSCaPathMustExist     bool   `mapstructure:"tls-ca-cert-must-exist"`
+	ID                     string `mapstructure:"id"`
+	Name                   string `mapstructure:"name"`
+	Type                   Type   `mapstructure:"type"`
+	Address                string `mapstructure:"address"`
+	TlsCertFile            string `mapstructure:"tls-cert-file"`
 	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
 	TlsDisable             bool   `mapstructure:"tls-disable"`
 	MaxReconnectBackOff    int    `mapstructure:"max-reconnect-back-off"`
