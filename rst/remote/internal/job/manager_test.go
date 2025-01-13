@@ -596,12 +596,11 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_UNKNOWN)
 	expectedStatus.SetMessage("test expects an error communicating to the node")
 
-	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
 	updateJobRequest := beeremote.UpdateJobRequest_builder{
 		ByExactPath: proto.String("/test/myfile"),
 		NewState:    beeremote.UpdateJobRequest_CANCELLED,
 	}.Build()
-	jobManager.UpdateJob(&updateJobRequest)
+	jobManager.UpdateJob(updateJobRequest)
 
 	getJobRequestsByID := beeremote.GetJobsRequest_builder{
 		ByJobIdAndPath: beeremote.GetJobsRequest_QueryIdAndPath_builder{
@@ -626,7 +625,7 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_CANCELLED)
 	expectedStatus.SetMessage("test expects a cancelled request")
 
-	jobManager.UpdateJob(&updateJobRequest)
+	jobManager.UpdateJob(updateJobRequest)
 
 	getJobRequestsByID = beeremote.GetJobsRequest_builder{
 		ByJobIdAndPath: beeremote.GetJobsRequest_QueryIdAndPath_builder{
@@ -657,7 +656,6 @@ func TestManageErrorHandling(t *testing.T) {
 	jobID := jobResponse.GetJob().GetId()
 
 	// We should not be able to delete jobs in an unknown state:
-	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
 	updateJobRequest = beeremote.UpdateJobRequest_builder{
 		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
 			JobId: jobID,
@@ -665,7 +663,7 @@ func TestManageErrorHandling(t *testing.T) {
 		}.Build(),
 		NewState: beeremote.UpdateJobRequest_DELETED,
 	}.Build()
-	updateJobResponse, err := jobManager.UpdateJob(&updateJobRequest)
+	updateJobResponse, err := jobManager.UpdateJob(updateJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, beeremote.Job_UNKNOWN, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
 
@@ -678,7 +676,6 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_CANCELLED)
 	expectedStatus.SetMessage("test expects a cancelled request")
 
-	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
 	updateJobRequest = beeremote.UpdateJobRequest_builder{
 		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
 			JobId: jobID,
@@ -686,7 +683,7 @@ func TestManageErrorHandling(t *testing.T) {
 		}.Build(),
 		NewState: beeremote.UpdateJobRequest_CANCELLED,
 	}.Build()
-	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
+	updateJobResponse, err = jobManager.UpdateJob(updateJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
 
@@ -702,7 +699,6 @@ func TestManageErrorHandling(t *testing.T) {
 
 	// Even if we cannot contact the worker nodes to determine the WR statuses, we can still force
 	// the job to be cancelled:
-	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
 	updateJobRequest = beeremote.UpdateJobRequest_builder{
 		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
 			JobId: jobID,
@@ -712,7 +708,7 @@ func TestManageErrorHandling(t *testing.T) {
 		ForceUpdate: true,
 	}.Build()
 
-	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
+	updateJobResponse, err = jobManager.UpdateJob(updateJobRequest)
 	require.NoError(t, err)
 	require.True(t, updateJobResponse.GetOk())
 	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
@@ -732,7 +728,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	// Intentionally don't create any files in the MockFS.
 
 	// We don't need a full worker manager for this test.
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Type: &flex.RemoteStorageTarget_S3_{}}.Build()}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, S3: &flex.RemoteStorageTarget_S3{}}.Build()}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 
