@@ -60,7 +60,8 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 		"Parts":     reflect.TypeOf([]*flex.Work_Part{}),
 	}
 
-	workType := reflect.TypeOf(flex.Work{})
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	workType := reflect.TypeOf(&flex.Work{})
 	for expectedField, expectedType := range expectedUserFields {
 		field, found := workType.FieldByName(expectedField)
 		assert.True(t, found, "a field was removed from the Work message (update test and verify encoding via Gob is not broken)")
@@ -77,5 +78,6 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	assert.True(t, state && sizeCache && unknownFields, "an expected internal protobuf field was not found (update test and verify encoding via Gob is not broken)")
 
 	// Verify number of user defined + internal fields haven't changed:
-	assert.Equal(t, 8, reflect.TypeOf(flex.Work{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	assert.Equal(t, 8, reflect.TypeOf(&flex.Work{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
 }

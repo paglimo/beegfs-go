@@ -309,14 +309,14 @@ func TestUpdateRequests(t *testing.T) {
 	time.Sleep(defaultSleepTime * time.Second)
 
 	// Now try to cancel the request:
-	updateRequest := flex.UpdateWorkRequest{
+	updateRequest := flex.UpdateWorkRequest_builder{
 		JobId:     "1",
 		RequestId: "2",
 		NewState:  flex.UpdateWorkRequest_CANCELLED,
-	}
+	}.Build()
 
 	// We should be able to cancel requests with an error:
-	resp, err = mgr.UpdateWork(&updateRequest)
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, flex.Work_CANCELLED, resp.GetStatus().GetState())
@@ -336,7 +336,7 @@ func TestUpdateRequests(t *testing.T) {
 	time.Sleep(defaultSleepTime * time.Second)
 
 	// We should not be able to cancel completed requests:
-	resp, err = mgr.UpdateWork(&updateRequest)
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.Error(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, flex.Work_COMPLETED, resp.GetStatus().GetState())
@@ -372,7 +372,7 @@ func TestUpdateRequests(t *testing.T) {
 
 	// Then cancel the inactive request:
 	updateRequest.SetRequestId("4")
-	resp, err = mgr.UpdateWork(&updateRequest)
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, flex.Work_CANCELLED, resp.GetStatus().GetState())

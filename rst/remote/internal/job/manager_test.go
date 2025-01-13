@@ -109,15 +109,15 @@ func TestManage(t *testing.T) {
 	require.NoError(t, jobManager.Start())
 
 	// When we initially submit a job the state should be scheduled:
-	testJobRequest := beeremote.JobRequest{
+	testJobRequest := beeremote.JobRequest_builder{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: flex.MockJob_builder{NumTestSegments: 4}.Build()},
+		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
 		RemoteStorageTarget: 0,
-	}
+	}.Build()
 
-	_, err = jobManager.SubmitJobRequest(&testJobRequest)
+	_, err = jobManager.SubmitJobRequest(testJobRequest)
 	require.NoError(t, err)
 
 	getJobRequestsByPrefix := beeremote.GetJobsRequest_builder{
@@ -140,7 +140,7 @@ func TestManage(t *testing.T) {
 	scheduledJobID := getJobsResponse.GetResults()[0].GetJob().GetId()
 
 	// If we try to submit another job for the same path with the same RST an error should be returned:
-	jr, err := jobManager.SubmitJobRequest(&testJobRequest)
+	jr, err := jobManager.SubmitJobRequest(testJobRequest)
 	assert.Nil(t, jr)
 	assert.Error(t, err)
 
@@ -156,25 +156,23 @@ func TestManage(t *testing.T) {
 	assert.Equal(t, beeremote.Job_SCHEDULED, getJobsResponse.GetResults()[0].GetJob().GetStatus().GetState())
 
 	// If we schedule a job for a different RST it should be scheduled:
-	testJobRequest2 := beeremote.JobRequest{
+	testJobRequest2 := beeremote.JobRequest_builder{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: flex.MockJob_builder{NumTestSegments: 4}.Build()},
+		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
 		RemoteStorageTarget: 1,
-	}
-	jr, err = jobManager.SubmitJobRequest(&testJobRequest2)
+	}.Build()
+	jr, err = jobManager.SubmitJobRequest(testJobRequest2)
 	assert.NoError(t, err)
 	assert.Equal(t, beeremote.Job_SCHEDULED, jr.GetJob().GetStatus().GetState())
 
 	// If we cancel a job the state of the job and work requests should update:
-	updateJobRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByExactPath{
-			ByExactPath: "/test/myfile",
-		},
-		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
-	jobManager.JobUpdates <- &updateJobRequest
+	updateJobRequest := beeremote.UpdateJobRequest_builder{
+		ByExactPath: proto.String("/test/myfile"),
+		NewState:    beeremote.UpdateJobRequest_CANCELLED,
+	}.Build()
+	jobManager.JobUpdates <- updateJobRequest
 	time.Sleep(2 * time.Second)
 
 	getJobRequestsByID := beeremote.GetJobsRequest_builder{
@@ -271,39 +269,37 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	require.NoError(t, jobManager.Start())
 
 	// Submit two jobs for testing:
-	testJobRequest1 := beeremote.JobRequest{
+	testJobRequest1 := beeremote.JobRequest_builder{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: flex.MockJob_builder{NumTestSegments: 4}.Build()},
+		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
 		RemoteStorageTarget: 0,
-	}
-	testJobRequest2 := beeremote.JobRequest{
+	}.Build()
+	testJobRequest2 := beeremote.JobRequest_builder{
 		Path:                "/test/myfile2",
 		Name:                "test job 2",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: flex.MockJob_builder{NumTestSegments: 2}.Build()},
+		Mock:                flex.MockJob_builder{NumTestSegments: 2}.Build(),
 		RemoteStorageTarget: 1,
-	}
+	}.Build()
 
-	_, err = jobManager.SubmitJobRequest(&testJobRequest1)
+	_, err = jobManager.SubmitJobRequest(testJobRequest1)
 	require.NoError(t, err)
 
 	// We only interact with the second job request by its job ID:
-	submitJobResponse2, err := jobManager.SubmitJobRequest(&testJobRequest2)
+	submitJobResponse2, err := jobManager.SubmitJobRequest(testJobRequest2)
 	require.NoError(t, err)
 
 	////////////////////////////////////
 	// First test deleting jobs by path:
 	////////////////////////////////////
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
-	deleteJobByPathRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByExactPath{
-			ByExactPath: testJobRequest1.GetPath(),
-		},
-		NewState: beeremote.UpdateJobRequest_DELETED,
-	}
-	deleteJobByPathResponse, err := jobManager.UpdateJob(&deleteJobByPathRequest)
+	deleteJobByPathRequest := beeremote.UpdateJobRequest_builder{
+		ByExactPath: proto.String(testJobRequest1.GetPath()),
+		NewState:    beeremote.UpdateJobRequest_DELETED,
+	}.Build()
+	deleteJobByPathResponse, err := jobManager.UpdateJob(deleteJobByPathRequest)
 	require.NoError(t, err)                          // Only internal errors should return an error.
 	assert.False(t, deleteJobByPathResponse.GetOk()) // Response should not be okay.
 	assert.Contains(t, deleteJobByPathResponse.GetMessage(), "because it has not reached a terminal state")
@@ -319,13 +315,11 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 
 	// Cancel the job:
-	cancelJobByPathRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByExactPath{
-			ByExactPath: testJobRequest1.GetPath(),
-		},
-		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
-	cancelJobByPathResponse, err := jobManager.UpdateJob(&cancelJobByPathRequest)
+	cancelJobByPathRequest := beeremote.UpdateJobRequest_builder{
+		ByExactPath: proto.String(testJobRequest1.GetPath()),
+		NewState:    beeremote.UpdateJobRequest_CANCELLED,
+	}.Build()
+	cancelJobByPathResponse, err := jobManager.UpdateJob(cancelJobByPathRequest)
 	require.NoError(t, err)
 	assert.True(t, cancelJobByPathResponse.GetOk())
 
@@ -336,7 +330,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 
 	// Then delete it:
-	deleteJobByPathResponse, err = jobManager.UpdateJob(&deleteJobByPathRequest)
+	deleteJobByPathResponse, err = jobManager.UpdateJob(deleteJobByPathRequest)
 	assert.NoError(t, err)
 	assert.True(t, deleteJobByPathResponse.GetOk())
 	assert.Equal(t, "job scheduled for deletion", deleteJobByPathResponse.GetResults()[0].GetJob().GetStatus().GetMessage())
@@ -356,16 +350,14 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	////////////////////////////////
 
 	// If we delete a job that has not yet reached a terminal state, nothing should happen:
-	deleteJobByIDRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: submitJobResponse2.GetJob().GetId(),
-				Path:  submitJobResponse2.GetJob().GetRequest().GetPath(),
-			}.Build(),
-		},
+	deleteJobByIDRequest := beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: submitJobResponse2.GetJob().GetId(),
+			Path:  submitJobResponse2.GetJob().GetRequest().GetPath(),
+		}.Build(),
 		NewState: beeremote.UpdateJobRequest_DELETED,
-	}
-	updateJobByIDResponse, err := jobManager.UpdateJob(&deleteJobByIDRequest)
+	}.Build()
+	updateJobByIDResponse, err := jobManager.UpdateJob(deleteJobByIDRequest)
 	require.NoError(t, err)                        // Only internal errors should return an error.
 	assert.False(t, updateJobByIDResponse.GetOk()) // However the response should not be okay.
 	assert.Contains(t, updateJobByIDResponse.GetMessage(), "because it has not reached a terminal state")
@@ -380,16 +372,14 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 
 	// Cancel the job:
-	cancelJobByIDRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: submitJobResponse2.GetJob().GetId(),
-				Path:  submitJobResponse2.GetJob().GetRequest().GetPath(),
-			}.Build(),
-		},
+	cancelJobByIDRequest := beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: submitJobResponse2.GetJob().GetId(),
+			Path:  submitJobResponse2.GetJob().GetRequest().GetPath(),
+		}.Build(),
 		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
-	cancelJobByIDResponse, err := jobManager.UpdateJob(&cancelJobByIDRequest)
+	}.Build()
+	cancelJobByIDResponse, err := jobManager.UpdateJob(cancelJobByIDRequest)
 	require.NoError(t, err)
 	assert.True(t, cancelJobByIDResponse.GetOk())
 
@@ -400,7 +390,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 
 	// Then delete it:
-	updateJobByIDResponse, err = jobManager.UpdateJob(&deleteJobByIDRequest)
+	updateJobByIDResponse, err = jobManager.UpdateJob(deleteJobByIDRequest)
 	assert.NoError(t, err)
 	assert.True(t, updateJobByIDResponse.GetOk())
 	assert.Equal(t, "job scheduled for deletion", updateJobByIDResponse.GetResults()[0].GetJob().GetStatus().GetMessage())
@@ -422,7 +412,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	// Test deleting completed jobs:
 	////////////////////////////////
 
-	response, err := jobManager.SubmitJobRequest(&testJobRequest1)
+	response, err := jobManager.SubmitJobRequest(testJobRequest1)
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	// Complete the job by simulating a worker node updating the results.
@@ -442,35 +432,31 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 	}
 
 	// Refuse to cancel completed jobs:
-	updateJobByIDRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: response.GetJob().GetId(),
-				Path:  response.GetJob().GetRequest().GetPath(),
-			}.Build(),
-		},
+	updateJobByIDRequest := beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: response.GetJob().GetId(),
+			Path:  response.GetJob().GetRequest().GetPath(),
+		}.Build(),
 		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
-	cancelJobByIDResponse, err = jobManager.UpdateJob(&updateJobByIDRequest)
+	}.Build()
+	cancelJobByIDResponse, err = jobManager.UpdateJob(updateJobByIDRequest)
 	require.NoError(t, err)
 	assert.True(t, cancelJobByIDResponse.GetOk())
 	assert.Contains(t, cancelJobByIDResponse.GetMessage(), "rejecting update for completed job")
 
 	// Refuse to delete completed jobs by ID and path, the overall response should be ok:
 	updateJobByIDRequest.SetNewState(beeremote.UpdateJobRequest_DELETED)
-	deleteJobByIDResp, err := jobManager.UpdateJob(&updateJobByIDRequest)
+	deleteJobByIDResp, err := jobManager.UpdateJob(updateJobByIDRequest)
 	require.NoError(t, err)
 	assert.True(t, deleteJobByIDResp.GetOk())
 	assert.Contains(t, deleteJobByIDResp.GetMessage(), "rejecting update for completed job")
 
 	// Refuse to delete completed jobs by path, the overall response should be ok:
-	updateJobByPathRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByExactPath{
-			ByExactPath: response.GetJob().GetRequest().GetPath(),
-		},
-		NewState: beeremote.UpdateJobRequest_DELETED,
-	}
-	deleteJobByPathResp, err := jobManager.UpdateJob(&updateJobByPathRequest)
+	updateJobByPathRequest := beeremote.UpdateJobRequest_builder{
+		ByExactPath: proto.String(response.GetJob().GetRequest().GetPath()),
+		NewState:    beeremote.UpdateJobRequest_DELETED,
+	}.Build()
+	deleteJobByPathResp, err := jobManager.UpdateJob(updateJobByPathRequest)
 	require.NoError(t, err)
 	assert.True(t, deleteJobByPathResp.GetOk())
 	assert.Contains(t, deleteJobByPathResp.GetMessage(), "rejecting update for completed job")
@@ -486,7 +472,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 
 	// Deleting completed jobs by job ID and path is allowed when the update is forced:
 	updateJobByIDRequest.SetForceUpdate(true)
-	deleteJobByIDResp, err = jobManager.UpdateJob(&updateJobByIDRequest)
+	deleteJobByIDResp, err = jobManager.UpdateJob(updateJobByIDRequest)
 	require.NoError(t, err)
 	assert.True(t, deleteJobByIDResp.GetOk())
 	assert.Contains(t, deleteJobByIDResp.GetMessage(), "")
@@ -574,14 +560,14 @@ func TestManageErrorHandling(t *testing.T) {
 
 	// When we initially submit a job the state should be cancelled if any work
 	// requests aren't scheduled but were able to be cancelled:
-	testJobRequest := beeremote.JobRequest{
+	testJobRequest := beeremote.JobRequest_builder{
 		Path:                "/test/myfile",
 		Name:                "test job 1",
 		Priority:            3,
-		Type:                &beeremote.JobRequest_Mock{Mock: flex.MockJob_builder{NumTestSegments: 4}.Build()},
+		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
 		RemoteStorageTarget: 0,
-	}
-	jobManager.JobRequests <- &testJobRequest
+	}.Build()
+	jobManager.JobRequests <- testJobRequest
 	time.Sleep(2 * time.Second)
 	getJobRequestsByPrefix := beeremote.GetJobsRequest_builder{
 		ByPathPrefix:        proto.String("/"),
@@ -610,12 +596,11 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_UNKNOWN)
 	expectedStatus.SetMessage("test expects an error communicating to the node")
 
-	updateJobRequest := beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByExactPath{
-			ByExactPath: "/test/myfile",
-		},
-		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	updateJobRequest := beeremote.UpdateJobRequest_builder{
+		ByExactPath: proto.String("/test/myfile"),
+		NewState:    beeremote.UpdateJobRequest_CANCELLED,
+	}.Build()
 	jobManager.UpdateJob(&updateJobRequest)
 
 	getJobRequestsByID := beeremote.GetJobsRequest_builder{
@@ -666,27 +651,26 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_FAILED)
 	expectedStatus.SetMessage("test expects a failed request")
 
-	jobResponse, err := jobManager.SubmitJobRequest(&testJobRequest)
+	jobResponse, err := jobManager.SubmitJobRequest(testJobRequest)
 	assert.Error(t, err)
 	assert.Equal(t, beeremote.Job_UNKNOWN, jobResponse.GetJob().GetStatus().GetState())
 	jobID := jobResponse.GetJob().GetId()
 
 	// We should not be able to delete jobs in an unknown state:
-	updateJobRequest = beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: jobID,
-				Path:  testJobRequest.GetPath(),
-			}.Build(),
-		},
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	updateJobRequest = beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: jobID,
+			Path:  testJobRequest.GetPath(),
+		}.Build(),
 		NewState: beeremote.UpdateJobRequest_DELETED,
-	}
+	}.Build()
 	updateJobResponse, err := jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, beeremote.Job_UNKNOWN, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
 
 	// We should reject new jobs while there is a job in an unknown state:
-	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
+	jobResponse, err = jobManager.SubmitJobRequest(testJobRequest)
 	require.Error(t, err)
 	assert.Nil(t, jobResponse)
 
@@ -694,15 +678,14 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_CANCELLED)
 	expectedStatus.SetMessage("test expects a cancelled request")
 
-	updateJobRequest = beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: jobID,
-				Path:  testJobRequest.GetPath(),
-			}.Build(),
-		},
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	updateJobRequest = beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: jobID,
+			Path:  testJobRequest.GetPath(),
+		}.Build(),
 		NewState: beeremote.UpdateJobRequest_CANCELLED,
-	}
+	}.Build()
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
 	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
@@ -712,23 +695,22 @@ func TestManageErrorHandling(t *testing.T) {
 	expectedStatus.SetState(flex.Work_UNKNOWN)
 	expectedStatus.SetMessage("test expects the work request status is unknown")
 
-	jobResponse, err = jobManager.SubmitJobRequest(&testJobRequest)
+	jobResponse, err = jobManager.SubmitJobRequest(testJobRequest)
 	assert.Error(t, err)
 	assert.Equal(t, beeremote.Job_UNKNOWN, jobResponse.GetJob().GetStatus().GetState())
 	jobID = jobResponse.GetJob().GetId()
 
 	// Even if we cannot contact the worker nodes to determine the WR statuses, we can still force
 	// the job to be cancelled:
-	updateJobRequest = beeremote.UpdateJobRequest{
-		Query: &beeremote.UpdateJobRequest_ByIdAndPath{
-			ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
-				JobId: jobID,
-				Path:  testJobRequest.GetPath(),
-			}.Build(),
-		},
+	// DO NOT SUBMIT: fix callers to work with a pointer (go/goprotoapi-findings#message-value)
+	updateJobRequest = beeremote.UpdateJobRequest_builder{
+		ByIdAndPath: beeremote.UpdateJobRequest_QueryIdAndPath_builder{
+			JobId: jobID,
+			Path:  testJobRequest.GetPath(),
+		}.Build(),
 		NewState:    beeremote.UpdateJobRequest_CANCELLED,
 		ForceUpdate: true,
-	}
+	}.Build()
 
 	updateJobResponse, err = jobManager.UpdateJob(&updateJobRequest)
 	require.NoError(t, err)
@@ -750,7 +732,7 @@ func TestGenerateSubmissionFailure(t *testing.T) {
 	// Intentionally don't create any files in the MockFS.
 
 	// We don't need a full worker manager for this test.
-	remoteStorageTargets := []*flex.RemoteStorageTarget{{Id: 1, Type: &flex.RemoteStorageTarget_S3_{}}}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Type: &flex.RemoteStorageTarget_S3_{}}.Build()}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 
