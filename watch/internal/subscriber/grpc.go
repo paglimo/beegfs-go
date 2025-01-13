@@ -59,8 +59,8 @@ type ComparableGRPCSubscriber struct {
 func (s *GRPCSubscriber) Connect() (retry bool, err error) {
 
 	var cert []byte
-	if s.TlsCaCert != "" {
-		cert, err = os.ReadFile(s.TlsCaCert)
+	if !s.TlsDisable && s.TLSCertFile != "" {
+		cert, err = os.ReadFile(s.TLSCertFile)
 		if err != nil {
 			return false, fmt.Errorf("reading certificate file failed: %w", err)
 		}

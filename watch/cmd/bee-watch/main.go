@@ -39,13 +39,11 @@ const (
 
 func main() {
 
-	// All application configuration (AppConfig) can be set using flags. The
-	// default values specified here will be used as configuration defaults.
-	// Note defaults for configuration specified using a slice are not set here.
-	// Notably subscriber defaults are handled as part of initializing a
-	// particular subscriber type.
+	// The default values specified here will be used as configuration defaults. Note defaults for
+	// configuration specified using a slice are not set here. Notably subscriber defaults are
+	// handled as part of initializing a particular subscriber type.
 	pflag.Bool("version", false, "Print the version then exit.")
-	pflag.String("cfg-file", "", "The path to the a configuration file (can be omitted to set all configuration using flags and/or environment variables). When subscribers are configured using a file, they can be updated without restarting BeeWatch.")
+	pflag.String("cfg-file", "", "The path to the configuration file containing the list of subscribers and other configuration.")
 	pflag.String("log.type", "stderr", "Where log messages should be sent ('stderr', 'stdout', 'syslog', 'logfile').")
 	pflag.String("log.file", "/var/log/beegfs/beegfs-watch.log", "The path to the desired log file when logType is 'logfile' (if needed the directory and all parent directories will be created).")
 	pflag.Int8("log.level", 3, "Adjust the logging level (0=Fatal, 1=Error, 2=Warn, 3=Info, 4+5=Debug).")
@@ -54,12 +52,12 @@ func main() {
 	pflag.Bool("log.incoming-event-rate", false, "Output the rate of incoming events per second.")
 	pflag.Bool("log.developer", false, "Enable developer logging including stack traces and setting the equivalent of log.level=5 and log.type=stdout (all other log settings are ignored).")
 	pflag.String("management.address", "127.0.0.1:8010", "The hostname:port of the BeeGFS management service.")
-	pflag.String("management.tls-ca-cert", "/etc/beegfs/cert.pem", "Use a CA certificate (signed or self-signed) for server verification.")
-	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication.")
-	pflag.Bool("management.tls-disable", false, "Disable TLS for gRPC communication.")
+	pflag.String("management.tls-cert-file", "/etc/beegfs/cert.pem", "Use the specified certificate to verify and encrypt gRPC traffic to the Management node. Leave empty to only use the system's default certificate pool.")
+	pflag.Bool("management.tls-disable-verification", false, "Disable TLS verification for gRPC communication to the Management node.")
+	pflag.Bool("management.tls-disable", false, "Disable TLS entirely for gRPC communication to the Management node.")
 	pflag.String("management.auth-file", "/etc/beegfs/conn.auth", "The file containing the connection authentication shared secret.")
 	pflag.Bool("management.auth-disable", false, "Disable connection authentication.")
-	pflag.Int("handler.max-reconnect-back-off", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential back off. This is the maximum time in seconds between reconnection attempts to avoid increasing the back off timer forever.")
+	pflag.Int("handler.max-reconnect-backoff", 60, "When a connection cannot be made to a subscriber subscriber reconnection attempts will be made with an exponential backoff. This is the maximum time in seconds between reconnection attempts to avoid increasing the backoff timer forever.")
 	pflag.Int("handler.max-wait-for-response-after-connect", 2, "When a subscriber connects/reconnects wait this long for the subscriber to acknowledge the sequence ID of the last event it received successfully. This prevents sending duplicate events if the connection was disrupted unexpectedly.")
 	pflag.Int("handler.poll-frequency", 1, "How often subscribers should poll the metadata buffer for new events (causes more CPU utilization when idle).")
 	// Hidden flags:
@@ -144,9 +142,9 @@ Using environment variables:
 	// The mgmtd gRPC client expects the cert and auth file to already be read from their respective
 	// sources (files in this case) and provided as a byte slice.
 	var cert []byte
-	if initialCfg.Management.TLSCaCert != "" {
-		cert, err = os.ReadFile(initialCfg.Management.TLSCaCert)
-		if err != nil && pflag.Lookup("management.tls-ca-cert").Changed {
+	if !initialCfg.Management.TLSDisable && initialCfg.Management.TLSCertFile != "" {
+		cert, err = os.ReadFile(initialCfg.Management.TLSCertFile)
+		if err != nil {
 			logger.Fatal("unable to read management TLS certificate", zap.Error(err))
 		}
 	}

@@ -32,7 +32,7 @@ type Handler struct {
 }
 
 type HandlerConfig struct {
-	MaxReconnectBackOff            int `mapstructure:"max-reconnect-back-off"`
+	MaxReconnectBackOff            int `mapstructure:"max-reconnect-backoff"`
 	MaxWaitForResponseAfterConnect int `mapstructure:"max-wait-for-response-after-connect"`
 	PollFrequency                  int `mapstructure:"poll-frequency"`
 }

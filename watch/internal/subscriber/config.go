@@ -22,7 +22,7 @@ type Config struct {
 // GrpcConfig defines configuration options that only apply to gRPC subscribers.
 type GrpcConfig struct {
 	Address                string `mapstructure:"grpc-address"`
-	TlsCaCert              string `mapstructure:"grpc-tls-ca-cert"`
+	TLSCertFile            string `mapstructure:"grpc-tls-cert-file"`
 	TLSDisableVerification bool   `mapstructure:"grpc-tls-disable-verification"`
 	TlsDisable             bool   `mapstructure:"grpc-tls-disable"`
 	DisconnectTimeout      int    `mapstructure:"grpc-disconnect-timeout"`

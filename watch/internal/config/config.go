@@ -22,7 +22,6 @@ var _ subscribermgr.Configurer = &AppConfig{}
 // IMPORTANT: When updating/refactoring AppConfig these changes need to be
 // manually applied to the pflags defined in main.go.
 type AppConfig struct {
-	CfgFile     string                      `mapstructure:"cfg-file"`
 	Log         logger.Config               `mapstructure:"log"`
 	Management  MgmtdConfig                 `mapstructure:"management"`
 	Handler     subscribermgr.HandlerConfig `mapstructure:"handler"`
@@ -36,7 +35,7 @@ type AppConfig struct {
 
 type MgmtdConfig struct {
 	Address                string `mapstructure:"address"`
-	TLSCaCert              string `mapstructure:"tls-ca-cert"`
+	TLSCertFile            string `mapstructure:"tls-cert-file"`
 	TLSDisableVerification bool   `mapstructure:"tls-disable-verification"`
 	TLSDisable             bool   `mapstructure:"tls-disable"`
 	AuthFile               string `mapstructure:"auth-file"`
@@ -118,10 +117,6 @@ func (c *AppConfig) ValidateConfig() error {
 		if c.Metadata[0].EventBufferSize == 0 {
 			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("the event-buffer-size for this metadata service cannot be 0"))
 		}
-	}
-
-	if len(c.Subscribers) == 0 && c.CfgFile == "" {
-		multiErr.Errors = append(multiErr.Errors, fmt.Errorf("no subscribers were configured and no subscribers can be added later (no configuration file was specified)"))
 	}
 
 	if len(multiErr.Errors) > 0 {

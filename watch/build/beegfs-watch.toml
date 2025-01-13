@@ -19,7 +19,7 @@ type = 'syslog'
 
 [management]
 address = "127.0.0.1:8010"
-tls-ca-cert = ""
+tls-cert-file = "/etc/beegfs/cert.pem"
 tls-disable-verification = false
 tls-disable = false
 
@@ -29,7 +29,7 @@ event-buffer-size = 10000000
 event-buffer-gc-frequency = 100000
 
 [handler]
-max-reconnect-back-off = 60
+max-reconnect-backoff = 60
 max-wait-for-response-after-connect = 2
 poll-frequency = 1
 
@@ -43,9 +43,9 @@ poll-frequency = 1
 # name = 'subscriber-1'
 # type = 'grpc'
 # grpc-address = 'localhost:50051'
+# grpc-tls-cert-file = '/etc/beegfs/cert.pem'
 # grpc-tls-disable-verification = false
 # grpc-tls-disable = false
-# grpc-tls-ca-cert = ''
 # grpc-disconnect-timeout = 30
 
 # [[subscriber]]
@@ -53,9 +53,9 @@ poll-frequency = 1
 # name = 'subscriber2'
 # type = 'grpc'
 # grpc-address = 'localhost:50052'
+# grpc-tls-cert-file = '/etc/beegfs/cert.pem'
 # grpc-tls-disable-verification = false
 # grpc-tls-disable = false
-# grpc-tls-ca-cert = ''
 # grpc-disconnect-timeout = 30
 
 
@@ -119,13 +119,13 @@ poll-frequency = 1
 # allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
 # cannot verify the management service is the expected one.
 
-# tls-ca-cert: Specify the path to a trusted Certificate Authority (CA) certificate for verifying
-# the Management node's identity. If left empty, the system's default certificate pool will be used
-# to verify the node. Alternatively, a path to a specific CA certificate (either signed by a trusted
-# authority or self-signed) can be provided. Example: /etc/beegfs/cert.pem
+# tls-cert-file: Specify the path to a certificate used to verify the identity of the Management
+# node and to encrypt communication. If this parameter is left empty, the application will use the
+# system's default certificate pool. This parameter is ignored if tls-disable is set. 
+# Example: /etc/beegfs/cert.pem
 
-# tls-disable: Set to true to send all gRPC messages including potentially sensitive information
-# about file paths/names inside the file system will be sent in clear text over the network.
+# grpc-tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
 
 #
 # --- Section 3.3: [[Metadata Settings]] ---
@@ -155,9 +155,9 @@ poll-frequency = 1
 # Configuration for subscriber handlers must be specified under [handler]. This configuration
 # applies to all subscribers and may be updated after the application has started.
 
-# max-reconnect-back-off: When a connection cannot be made to a subscriber subscriber reconnection
-# attempts will be made with an exponential back off. This is the maximum time in seconds between
-# reconnection attempts to avoid increasing the back off timer forever.
+# max-reconnect-backoff: When a connection cannot be made to a subscriber subscriber reconnection
+# attempts will be made with an exponential backoff. This is the maximum time in seconds between
+# reconnection attempts to avoid increasing the backoff timer forever.
 
 # max-wait-for-response-after-connect: When a subscriber connects/reconnects wait this long for the
 # subscriber to acknowledge the sequence ID of the last event it received successfully. This
@@ -193,8 +193,7 @@ poll-frequency = 1
 # The configuration options in this section must be specified under each [[subscriber]] when the
 # subscriber's type is set to 'grpc'.
 
-# grpc-address:
-# The IP address or hostname and port of the subscriber. No default.
+# grpc-address: The IP address or hostname and port of the subscriber. No default.
 
 # grpc-disconnect-timeout: When a local disconnect is requested, how long to wait (in seconds) for
 # the remote subscriber to also shutdown their end of the connection before just closing the
@@ -210,16 +209,14 @@ poll-frequency = 1
 # adding the necessary certificate(s) to the system running Watch, no additional steps will be
 # required. If this is not the case there are a few options: 
 
-# tls-ca-cert: Specify the path to a trusted Certificate Authority (CA) certificate for verifying
-# the subscriber's identity. If left empty, the system's default certificate pool will be used to
-# verify the subscriber. Alternatively, a path to a specific CA certificate (either signed by a
-# trusted authority or self-signed) can be provided. Example: /etc/beegfs/cert.pem
+# grpc-tls-cert-file: Specify the path to a certificate used to verify the identity of the subscriber and
+# to encrypt communication. If this parameter is left empty, the application will use the system's
+# default certificate pool. This parameter is ignored if tls-disable is set.
+# Example: /etc/beegfs/cert.pem
 
-# grpc-tls-disable-verification:
-# Set to true to skip verifying the subscribers TLS certificate. This allows
-# traffic to be encrypted, but puts the client at risk of a man-in-the-middle
-# attack since it cannot verify the subscriber is the expected one.
+# grpc-tls-disable-verification: Set to true to skip verifying the subscribers TLS certificate. This
+# allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
+# cannot verify the subscriber is the expected one.
 
-# grpc-tls-disable: Set to true to send all gRPC messages including potentially sensitive
-# information about file paths/names inside the file system will be sent in clear text over the
-# network.
+# grpc-tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
