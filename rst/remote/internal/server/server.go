@@ -96,13 +96,13 @@ func (s *BeeRemoteServer) Stop() {
 func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.SubmitJobRequest) (*beeremote.SubmitJobResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	result, err := s.jobMgr.SubmitJobRequest(request.Request)
+	result, err := s.jobMgr.SubmitJobRequest(request.GetRequest())
 	if err != nil {
 		return nil, err
 	}
-	return &beeremote.SubmitJobResponse{
+	return beeremote.SubmitJobResponse_builder{
 		Result: result,
-	}, nil
+	}.Build(), nil
 }
 
 func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beeremote.BeeRemote_GetJobsServer) error {
@@ -158,13 +158,13 @@ func (s *BeeRemoteServer) GetRSTConfig(ctx context.Context, request *beeremote.G
 		return nil, err
 	}
 
-	return &beeremote.GetRSTConfigResponse{
+	return beeremote.GetRSTConfigResponse_builder{
 		Rsts: rsts,
-	}, nil
+	}.Build(), nil
 }
 
 func (s *BeeRemoteServer) UpdateWork(ctx context.Context, request *beeremote.UpdateWorkRequest) (*beeremote.UpdateWorkResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	return &beeremote.UpdateWorkResponse{}, s.jobMgr.UpdateWork(request.Work)
+	return &beeremote.UpdateWorkResponse{}, s.jobMgr.UpdateWork(request.GetWork())
 }

@@ -30,7 +30,7 @@ func (c *grpcProvider) init(config Config) error {
 		}
 	}
 	conn, err := beegrpc.NewClientConn(
-		config.dynamic.Address,
+		config.dynamic.GetAddress(),
 		beegrpc.WithTLSCaCert(cert),
 		beegrpc.WithTLSDisableVerification(config.TLSDisableVerification),
 		beegrpc.WithTLSDisable(config.TlsDisable),
@@ -49,7 +49,7 @@ func (c *grpcProvider) disconnect() error {
 }
 
 func (c *grpcProvider) updateWork(ctx context.Context, workResult *flex.Work) error {
-	_, err := c.client.UpdateWork(ctx, &beeremote.UpdateWorkRequest{Work: workResult})
+	_, err := c.client.UpdateWork(ctx, beeremote.UpdateWorkRequest_builder{Work: workResult}.Build())
 	if err != nil {
 		if st, ok := status.FromError(err); ok {
 			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.

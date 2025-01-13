@@ -20,27 +20,27 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	workResult := &WorkResult{
 		AssignedNode: "test",
 		AssignedPool: BeeSync,
-		WorkResult: &flex.Work{
+		WorkResult: flex.Work_builder{
 			Path:      "/foo",
 			JobId:     "1",
 			RequestId: "2",
-			Status: &flex.Work_Status{
+			Status: flex.Work_Status_builder{
 				State:   flex.Work_COMPLETED,
 				Message: "test message",
-			},
+			}.Build(),
 			Parts: []*flex.Work_Part{
-				{
+				flex.Work_Part_builder{
 					PartNumber:     10,
 					EntityTag:      "etag10",
 					ChecksumSha256: "checksum10",
-				},
-				{
+				}.Build(),
+				flex.Work_Part_builder{
 					PartNumber:     11,
 					EntityTag:      "etag11",
 					ChecksumSha256: "checksum11",
-				},
+				}.Build(),
 			},
-		},
+		}.Build(),
 	}
 
 	var encodedWorkResult bytes.Buffer

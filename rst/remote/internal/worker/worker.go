@@ -195,7 +195,7 @@ func (n *baseNode) Handle(wg *sync.WaitGroup, config *flex.UpdateConfigRequest, 
 						if err != nil {
 							n.log.Error("failed to receive heartbeat response from node, placing offline and attempting to reconnect", zap.Error(err))
 							break connectedLoop
-						} else if !resp.IsReady {
+						} else if !resp.GetIsReady() {
 							n.log.Error("received a heartbeat response but the node is not ready, placing offline and attempting to update its configuration")
 							break connectedLoop
 						}

@@ -202,10 +202,10 @@ Using environment variables:
 		}
 	}
 
-	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, &flex.BeeRemoteNode{
+	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, flex.BeeRemoteNode_builder{
 		Id:      nodeID,
 		Address: initialCfg.Server.Address,
-	}, mountPoint)
+	}.Build(), mountPoint)
 	if err != nil {
 		logger.Fatal("unable to initialize worker manager", zap.Error(err))
 	}

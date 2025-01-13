@@ -9,11 +9,11 @@ import (
 func getProtoWorkResults(workResults map[string]worker.WorkResult) []*beeremote.JobResult_WorkResult {
 	workResultsForResponse := []*beeremote.JobResult_WorkResult{}
 	for _, wr := range workResults {
-		workResult := &beeremote.JobResult_WorkResult{
+		workResult := beeremote.JobResult_WorkResult_builder{
 			Work:         wr.WorkResult,
 			AssignedNode: wr.AssignedNode,
 			AssignedPool: string(wr.AssignedPool),
-		}
+		}.Build()
 		workResultsForResponse = append(workResultsForResponse, workResult)
 	}
 	return workResultsForResponse

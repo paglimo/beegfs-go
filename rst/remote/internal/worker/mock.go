@@ -35,9 +35,9 @@ func (n *MockNode) heartbeat(request *flex.HeartbeatRequest) (*flex.HeartbeatRes
 	// will panic unless the test mocked a heartbeat (which is not the focus of most tests).
 	//  args := n.Called()
 	// return args.Get(0).(*flex.HeartbeatResponse), args.Error(1)
-	return &flex.HeartbeatResponse{
+	return flex.HeartbeatResponse_builder{
 		IsReady: true,
-	}, nil
+	}.Build(), nil
 }
 
 func (n *MockNode) disconnect() error {
@@ -66,17 +66,17 @@ func (n *MockNode) SubmitWork(request *flex.WorkRequest) (*flex.Work, error) {
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.Work_Status{
+	status := flex.Work_Status_builder{
 		State:   args.Get(0).(*flex.Work_Status).GetState(),
 		Message: args.Get(0).(*flex.Work_Status).GetMessage(),
-	}
+	}.Build()
 
-	return &flex.Work{
+	return flex.Work_builder{
 		Path:      request.GetPath(),
 		JobId:     request.GetJobId(),
 		RequestId: request.GetRequestId(),
 		Status:    status,
-	}, args.Error(1)
+	}.Build(), args.Error(1)
 }
 
 func (n *MockNode) UpdateWork(request *flex.UpdateWorkRequest) (*flex.Work, error) {
@@ -100,16 +100,16 @@ func (n *MockNode) UpdateWork(request *flex.UpdateWorkRequest) (*flex.Work, erro
 	// and return a pointer to a new status (not reuse the status from the
 	// expectation), otherwise all test requests will share the same status
 	// which causes very confusing test failures.
-	status := &flex.Work_Status{
+	status := flex.Work_Status_builder{
 		State:   args.Get(0).(*flex.Work_Status).GetState(),
 		Message: args.Get(0).(*flex.Work_Status).GetMessage(),
-	}
-	return &flex.Work{
+	}.Build()
+	return flex.Work_builder{
 		// The update request does not contain "path" so we cannot set that field in the response.
 		// Currently this doesn't break anything, but this may be the source of future test
 		// failures.
 		JobId:     request.GetJobId(),
 		RequestId: request.GetRequestId(),
 		Status:    status,
-	}, args.Error(1)
+	}.Build(), args.Error(1)
 }

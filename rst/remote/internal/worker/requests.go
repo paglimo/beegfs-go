@@ -42,7 +42,7 @@ func (wr *WorkResult) Status() *flex.Work_Status {
 // don't complete or abort the job request, meaning (for example) artifacts like multipart uploads
 // and partial uploads wouldn't not have been cleaned up.
 func (wr *WorkResult) InTerminalState() bool {
-	return wr.Status().State == flex.Work_COMPLETED || wr.Status().State == flex.Work_CANCELLED
+	return wr.Status().GetState() == flex.Work_COMPLETED || wr.Status().GetState() == flex.Work_CANCELLED
 }
 
 // RequiresUserIntervention() indicates the work request cannot proceed without user intervention.
@@ -50,5 +50,5 @@ func (wr *WorkResult) InTerminalState() bool {
 // just cancelling the request if it is no longer valid. Jobs in this state still have resources
 // that need to be cleaned up and why they aren't considered in a terminal state.
 func (wr *WorkResult) RequiresUserIntervention() bool {
-	return wr.Status().State == flex.Work_FAILED
+	return wr.Status().GetState() == flex.Work_FAILED
 }
