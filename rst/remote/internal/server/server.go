@@ -136,10 +136,10 @@ func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beer
 	return nil
 }
 
-func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
+func (s *BeeRemoteServer) UpdateJobs(ctx context.Context, request *beeremote.UpdateJobsRequest) (*beeremote.UpdateJobsResponse, error) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	resp, err := s.jobMgr.UpdateJob(request)
+	resp, err := s.jobMgr.UpdateJobs(request)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrEntryNotInDB) {
 			return nil, status.Errorf(codes.NotFound, "%s", err)
