@@ -478,6 +478,55 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 	}.Build(), err
 }
 
+// UpdatePaths iterates over path entries with the specified request prefix and attempts to apply
+// the requested update to each path using UpdateJobs. The result for each path is returned on the
+// responses channel. Blocks and only returns once all paths have been updated, or if a fatal error
+// occurs. It is the responsibility of the caller to setup a separate goroutine to asynchronously
+// process responses.
+func (m *Manager) UpdatePaths(ctx context.Context, request *beeremote.UpdatePathsRequest, responses chan<- *beeremote.UpdatePathsResponse) error {
+
+	defer close(responses)
+
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return fmt.Errorf("unable to update paths (JobMgr is not ready)")
+	}
+
+	// Similar approach as used to get the results for multiple paths.
+	nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(request.GetPathPrefix()))
+	if err != nil {
+		return err
+	}
+	defer cleanupEntries()
+
+sendResponses:
+	for {
+		select {
+		case <-ctx.Done():
+			break sendResponses
+		default:
+			entry, err := nextEntry()
+			if err != nil {
+				return err
+			}
+			if entry == nil {
+				break sendResponses
+			}
+			request.GetRequestedUpdate().SetPath(entry.Key)
+			resp, err := m.UpdateJobs(request.GetRequestedUpdate())
+			if err != nil {
+				return err
+			}
+			responses <- beeremote.UpdatePathsResponse_builder{
+				Path:         entry.Key,
+				UpdateResult: resp,
+			}.Build()
+		}
+	}
+	return nil
+}
+
 // UpdateJobs will attempt to update the specified job(s) and any associated work requests for a
 // single path, optionally filtering jobs by remote target ID and/or job ID. UpdateJobs is
 // idempotent, so it can be called multiple times to verify a job is updated, for example if there

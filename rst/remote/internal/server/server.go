@@ -129,10 +129,41 @@ func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beer
 	}()
 
 	err := s.jobMgr.GetJobs(stream.Context(), request, responses)
+	wg.Wait()
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (s *BeeRemoteServer) UpdatePaths(request *beeremote.UpdatePathsRequest, stream beeremote.BeeRemote_UpdatePathsServer) error {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	responses := make(chan *beeremote.UpdatePathsResponse, 1024)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+	sendResponses:
+		for {
+			select {
+			case <-stream.Context().Done():
+				return
+			case resp, ok := <-responses:
+				if !ok {
+					break sendResponses
+				}
+				stream.Send(resp)
+			}
+		}
+	}()
+
+	err := s.jobMgr.UpdatePaths(stream.Context(), request, responses)
 	wg.Wait()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
