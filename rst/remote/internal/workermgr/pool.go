@@ -39,9 +39,9 @@ func (p *Pool) HandleAll(wg *sync.WaitGroup) {
 	// with any outstanding work requests. For example if any were cancelled
 	// while it was offline. For now we don't allow modifying WRs on offline
 	// nodes so just tell it to resume all requests.
-	wrUpdates := &flex.BulkUpdateWorkRequest{
+	wrUpdates := flex.BulkUpdateWorkRequest_builder{
 		NewState: flex.BulkUpdateWorkRequest_UNCHANGED,
-	}
+	}.Build()
 
 	for _, node := range p.nodes {
 		go node.Handle(wg, p.workerConfig, wrUpdates)
@@ -136,11 +136,11 @@ func (p *Pool) updateWorkRequestOnNode(jobID string, workResult worker.WorkResul
 		return nil, ErrWorkerNotInPool
 	}
 
-	updateRequest := &flex.UpdateWorkRequest{
+	updateRequest := flex.UpdateWorkRequest_builder{
 		JobId:     jobID,
-		RequestId: workResult.WorkResult.RequestId,
+		RequestId: workResult.WorkResult.GetRequestId(),
 		NewState:  newState,
-	}
+	}.Build()
 
 	return node.UpdateWork(updateRequest)
 }

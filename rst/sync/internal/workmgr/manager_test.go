@@ -33,24 +33,22 @@ const (
 // Use to easily create requests using proto.Clone():
 //
 //	testRequest1 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-var baseTestRequest = &flex.WorkRequest{
+var baseTestRequest = flex.WorkRequest_builder{
 	JobId:      "0",
 	RequestId:  "0",
 	ExternalId: "extid",
 	Path:       "/foo/bar",
-	Segment: &flex.WorkRequest_Segment{
+	Segment: flex.WorkRequest_Segment_builder{
 		OffsetStart: 0,
 		OffsetStop:  1024,
 		PartsStart:  1,
 		PartsStop:   2,
-	},
+	}.Build(),
 	RemoteStorageTarget: 0,
-	Type: &flex.WorkRequest_Sync{
-		Sync: &flex.SyncJob{
-			Operation: flex.SyncJob_UPLOAD,
-		},
-	},
-}
+	Sync: flex.SyncJob_builder{
+		Operation: flex.SyncJob_UPLOAD,
+	}.Build(),
+}.Build()
 
 // When setting up expectations we can't directly craft some expected structs (notably protobufs)
 // because they may contain types not easily comparable using the default equality checks. Instead
@@ -61,7 +59,7 @@ var baseTestRequest = &flex.WorkRequest{
 // It is commonly used as an arg to Mock.On().
 func matchJobAndRequestID(expectedJobID string, expectedRequestID string) interface{} {
 	return mock.MatchedBy(func(actual *flex.WorkRequest) bool {
-		return actual.GetJobId() == expectedJobID && actual.RequestId == expectedRequestID
+		return actual.GetJobId() == expectedJobID && actual.GetRequestId() == expectedRequestID
 	})
 }
 
@@ -69,7 +67,7 @@ func matchJobAndRequestID(expectedJobID string, expectedRequestID string) interf
 // It is commonly used as either a an arg to Mock.On() or returnArg to Mock.On().Return().
 func matchRespIDsAndStatus(expectedJobID string, expectedRequestID string, expectedState flex.Work_State) interface{} {
 	return mock.MatchedBy(func(actual *flex.Work) bool {
-		return actual.GetJobId() == expectedJobID && actual.RequestId == expectedRequestID && actual.Status.State == expectedState
+		return actual.GetJobId() == expectedJobID && actual.GetRequestId() == expectedRequestID && actual.GetStatus().GetState() == expectedState
 	})
 }
 
@@ -141,7 +139,7 @@ func getTestManager(tb testing.TB, opts ...getTestMgrOpt) (*Manager, []func(test
 	logger := zaptest.NewLogger(tb, zaptest.Level(config.logLevel))
 
 	if config.rstConfigs == nil {
-		config.rstConfigs = []*flex.RemoteStorageTarget{{Id: 0, Type: &flex.RemoteStorageTarget_Mock{Mock: "test"}}}
+		config.rstConfigs = []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build()}
 	}
 
 	beeRemoteClient, err := beeremote.New(beeremote.Config{})
@@ -155,10 +153,10 @@ func getTestManager(tb testing.TB, opts ...getTestMgrOpt) (*Manager, []func(test
 	if err != nil {
 		return nil, deferredFuncs, err
 	}
-	err = mgr.UpdateConfig(config.rstConfigs, &flex.BeeRemoteNode{
+	err = mgr.UpdateConfig(config.rstConfigs, flex.BeeRemoteNode_builder{
 		Id:      "0",
 		Address: "mock:0",
-	})
+	}.Build())
 	return mgr, deferredFuncs, err
 
 }
@@ -167,15 +165,13 @@ func getTestManager(tb testing.TB, opts ...getTestMgrOpt) (*Manager, []func(test
 func TestUpdateConfig(t *testing.T) {
 
 	rstConfigs := []*flex.RemoteStorageTarget{
-		{
+		flex.RemoteStorageTarget_builder{
 			Id: 0,
-			Type: &flex.RemoteStorageTarget_S3_{
-				S3: &flex.RemoteStorageTarget_S3{
-					Bucket:      "bucket",
-					EndpointUrl: "https://url",
-				},
-			},
-		},
+			S3: flex.RemoteStorageTarget_S3_builder{
+				Bucket:      "bucket",
+				EndpointUrl: "https://url",
+			}.Build(),
+		}.Build(),
 	}
 
 	mgr, deferredFuncs, err := getTestManager(t, WithRSTs(rstConfigs))
@@ -188,19 +184,19 @@ func TestUpdateConfig(t *testing.T) {
 	require.NoError(t, err)
 	defer mgr.Stop()
 
-	equalBRConfig := &flex.BeeRemoteNode{
+	equalBRConfig := flex.BeeRemoteNode_builder{
 		Id:      "0",
 		Address: "mock:0",
-	}
+	}.Build()
 
 	// No change to the config should not return an error:
 	assert.NoError(t, mgr.UpdateConfig(rstConfigs, equalBRConfig))
 
 	// Updating BR config is allowed:
-	notEqualBRConfig := &flex.BeeRemoteNode{
+	notEqualBRConfig := flex.BeeRemoteNode_builder{
 		Id:      "1",
 		Address: "mock:0",
-	}
+	}.Build()
 	assert.NoError(t, mgr.UpdateConfig(rstConfigs, notEqualBRConfig))
 }
 
@@ -237,7 +233,7 @@ func TestSubmitWorkRequest(t *testing.T) {
 	mockRST.On("ExecuteWorkRequestPart", mock.Anything, matchJobAndRequestID("1", "0"), mock.Anything).Return(fmt.Errorf("test wants an error")).Times(1)
 	mockBeeRemote.On("updateWork", matchRespIDsAndStatus("1", "0", flex.Work_FAILED)).Return(nil).Times(1)
 	testRequest2 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest2.JobId = "1"
+	testRequest2.SetJobId("1")
 	resp, err = mgr.SubmitWorkRequest(testRequest2)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -255,8 +251,8 @@ func TestSubmitWorkRequest(t *testing.T) {
 	mockRST.On("ExecuteWorkRequestPart", mock.Anything, matchJobAndRequestID("3", "1"), mock.Anything).Return(nil).Times(2)
 	mockBeeRemote.On("updateWork", matchRespIDsAndStatus("3", "1", flex.Work_COMPLETED)).Return(fmt.Errorf("test requests a failed response from BeeRemote"))
 	testRequest3 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest3.JobId = "3"
-	testRequest3.RequestId = "1"
+	testRequest3.SetJobId("3")
+	testRequest3.SetRequestId("1")
 	resp, err = mgr.SubmitWorkRequest(testRequest3)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -303,8 +299,8 @@ func TestUpdateRequests(t *testing.T) {
 	mockRST.On("ExecuteWorkRequestPart", mock.Anything, matchJobAndRequestID("1", "2"), mock.Anything).Return(fmt.Errorf("test wants an error")).Times(1)
 	mockBeeRemote.On("updateWork", matchRespIDsAndStatus("1", "2", flex.Work_FAILED)).Return(fmt.Errorf("test requests a failed response from BeeRemote"))
 	testRequest2 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest2.JobId = "1"
-	testRequest2.RequestId = "2"
+	testRequest2.SetJobId("1")
+	testRequest2.SetRequestId("2")
 	resp, err := mgr.SubmitWorkRequest(testRequest2)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -313,25 +309,25 @@ func TestUpdateRequests(t *testing.T) {
 	time.Sleep(defaultSleepTime * time.Second)
 
 	// Now try to cancel the request:
-	updateRequest := flex.UpdateWorkRequest{
+	updateRequest := flex.UpdateWorkRequest_builder{
 		JobId:     "1",
 		RequestId: "2",
 		NewState:  flex.UpdateWorkRequest_CANCELLED,
-	}
+	}.Build()
 
 	// We should be able to cancel requests with an error:
-	resp, err = mgr.UpdateWork(&updateRequest)
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, flex.Work_CANCELLED, resp.Status.State)
+	require.Equal(t, flex.Work_CANCELLED, resp.GetStatus().GetState())
 
 	// Resubmit the same job ID and request. This time there is no error on the RST.
 	// Force the the request to stay active because it can't send a response to BeeRemote.
 	mockRST.On("ExecuteWorkRequestPart", mock.Anything, matchJobAndRequestID("1", "2"), mock.Anything).Return(nil).Times(2)
 	mockBeeRemote.On("updateWork", matchRespIDsAndStatus("1", "2", flex.Work_COMPLETED)).Return(fmt.Errorf("test requests a failed response from BeeRemote"))
 	testRequest2_2 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest2_2.JobId = "1"
-	testRequest2_2.RequestId = "2"
+	testRequest2_2.SetJobId("1")
+	testRequest2_2.SetRequestId("2")
 	resp, err = mgr.SubmitWorkRequest(testRequest2_2)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -340,12 +336,12 @@ func TestUpdateRequests(t *testing.T) {
 	time.Sleep(defaultSleepTime * time.Second)
 
 	// We should not be able to cancel completed requests:
-	resp, err = mgr.UpdateWork(&updateRequest)
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.Error(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, flex.Work_COMPLETED, resp.Status.State)
-	require.Equal(t, true, resp.Parts[0].Completed)
-	require.Equal(t, true, resp.Parts[1].Completed)
+	require.Equal(t, flex.Work_COMPLETED, resp.GetStatus().GetState())
+	require.Equal(t, true, resp.GetParts()[0].GetCompleted())
+	require.Equal(t, true, resp.GetParts()[1].GetCompleted())
 
 	// Test is intentionally only configured with one worker. Since we sent an update request, the
 	// worker should no longer be trying to send the request to BeeRemote making it available for
@@ -354,8 +350,8 @@ func TestUpdateRequests(t *testing.T) {
 	mockRST.On("ExecuteWorkRequestPart", mock.Anything, matchJobAndRequestID("1", "3"), mock.Anything).Return(nil).Times(2)
 	mockBeeRemote.On("updateWork", matchRespIDsAndStatus("1", "3", flex.Work_COMPLETED)).Return(fmt.Errorf("test requests a failed response from BeeRemote"))
 	testRequest3 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest3.JobId = "1"
-	testRequest3.RequestId = "3"
+	testRequest3.SetJobId("1")
+	testRequest3.SetRequestId("3")
 	resp, err = mgr.SubmitWorkRequest(testRequest3)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -365,8 +361,8 @@ func TestUpdateRequests(t *testing.T) {
 
 	// Now submit another request for the same job:
 	testRequest4 := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-	testRequest4.JobId = "1"
-	testRequest4.RequestId = "4"
+	testRequest4.SetJobId("1")
+	testRequest4.SetRequestId("4")
 	resp, err = mgr.SubmitWorkRequest(testRequest4)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
@@ -375,13 +371,13 @@ func TestUpdateRequests(t *testing.T) {
 	require.Len(t, mgr.activeWork, 1)
 
 	// Then cancel the inactive request:
-	updateRequest.RequestId = "4"
-	resp, err = mgr.UpdateWork(&updateRequest)
+	updateRequest.SetRequestId("4")
+	resp, err = mgr.UpdateWork(updateRequest)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, flex.Work_CANCELLED, resp.Status.State)
-	require.Equal(t, false, resp.Parts[0].Completed)
-	require.Equal(t, false, resp.Parts[1].Completed)
+	require.Equal(t, flex.Work_CANCELLED, resp.GetStatus().GetState())
+	require.Equal(t, false, resp.GetParts()[0].GetCompleted())
+	require.Equal(t, false, resp.GetParts()[1].GetCompleted())
 
 	// At the end of the test we should have one entry in each DB and one request for job 1:
 	require.NoError(t, assertDBEntriesLenForTesting(mgr, 1))
@@ -417,7 +413,7 @@ func BenchmarkSubmitWorkRequests(b *testing.B) {
 	requests := []*flex.WorkRequest{}
 	for i := range b.N {
 		req := proto.Clone(baseTestRequest).(*flex.WorkRequest)
-		req.JobId = strconv.Itoa(i)
+		req.SetJobId(strconv.Itoa(i))
 		requests = append(requests, req)
 	}
 
@@ -479,7 +475,7 @@ func BenchmarkBadgerDB(b *testing.B) {
 				WorkRequest: proto.Clone(baseTestRequest).(*flex.WorkRequest),
 			},
 			WorkResult: &work{
-				Work: &flex.Work{
+				Work: flex.Work_builder{
 					Path:      "/foo",
 					JobId:     strconv.Itoa(i),
 					RequestId: "string",
@@ -487,7 +483,7 @@ func BenchmarkBadgerDB(b *testing.B) {
 						{},
 						{},
 					},
-				},
+				}.Build(),
 			},
 		}
 		workEntries = append(workEntries, we)
@@ -558,7 +554,7 @@ func BenchmarkWorkJournal(b *testing.B) {
 				WorkRequest: proto.Clone(baseTestRequest).(*flex.WorkRequest),
 			},
 			WorkResult: &work{
-				Work: &flex.Work{
+				Work: flex.Work_builder{
 					Path:      "/foo",
 					JobId:     strconv.Itoa(i),
 					RequestId: "string",
@@ -566,7 +562,7 @@ func BenchmarkWorkJournal(b *testing.B) {
 						{},
 						{},
 					},
-				},
+				}.Build(),
 			},
 		}
 		workEntries = append(workEntries, we)

@@ -3,12 +3,12 @@ package worker
 import (
 	"bytes"
 	"encoding/gob"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/thinkparq/protobuf/go/flex"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // We need to serialize and deserialize WorkResults so they can be stored in the
@@ -20,27 +20,27 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	workResult := &WorkResult{
 		AssignedNode: "test",
 		AssignedPool: BeeSync,
-		WorkResult: &flex.Work{
+		WorkResult: flex.Work_builder{
 			Path:      "/foo",
 			JobId:     "1",
 			RequestId: "2",
-			Status: &flex.Work_Status{
+			Status: flex.Work_Status_builder{
 				State:   flex.Work_COMPLETED,
 				Message: "test message",
-			},
+			}.Build(),
 			Parts: []*flex.Work_Part{
-				{
+				flex.Work_Part_builder{
 					PartNumber:     10,
 					EntityTag:      "etag10",
 					ChecksumSha256: "checksum10",
-				},
-				{
+				}.Build(),
+				flex.Work_Part_builder{
 					PartNumber:     11,
 					EntityTag:      "etag11",
 					ChecksumSha256: "checksum11",
-				},
+				}.Build(),
 			},
-		},
+		}.Build(),
 	}
 
 	var encodedWorkResult bytes.Buffer
@@ -52,30 +52,40 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 	require.NoError(t, dec.Decode(decodedWorkResult))
 	assert.Equal(t, workResult, decodedWorkResult)
 
-	expectedUserFields := map[string]reflect.Type{
-		"Path":      reflect.TypeOf(""),
-		"JobId":     reflect.TypeOf(""),
-		"RequestId": reflect.TypeOf(""),
-		"Status":    reflect.TypeOf(&flex.Work_Status{}),
-		"Parts":     reflect.TypeOf([]*flex.Work_Part{}),
+	checkMessageFields := func(actualFields protoreflect.FieldDescriptors, expectedUserFields map[string]protoreflect.Kind) {
+		assert.Equal(t, len(expectedUserFields), actualFields.Len(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+		for expectedField, expectedType := range expectedUserFields {
+			field := actualFields.ByTextName(expectedField)
+			require.NotNil(t, field, "a field was removed from the Work message (update test and verify encoding via Gob is not broken)")
+			assert.Equal(t, field.Kind(), expectedType, "the type of a field was changed in the WorkResponse message (update test and verify encoding via Gob is not broken)")
+		}
 	}
 
-	workType := reflect.TypeOf(flex.Work{})
-	for expectedField, expectedType := range expectedUserFields {
-		field, found := workType.FieldByName(expectedField)
-		assert.True(t, found, "a field was removed from the Work message (update test and verify encoding via Gob is not broken)")
-		assert.Equal(t, field.Type, expectedType, "the type of a field was changed in the WorkResponse message (update test and verify encoding via Gob is not broken)")
+	// First check WorkResult message:
+	expectedWorkFields := map[string]protoreflect.Kind{
+		"path":       protoreflect.StringKind,
+		"job_id":     protoreflect.StringKind,
+		"request_id": protoreflect.StringKind,
+		"status":     protoreflect.MessageKind,
+		"parts":      protoreflect.MessageKind,
 	}
+	checkMessageFields(flex.Work_builder{}.Build().ProtoReflect().Descriptor().Fields(), expectedWorkFields)
 
-	// In addition to user fields, protobuf defined structs also have some
-	// internal fields. We should check the expected fields still exist
-	// otherwise we may miss changes to the struct when we verify the field
-	// count hasn't changed:
-	_, state := workType.FieldByName("state")
-	_, sizeCache := workType.FieldByName("sizeCache")
-	_, unknownFields := workType.FieldByName("unknownFields")
-	assert.True(t, state && sizeCache && unknownFields, "an expected internal protobuf field was not found (update test and verify encoding via Gob is not broken)")
+	// Then check Status message:
+	expectedStatusFields := map[string]protoreflect.Kind{
+		"state":   protoreflect.EnumKind,
+		"message": protoreflect.StringKind,
+	}
+	checkMessageFields(flex.Work_Status_builder{}.Build().ProtoReflect().Descriptor().Fields(), expectedStatusFields)
 
-	// Verify number of user defined + internal fields haven't changed:
-	assert.Equal(t, 8, reflect.TypeOf(flex.Work{}).NumField(), "the number of fields in the WorkResponse message has changed (update test and verify encoding via Gob is not broken)")
+	// Then check Parts message:
+	expectedPartsFields := map[string]protoreflect.Kind{
+		"part_number":     protoreflect.Int32Kind,
+		"offset_start":    protoreflect.Int64Kind,
+		"offset_stop":     protoreflect.Int64Kind,
+		"entity_tag":      protoreflect.StringKind,
+		"checksum_sha256": protoreflect.StringKind,
+		"completed":       protoreflect.BoolKind,
+	}
+	checkMessageFields(flex.Work_Part_builder{}.Build().ProtoReflect().Descriptor().Fields(), expectedPartsFields)
 }

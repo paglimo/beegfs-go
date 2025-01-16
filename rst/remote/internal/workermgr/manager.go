@@ -80,10 +80,10 @@ func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, work
 		if err != nil {
 			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
 		}
-		if _, ok := rstMap[config.Id]; ok {
-			return nil, fmt.Errorf("found multiple remote storage targets with the same ID: %d", config.Id)
+		if _, ok := rstMap[config.GetId()]; ok {
+			return nil, fmt.Errorf("found multiple remote storage targets with the same ID: %d", config.GetId())
 		}
-		rstMap[config.Id] = rst
+		rstMap[config.GetId()] = rst
 	}
 
 	nodePools := make(map[worker.Type]*Pool, 0)
@@ -104,7 +104,7 @@ func NewManager(ctx context.Context, log *zap.Logger, managerConfig Config, work
 				// If/when we allow dynamic configuration this won't work. We would need to
 				// pass a reference to the actual RST clients and provide methods to get their
 				// configuration. The ClientStore will likely make this easy to update.
-				workerConfig: &flex.UpdateConfigRequest{Rsts: rstConfigs, BeeRemote: beeRmtConfig},
+				workerConfig: flex.UpdateConfigRequest_builder{Rsts: rstConfigs, BeeRemote: beeRmtConfig}.Build(),
 			}
 		}
 		nodePools[n.GetNodeType()].nodeMap[n.GetID()] = n
@@ -170,10 +170,10 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		// Map work request types to worker nodes. If a new request type and
 		// worker node are added this should be updated.
 		var nodeType worker.Type
-		switch workRequest.Type.(type) {
-		case *flex.WorkRequest_Mock:
+		switch workRequest.WhichType() {
+		case flex.WorkRequest_Mock_case:
 			nodeType = worker.Mock
-		case *flex.WorkRequest_Sync:
+		case flex.WorkRequest_Sync_case:
 			nodeType = worker.BeeSync
 		default:
 			nodeType = worker.Unknown
@@ -183,15 +183,15 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 
 		if !ok {
 			err = fmt.Errorf("%s: %w", nodeType, ErrNoPoolsForNodeType)
-			result.WorkResult = &flex.Work{
+			result.WorkResult = flex.Work_builder{
 				Path:      workRequest.GetPath(),
 				JobId:     workRequest.GetJobId(),
 				RequestId: workRequest.GetRequestId(),
-				Status: &flex.Work_Status{
+				Status: flex.Work_Status_builder{
 					State:   flex.Work_FAILED,
 					Message: err.Error(),
-				},
-			}
+				}.Build(),
+			}.Build()
 
 			allScheduled = false
 		} else {
@@ -203,17 +203,17 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 				// the state must be CREATED so when later we try to cancel any requests that were
 				// assigned, it is automatically cancelled.
 				allScheduled = false
-				result.WorkResult = &flex.Work{
+				result.WorkResult = flex.Work_builder{
 					Path:      workRequest.GetPath(),
 					JobId:     workRequest.GetJobId(),
 					RequestId: workRequest.GetRequestId(),
-					Status: &flex.Work_Status{
+					Status: flex.Work_Status_builder{
 						State:   flex.Work_CREATED,
 						Message: "error communicating to node: " + err.Error(),
-					},
-				}
+					}.Build(),
+				}.Build()
 			} else {
-				if work.Status.State != flex.Work_SCHEDULED {
+				if work.GetStatus().GetState() != flex.Work_SCHEDULED {
 					allScheduled = false
 				}
 				result.WorkResult = work
@@ -222,15 +222,15 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 
 		result.AssignedNode = workerID
 		result.AssignedPool = nodeType
-		workResults[workRequest.RequestId] = result
+		workResults[workRequest.GetRequestId()] = result
 	}
 
 	var status beeremote.Job_Status
 	var err error
 
 	if !allScheduled {
-		status.State = beeremote.Job_CANCELLED
-		status.Message = "cancelled because one or more work requests could not be scheduled"
+		status.SetState(beeremote.Job_CANCELLED)
+		status.SetMessage("cancelled because one or more work requests could not be scheduled")
 		err = fmt.Errorf("job was automatically cancelled because there was an error scheduling one or more work requests (inspect the job for details then submit a new job)")
 
 		jobUpdate := JobUpdate{
@@ -241,15 +241,15 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		var allCancelled bool
 		workResults, allCancelled = m.UpdateJob(jobUpdate)
 		if !allCancelled {
-			status.State = beeremote.Job_UNKNOWN
-			status.Message = "job status is unknown because one or more work requests could not be cancelled after initial scheduling failure (inspect individual results for details then cancel the job before submitting a new one)"
+			status.SetState(beeremote.Job_UNKNOWN)
+			status.SetMessage("job status is unknown because one or more work requests could not be cancelled after initial scheduling failure (inspect individual results for details then cancel the job before submitting a new one)")
 			err = fmt.Errorf("attempted to cancel the job after an error scheduling one or more work requests, but there was an error cancelling the work requests (inspect the job for details then cancel the job before submitting a new one)")
 		}
 	} else {
-		status.State = beeremote.Job_SCHEDULED
-		status.Message = "finished scheduling work requests"
+		status.SetState(beeremote.Job_SCHEDULED)
+		status.SetMessage("finished scheduling work requests")
 	}
-	status.Updated = timestamppb.Now()
+	status.SetUpdated(timestamppb.Now())
 	return workResults, &status, err
 }
 
@@ -278,17 +278,17 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 	for reqID, workResult := range jobUpdate.WorkResults {
 
 		// If the WR was never assigned we can just cancel it.
-		if workResult.AssignedPool == "" && workResult.AssignedNode == "" && workResult.Status().State == flex.Work_CREATED {
-			workResult.Status().State = flex.Work_CANCELLED
-			workResult.Status().Message = workResult.Status().Message + "; cancelling because the request is not assigned to a pool or node"
+		if workResult.AssignedPool == "" && workResult.AssignedNode == "" && workResult.Status().GetState() == flex.Work_CREATED {
+			workResult.Status().SetState(flex.Work_CANCELLED)
+			workResult.Status().SetMessage(workResult.Status().GetMessage() + "; cancelling because the request is not assigned to a pool or node")
 			newResults[reqID] = workResult
 			continue
 		}
 
 		pool, ok := m.nodePools[workResult.AssignedPool]
 		if !ok {
-			workResult.Status().State = flex.Work_UNKNOWN
-			workResult.Status().Message = workResult.Status().Message + "; " + ErrNoPoolsForNodeType.Error()
+			workResult.Status().SetState(flex.Work_UNKNOWN)
+			workResult.Status().SetMessage(workResult.Status().GetMessage() + "; " + ErrNoPoolsForNodeType.Error())
 			newResults[reqID] = workResult
 			allUpdated = false
 			continue
@@ -297,21 +297,21 @@ func (m *Manager) UpdateJob(jobUpdate JobUpdate) (map[string]worker.WorkResult, 
 		resp, err := pool.updateWorkRequestOnNode(jobUpdate.JobID, workResult, jobUpdate.NewState)
 		if err != nil {
 			if errors.Is(err, worker.ErrWorkRequestNotFound) {
-				workResult.Status().State = flex.Work_CANCELLED
-				workResult.Status().Message = workResult.Status().Message + "; " + err.Error()
+				workResult.Status().SetState(flex.Work_CANCELLED)
+				workResult.Status().SetMessage(workResult.Status().GetMessage() + "; " + err.Error())
 			} else {
-				workResult.Status().State = flex.Work_UNKNOWN
-				workResult.Status().Message = "error communicating to node: " + err.Error()
+				workResult.Status().SetState(flex.Work_UNKNOWN)
+				workResult.Status().SetMessage("error communicating to node: " + err.Error())
 				allUpdated = false
 			}
 			newResults[reqID] = workResult
 			continue
 		}
 
-		workResult.Status().State = resp.Status.State
-		workResult.Status().Message = workResult.Status().Message + "; " + resp.Status.GetMessage()
+		workResult.Status().SetState(resp.GetStatus().GetState())
+		workResult.Status().SetMessage(workResult.Status().GetMessage() + "; " + resp.GetStatus().GetMessage())
 
-		if jobUpdate.NewState == flex.UpdateWorkRequest_CANCELLED && workResult.Status().State != flex.Work_CANCELLED {
+		if jobUpdate.NewState == flex.UpdateWorkRequest_CANCELLED && workResult.Status().GetState() != flex.Work_CANCELLED {
 			allUpdated = false
 		}
 

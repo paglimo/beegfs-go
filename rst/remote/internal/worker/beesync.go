@@ -65,8 +65,8 @@ func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex
 
 	// If we could send the message but the node didn't update the configuration
 	// correctly probably we can't recover with a simple retry so consider fatal.
-	if configureResp.Result != flex.UpdateConfigResponse_SUCCESS {
-		return false, fmt.Errorf("%s configure update on node with message %s", configureResp.Result, configureResp.Message)
+	if configureResp.GetResult() != flex.UpdateConfigResponse_SUCCESS {
+		return false, fmt.Errorf("%s configure update on node with message %s", configureResp.GetResult(), configureResp.GetMessage())
 	}
 
 	updateWRResp, err := n.client.BulkUpdateWork(n.rpcCtx, bulkUpdate)
@@ -76,8 +76,8 @@ func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex
 
 	// If we could send the message but the node couldn't update the WRs,
 	// probably we can't recover with a simply retry so consider fatal.
-	if !updateWRResp.Success {
-		return false, fmt.Errorf("bulk update of work requests on node failed with message %s", updateWRResp.Message)
+	if !updateWRResp.GetSuccess() {
+		return false, fmt.Errorf("bulk update of work requests on node failed with message %s", updateWRResp.GetMessage())
 	}
 
 	return false, nil
@@ -109,7 +109,7 @@ func (n *BeeSyncNode) SubmitWork(request *flex.WorkRequest) (*flex.Work, error) 
 	var err error
 	alreadyNotified := false
 	for i := 0; i <= n.config.SendRetries; i++ {
-		resp, err = n.client.SubmitWork(n.rpcCtx, &flex.SubmitWorkRequest{Request: request})
+		resp, err = n.client.SubmitWork(n.rpcCtx, flex.SubmitWorkRequest_builder{Request: request}.Build())
 		if rpcStatus, ok := status.FromError(err); ok {
 			// FailedPrecondition likely means the node is up but not yet ready. Most likely it
 			// restarted and hasn't received any configuration from BeeRemote yet.
@@ -136,7 +136,7 @@ func (n *BeeSyncNode) SubmitWork(request *flex.WorkRequest) (*flex.Work, error) 
 		}
 		return nil, err
 	}
-	return resp.Work, nil
+	return resp.GetWork(), nil
 }
 
 func (n *BeeSyncNode) reportError(err error) {
@@ -182,5 +182,5 @@ func (n *BeeSyncNode) UpdateWork(request *flex.UpdateWorkRequest) (*flex.Work, e
 		}
 		return nil, err
 	}
-	return resp.Work, nil
+	return resp.GetWork(), nil
 }

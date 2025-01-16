@@ -453,18 +453,18 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 		return nil, status.Errorf(codes.FailedPrecondition, "%s", ErrNotReady)
 	}
 
-	if update.NewState != flex.UpdateWorkRequest_CANCELLED {
-		return nil, fmt.Errorf("refusing to update work request to an unsupported state (job ID %s, request ID %s, new state: %s)", update.JobId, update.RequestId, update.NewState)
+	if update.GetNewState() != flex.UpdateWorkRequest_CANCELLED {
+		return nil, fmt.Errorf("refusing to update work request to an unsupported state (job ID %s, request ID %s, new state: %s)", update.GetJobId(), update.GetRequestId(), update.GetNewState())
 	}
 	// Right now the only state change we support is cancelling the request.
 
-	jobEntry, releaseJob, err := m.jobStore.GetAndLockEntry(update.JobId)
+	jobEntry, releaseJob, err := m.jobStore.GetAndLockEntry(update.GetJobId())
 	if err != nil {
 		if err == kvstore.ErrEntryNotInDB {
-			m.log.Debug("no work requests for the specified job ID found on this worker node", zap.Any("jobID", update.JobId), zap.Any("requestID", update.RequestId))
-			return nil, status.Errorf(codes.NotFound, "work request %s for job ID %s was not found on this worker node", update.RequestId, update.JobId)
+			m.log.Debug("no work requests for the specified job ID found on this worker node", zap.Any("jobID", update.GetJobId()), zap.Any("requestID", update.GetRequestId()))
+			return nil, status.Errorf(codes.NotFound, "work request %s for job ID %s was not found on this worker node", update.GetRequestId(), update.GetJobId())
 		}
-		return nil, status.Errorf(codes.Internal, "error looking up the specified job ID %s: %s", update.JobId, err.Error())
+		return nil, status.Errorf(codes.Internal, "error looking up the specified job ID %s: %s", update.GetJobId(), err.Error())
 	}
 
 	// By default we automatically release the job using a defer. However if the update request is
@@ -474,22 +474,22 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 		if releaseJobWithDefer {
 			err := releaseJob()
 			if err != nil {
-				m.log.Warn("error releasing job entry", zap.Error(err), zap.Any("jobID", update.JobId))
+				m.log.Warn("error releasing job entry", zap.Error(err), zap.Any("jobID", update.GetJobId()))
 			}
 		}
 
 	}()
 
-	submissionID, ok := jobEntry.Value[update.RequestId]
+	submissionID, ok := jobEntry.Value[update.GetRequestId()]
 	if !ok {
-		m.log.Debug("worker node has request(s) for the specified job ID, but the specific request was not found", zap.Any("jobID", update.JobId), zap.Any("requestID", update.RequestId))
+		m.log.Debug("worker node has request(s) for the specified job ID, but the specific request was not found", zap.Any("jobID", update.GetJobId()), zap.Any("requestID", update.GetRequestId()))
 		return nil, nil
 	}
 
 	workIdentifier := workIdentifier{
 		submissionID:  submissionID,
-		jobID:         update.JobId,
-		workRequestID: update.RequestId,
+		jobID:         update.GetJobId(),
+		workRequestID: update.GetRequestId(),
 	}
 
 	m.activeWorkMu.Lock()
@@ -553,7 +553,7 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 		releaseJobWithDefer = false
 		jobReleaseErr = releaseJob(kvstore.WithDeleteEntry(true))
 	} else {
-		delete(jobEntry.Value, update.RequestId)
+		delete(jobEntry.Value, update.GetRequestId())
 	}
 
 	var journalReleaseErr error
@@ -571,29 +571,29 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 
 	// Update the response to indicate the job was cancelled. Ensure the message includes meaningful
 	// details from the previous state if relevant.
-	switch workResult.Status.State {
+	switch workResult.GetStatus().GetState() {
 	case flex.Work_CREATED:
 		// This shouldn't happen unless there is a bug. However we still want to allow artifacts to
 		// be cleaned up if needed.
-		workResult.Status.State = flex.Work_CANCELLED
-		workResult.Status.Message = "cancelled created work request (warning: nodes should not have work requests in an created state, likely there is a bug somewhere)"
+		workResult.GetStatus().SetState(flex.Work_CANCELLED)
+		workResult.GetStatus().SetMessage("cancelled created work request (warning: nodes should not have work requests in an created state, likely there is a bug somewhere)")
 	case flex.Work_SCHEDULED:
-		workResult.Status.State = flex.Work_CANCELLED
-		workResult.Status.Message = "cancelled scheduled work request"
+		workResult.GetStatus().SetState(flex.Work_CANCELLED)
+		workResult.GetStatus().SetMessage("cancelled scheduled work request")
 	case flex.Work_CANCELLED:
 		// If a worker was already handling this work request the state should be cancelled.
 	case flex.Work_FAILED:
-		workResult.Status.State = flex.Work_CANCELLED
-		workResult.Status.Message = workResult.Status.Message + "; cancelled failed work request"
+		workResult.GetStatus().SetState(flex.Work_CANCELLED)
+		workResult.GetStatus().SetMessage(workResult.GetStatus().GetMessage() + "; cancelled failed work request")
 	case flex.Work_ERROR:
-		workResult.Status.State = flex.Work_CANCELLED
-		workResult.Status.Message = workResult.Status.Message + "; cancelled work request that had an error"
+		workResult.GetStatus().SetState(flex.Work_CANCELLED)
+		workResult.GetStatus().SetMessage(workResult.GetStatus().GetMessage() + "; cancelled work request that had an error")
 	default:
 		// This could happen if the request was already completed, or is in a state we don't yet
 		// support. Don't change the state to force it to be added here if needed. Note responses
 		// for completed requests are always sent to BeeRemote, even if the context was cancelled.
-		workResult.Status.Message = workResult.Status.Message + "; unable to cancel work request in the current state"
-		return workResult, fmt.Errorf("unable to cancel work request in the current state: %s", workResult.Status.State)
+		workResult.GetStatus().SetMessage(workResult.GetStatus().GetMessage() + "; unable to cancel work request in the current state")
+		return workResult, fmt.Errorf("unable to cancel work request in the current state: %s", workResult.GetStatus().GetState())
 	}
 
 	return workResult, nil

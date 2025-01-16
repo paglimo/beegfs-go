@@ -92,16 +92,16 @@ func (s *WorkerNodeServer) UpdateConfig(ctx context.Context, request *flex.Updat
 	err := s.workMgr.UpdateConfig(request.GetRsts(), request.GetBeeRemote())
 	if err != nil {
 		s.log.Error("error applying new configuration", zap.Error(err))
-		return &flex.UpdateConfigResponse{
+		return flex.UpdateConfigResponse_builder{
 			Result:  flex.UpdateConfigResponse_FAILURE,
 			Message: "error applying updated configuration: " + err.Error(),
-		}, nil
+		}.Build(), nil
 	}
 	s.log.Info("successfully applied new configuration")
-	return &flex.UpdateConfigResponse{
+	return flex.UpdateConfigResponse_builder{
 		Result:  flex.UpdateConfigResponse_SUCCESS,
 		Message: "successfully applied updated configuration",
-	}, nil
+	}.Build(), nil
 
 }
 
@@ -109,25 +109,25 @@ func (s *WorkerNodeServer) BulkUpdateWork(ctx context.Context, request *flex.Bul
 	s.log.Debug("attempting to update existing work requests", zap.Any("request", request))
 	// TODO: https://github.com/ThinkParQ/bee-remote/issues/56
 	// Allow bulk updates to work requests.
-	if request.NewState != flex.BulkUpdateWorkRequest_UNCHANGED {
-		return &flex.BulkUpdateWorkResponse{
+	if request.GetNewState() != flex.BulkUpdateWorkRequest_UNCHANGED {
+		return flex.BulkUpdateWorkResponse_builder{
 			Success: false,
-			Message: "unable to update work requests, new state is unknown: %s" + request.NewState.String(),
-		}, nil
+			Message: "unable to update work requests, new state is unknown: %s" + request.GetNewState().String(),
+		}.Build(), nil
 	}
-	return &flex.BulkUpdateWorkResponse{
+	return flex.BulkUpdateWorkResponse_builder{
 		Success: true,
 		Message: "",
-	}, nil
+	}.Build(), nil
 }
 
 func (s *WorkerNodeServer) SubmitWork(ctx context.Context, request *flex.SubmitWorkRequest) (*flex.SubmitWorkResponse, error) {
 	s.log.Debug("received work request", zap.Any("request", request))
-	work, err := s.workMgr.SubmitWorkRequest(request.Request)
+	work, err := s.workMgr.SubmitWorkRequest(request.GetRequest())
 	if err != nil {
 		return nil, err
 	}
-	return &flex.SubmitWorkResponse{Work: work}, nil
+	return flex.SubmitWorkResponse_builder{Work: work}.Build(), nil
 }
 
 func (s *WorkerNodeServer) UpdateWork(ctx context.Context, request *flex.UpdateWorkRequest) (*flex.UpdateWorkResponse, error) {
@@ -136,13 +136,13 @@ func (s *WorkerNodeServer) UpdateWork(ctx context.Context, request *flex.UpdateW
 	if err != nil {
 		return nil, err
 	}
-	return &flex.UpdateWorkResponse{Work: work}, nil
+	return flex.UpdateWorkResponse_builder{Work: work}.Build(), nil
 }
 
 func (s *WorkerNodeServer) Heartbeat(ctx context.Context, request *flex.HeartbeatRequest) (*flex.HeartbeatResponse, error) {
 	s.log.Debug("processing heartbeat request", zap.Any("request", request))
 	//ready := s.workMgr.IsReady()
-	return &flex.HeartbeatResponse{
+	return flex.HeartbeatResponse_builder{
 		IsReady: s.workMgr.IsReady(),
-	}, nil
+	}.Build(), nil
 }

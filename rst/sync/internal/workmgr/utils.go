@@ -83,34 +83,34 @@ func assertDBEntriesLenForTesting(mgr *Manager, expectedLen int) error {
 // the new work will always be scheduled.
 func newWorkFromRequest(workRequest *workRequest) *work {
 
-	numberOfParts := workRequest.Segment.PartsStop - workRequest.Segment.PartsStart + 1
+	numberOfParts := workRequest.Segment.GetPartsStop() - workRequest.Segment.GetPartsStart() + 1
 
 	parts := make([]*flex.Work_Part, 0, numberOfParts)
 	genPart := generatePartsFromSegment(workRequest.Segment)
 
 	for {
 		if partNum, offsetStart, offsetStop := genPart(); partNum != -1 {
-			parts = append(parts, &flex.Work_Part{
+			parts = append(parts, flex.Work_Part_builder{
 				PartNumber:  partNum,
 				OffsetStart: offsetStart,
 				OffsetStop:  offsetStop,
-			})
+			}.Build())
 			continue
 		}
 		break
 	}
 
 	return &work{
-		Work: &flex.Work{
+		Work: flex.Work_builder{
 			Path:      workRequest.Path,
 			JobId:     workRequest.JobId,
 			RequestId: workRequest.RequestId,
-			Status: &flex.Work_Status{
+			Status: flex.Work_Status_builder{
 				State:   flex.Work_SCHEDULED,
 				Message: "worker node accepted work request",
-			},
+			}.Build(),
 			Parts: parts,
-		},
+		}.Build(),
 	}
 }
 
@@ -129,8 +129,8 @@ func newWorkFromRequest(workRequest *workRequest) *work {
 // * Part 3: OffsetStart: 6, OffsetStop: 10 (5 bytes)
 func generatePartsFromSegment(segment *flex.WorkRequest_Segment) func() (int32, int64, int64) {
 
-	numberOfParts := int64(segment.PartsStop - segment.PartsStart + 1)
-	totalXferSize := segment.OffsetStop - segment.OffsetStart + 1
+	numberOfParts := int64(segment.GetPartsStop() - segment.GetPartsStart() + 1)
+	totalXferSize := segment.GetOffsetStop() - segment.GetOffsetStart() + 1
 	var bytesPerPart int64 = 1
 	if totalXferSize != 0 {
 		bytesPerPart = totalXferSize / numberOfParts
@@ -138,10 +138,10 @@ func generatePartsFromSegment(segment *flex.WorkRequest_Segment) func() (int32, 
 	extraBytesForLastPart := totalXferSize % numberOfParts
 	i := int64(1)
 
-	offsetStart := segment.OffsetStart
+	offsetStart := segment.GetOffsetStart()
 	offsetStop := offsetStart + bytesPerPart - 1
 
-	partNumber := segment.PartsStart
+	partNumber := segment.GetPartsStart()
 
 	return func() (int32, int64, int64) {
 

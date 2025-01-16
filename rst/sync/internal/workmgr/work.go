@@ -243,14 +243,14 @@ func (w *worker) processWork(a workAssignment) {
 	// were able to lock the journal entry we know we have an exclusive lock on the request anyway.
 	// If the state is failed or an error we require the caller to update the state before we try
 	// again. We'll return a result to BeeRemote so it can make a decision how to proceed.
-	state := journalEntry.Value.WorkResult.Status.State
+	state := journalEntry.Value.WorkResult.Status.GetState()
 	if state != flex.Work_SCHEDULED && state != flex.Work_RUNNING {
 		// The request might be completed if we were trying to send it to BeeRemote and were stopped
 		// for some reason (for example to restart if the BeeRemote gRPC client was misconfigured).
 		if state != flex.Work_COMPLETED {
 			log.Debug("unable to execute work request (invalid starting state)")
-			journalEntry.Value.WorkResult.Status.State = flex.Work_FAILED
-			journalEntry.Value.WorkResult.Status.Message = "unable to execute work request: invalid starting state " + state.String()
+			journalEntry.Value.WorkResult.Status.SetState(flex.Work_FAILED)
+			journalEntry.Value.WorkResult.Status.SetMessage("unable to execute work request: invalid starting state " + state.String())
 		}
 		if w.sendWorkResult(a, journalEntry.Value.WorkResult.Work) {
 			cleanupEntries = true
@@ -261,8 +261,8 @@ func (w *worker) processWork(a workAssignment) {
 	client, ok := w.remoteStorageTargets.Get(journalEntry.Value.WorkRequest.RemoteStorageTarget)
 	if !ok {
 		log.Debug("work request specifies an unknown RST")
-		journalEntry.Value.WorkResult.Status.State = flex.Work_FAILED
-		journalEntry.Value.WorkResult.Status.Message = "work request specifies an unknown RST"
+		journalEntry.Value.WorkResult.Status.SetState(flex.Work_FAILED)
+		journalEntry.Value.WorkResult.Status.SetMessage("work request specifies an unknown RST")
 		if w.sendWorkResult(a, journalEntry.Value.WorkResult.Work) {
 			cleanupEntries = true
 		}
@@ -270,8 +270,8 @@ func (w *worker) processWork(a workAssignment) {
 	}
 
 	// Update the entry in BadgerDB so other goroutines can get read only access to the result.
-	journalEntry.Value.WorkResult.Status.State = flex.Work_RUNNING
-	journalEntry.Value.WorkResult.Status.Message = "attempting to carry out the work request"
+	journalEntry.Value.WorkResult.Status.SetState(flex.Work_RUNNING)
+	journalEntry.Value.WorkResult.Status.SetMessage("attempting to carry out the work request")
 	commitJournalEntry(kvstore.WithUpdateOnly(true))
 
 	// Loop over the parts and for any that haven't completed upload or download them.
@@ -280,7 +280,7 @@ func (w *worker) processWork(a workAssignment) {
 processParts:
 	for _, part := range journalEntry.Value.WorkResult.Parts {
 
-		if part.Completed {
+		if part.GetCompleted() {
 			completedParts++
 			continue
 		}
@@ -309,15 +309,15 @@ processParts:
 			// allow it to be resumed later on. This behavior may be modified depending on the
 			// outcome of: https://github.com/ThinkParQ/bee-remote/issues/27.
 			log.Debug("error transferring part", zap.Error(err))
-			journalEntry.Value.WorkResult.Status.State = flex.Work_FAILED
-			journalEntry.Value.WorkResult.Status.Message = "error transferring part: " + err.Error()
+			journalEntry.Value.WorkResult.Status.SetState(flex.Work_FAILED)
+			journalEntry.Value.WorkResult.Status.SetMessage("error transferring part: " + err.Error())
 			if w.sendWorkResult(a, journalEntry.Value.WorkResult.Work) {
 				cleanupEntries = true
 			}
 			return
 		}
 
-		if part.Completed {
+		if part.GetCompleted() {
 			completedParts++
 		}
 
@@ -326,12 +326,12 @@ processParts:
 	}
 
 	if len(journalEntry.Value.WorkResult.Parts) == completedParts {
-		journalEntry.Value.WorkResult.Status.State = flex.Work_COMPLETED
-		journalEntry.Value.WorkResult.Status.Message = "all parts of this work request are completed"
+		journalEntry.Value.WorkResult.Status.SetState(flex.Work_COMPLETED)
+		journalEntry.Value.WorkResult.Status.SetMessage("all parts of this work request are completed")
 	} else {
 		if a.ctx.Err() != nil {
-			journalEntry.Value.WorkResult.Status.State = flex.Work_CANCELLED
-			journalEntry.Value.WorkResult.Status.Message = "the work context was cancelled before all parts can be synced"
+			journalEntry.Value.WorkResult.Status.SetState(flex.Work_CANCELLED)
+			journalEntry.Value.WorkResult.Status.SetMessage("the work context was cancelled before all parts can be synced")
 			// Don't send the work result and don't try to cleanup entries. We don't know why we
 			// were asked to be done early so we'll let the caller handle either sending the result
 			// or retrying the request later.
@@ -339,8 +339,8 @@ processParts:
 		}
 		// This shouldn't happen so we set the state to failed to avoid making things worse and
 		// ensure we don't silently retry this forever.
-		journalEntry.Value.WorkResult.Status.State = flex.Work_FAILED
-		journalEntry.Value.WorkResult.Status.Message = "request completed but not all parts are completed (this should not happen and likely indicates a bug)"
+		journalEntry.Value.WorkResult.Status.SetState(flex.Work_FAILED)
+		journalEntry.Value.WorkResult.Status.SetMessage("request completed but not all parts are completed (this should not happen and likely indicates a bug)")
 	}
 
 	if w.sendWorkResult(a, journalEntry.Value.WorkResult.Work) {

@@ -16,39 +16,39 @@ func TestGetWorkResultsForResponse(t *testing.T) {
 		"0": {
 			AssignedNode: "node0",
 			AssignedPool: worker.BeeSync,
-			WorkResult: &flex.Work{
+			WorkResult: flex.Work_builder{
 				Path:      "/foo",
 				RequestId: "0",
-				Status: &flex.Work_Status{
+				Status: flex.Work_Status_builder{
 					State:   5,
 					Message: "message0",
-				},
-			},
+				}.Build(),
+			}.Build(),
 		},
 		"1": {
 			AssignedNode: "node1",
 			AssignedPool: worker.BeeSync,
-			WorkResult: &flex.Work{
+			WorkResult: flex.Work_builder{
 				Path:      "/bar",
 				RequestId: "1",
-				Status: &flex.Work_Status{
+				Status: flex.Work_Status_builder{
 					State:   6,
 					Message: "message1",
-				},
-			},
+				}.Build(),
+			}.Build(),
 		},
 	}
 
 	for _, result := range getProtoWorkResults(testMap) {
 
-		reqID, err := strconv.Atoi(result.Work.GetRequestId())
+		reqID, err := strconv.Atoi(result.GetWork().GetRequestId())
 		require.NoError(t, err)
 		expectedStatus := flex.Work_State(reqID + 5)
 
-		assert.Equal(t, expectedStatus, result.Work.GetStatus().State)
-		assert.Equal(t, "message"+result.Work.GetRequestId(), result.Work.GetStatus().Message)
-		assert.Equal(t, "node"+result.Work.GetRequestId(), result.AssignedNode)
-		assert.Equal(t, result.AssignedPool, string(worker.BeeSync))
+		assert.Equal(t, expectedStatus, result.GetWork().GetStatus().GetState())
+		assert.Equal(t, "message"+result.GetWork().GetRequestId(), result.GetWork().GetStatus().GetMessage())
+		assert.Equal(t, "node"+result.GetWork().GetRequestId(), result.GetAssignedNode())
+		assert.Equal(t, result.GetAssignedPool(), string(worker.BeeSync))
 
 	}
 }

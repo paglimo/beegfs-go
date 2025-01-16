@@ -63,7 +63,7 @@ func (j *Job) GetSegments() []*flex.WorkRequest_Segment {
 // WorkResults.
 func (j *Job) InTerminalState() bool {
 	status := j.GetStatus()
-	return status.State == beeremote.Job_COMPLETED || status.State == beeremote.Job_CANCELLED
+	return status.GetState() == beeremote.Job_COMPLETED || status.GetState() == beeremote.Job_CANCELLED
 }
 
 // GenerateSubmission creates a JobSubmission containing one or more work requests that can be
@@ -102,7 +102,7 @@ func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Provider) (w
 
 		j.Segments = make([]*Segment, 0, len(workRequests))
 		for _, wr := range workRequests {
-			seg := proto.Clone(wr.Segment).(*flex.WorkRequest_Segment)
+			seg := proto.Clone(wr.GetSegment()).(*flex.WorkRequest_Segment)
 			j.Segments = append(j.Segments, &Segment{segment: seg})
 		}
 
@@ -151,28 +151,28 @@ func New(jobRequest *beeremote.JobRequest) (*Job, error) {
 	// BeeRemote clients can use "" as a check for invalid/no input when querying by path. This also
 	// clearly establishes all paths are specified as absolute paths (relative to the mount
 	// point/root directory).
-	if !filepath.IsAbs(jobRequest.Path) {
-		jobRequest.Path = "/" + jobRequest.Path
+	if !filepath.IsAbs(jobRequest.GetPath()) {
+		jobRequest.SetPath("/" + jobRequest.GetPath())
 	}
 
 	newJob := &Job{
-		Job: &beeremote.Job{
+		Job: beeremote.Job_builder{
 			Id:      fmt.Sprint(jobID),
 			Request: jobRequest,
 			Created: timestamppb.Now(),
-			Status: &beeremote.Job_Status{
+			Status: beeremote.Job_Status_builder{
 				State:   beeremote.Job_UNASSIGNED,
 				Message: "created",
 				Updated: timestamppb.Now(),
-			},
-		},
+			}.Build(),
+		}.Build(),
 		WorkResults: make(map[string]worker.WorkResult),
 	}
 
-	switch jobRequest.Type.(type) {
-	case *beeremote.JobRequest_Sync:
+	switch jobRequest.WhichType() {
+	case beeremote.JobRequest_Sync_case:
 		return newJob, nil
-	case *beeremote.JobRequest_Mock:
+	case beeremote.JobRequest_Mock_case:
 		return newJob, nil
 	}
 	return nil, fmt.Errorf("bad job request")

@@ -81,12 +81,12 @@ func (c *Client) UpdateConfig(newCfg *flex.BeeRemoteNode) error {
 	}
 
 	c.config.dynamic = newCfg
-	if c.config.dynamic.Address == "mock:0" {
+	if c.config.dynamic.GetAddress() == "mock:0" {
 		// Note this handles setting up the MockClient for the purposes of WorkMgr. However if the
 		// client needs to actually be used then expectations must be setup (see mock.go).
 		c.Provider = &MockProvider{}
 		return nil
-	} else if c.config.dynamic.Address != "" {
+	} else if c.config.dynamic.GetAddress() != "" {
 		newProvider := &grpcProvider{}
 		if err := newProvider.init(c.config); err != nil {
 			return fmt.Errorf("unable to initialize Remote client: %w", err)
