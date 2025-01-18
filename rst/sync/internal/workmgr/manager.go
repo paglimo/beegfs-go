@@ -460,7 +460,7 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 
 	jobEntry, releaseJob, err := m.jobStore.GetAndLockEntry(update.GetJobId())
 	if err != nil {
-		if err == kvstore.ErrEntryNotInDB {
+		if errors.Is(err, kvstore.ErrEntryNotInDB) {
 			m.log.Debug("no work requests for the specified job ID found on this worker node", zap.Any("jobID", update.GetJobId()), zap.Any("requestID", update.GetRequestId()))
 			return nil, status.Errorf(codes.NotFound, "work request %s for job ID %s was not found on this worker node", update.GetRequestId(), update.GetJobId())
 		}

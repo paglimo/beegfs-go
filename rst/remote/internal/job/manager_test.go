@@ -599,67 +599,8 @@ func TestManageErrorHandling(t *testing.T) {
 		assert.Equal(t, flex.Work_CANCELLED, wr.GetWork().GetStatus().GetState())
 	}
 
-	scheduledJobID := getJobsResponse.GetResults()[0].GetJob().GetId()
-
-	// The following sequence of events is unlikely in real work scenarios, but verifies how JobMgr
-	// handles states. First try to cancel the already cancelled job. JobMgr should always attempt
-	// to verify the work requests are cancelled on the worker nodes, even if they were previously
-	// cancelled (calls are idempotent). This time we cannot definitely cancel the requests so their
-	// state is unknown for some reason. As a result the Job status is now unknown.
-	expectedStatus.SetState(flex.Work_UNKNOWN)
-	expectedStatus.SetMessage("test expects an error communicating to the node")
-
-	updateJobRequest := beeremote.UpdateJobsRequest_builder{
-		Path:     "/test/myfile",
-		NewState: beeremote.UpdateJobsRequest_CANCELLED,
-	}.Build()
-	jobManager.UpdateJobs(updateJobRequest)
-
-	getJobRequestsByID := beeremote.GetJobsRequest_builder{
-		ByJobIdAndPath: beeremote.GetJobsRequest_QueryIdAndPath_builder{
-			JobId: scheduledJobID,
-			Path:  testJobRequest.GetPath(),
-		}.Build(),
-		IncludeWorkRequests: false,
-		IncludeWorkResults:  true,
-	}.Build()
-	responses = make(chan *beeremote.GetJobsResponse, 1)
-	err = jobManager.GetJobs(context.Background(), getJobRequestsByID, responses)
-	require.NoError(t, err)
-	getJobsResponse = <-responses
-	assert.Equal(t, beeremote.Job_UNKNOWN, getJobsResponse.GetResults()[0].GetJob().GetStatus().GetState())
-
-	for _, wr := range getJobsResponse.GetResults()[0].GetWorkResults() {
-		assert.Equal(t, flex.Work_UNKNOWN, wr.GetWork().GetStatus().GetState())
-	}
-
-	// Submit another request to cancel the job. This time the work requests are
-	// cancelled so the job status and work requests should all be cancelled.
-	expectedStatus.SetState(flex.Work_CANCELLED)
-	expectedStatus.SetMessage("test expects a cancelled request")
-
-	jobManager.UpdateJobs(updateJobRequest)
-
-	getJobRequestsByID = beeremote.GetJobsRequest_builder{
-		ByJobIdAndPath: beeremote.GetJobsRequest_QueryIdAndPath_builder{
-			JobId: scheduledJobID,
-			Path:  testJobRequest.GetPath(),
-		}.Build(),
-		IncludeWorkRequests: false,
-		IncludeWorkResults:  true,
-	}.Build()
-	responses = make(chan *beeremote.GetJobsResponse, 1)
-	err = jobManager.GetJobs(context.Background(), getJobRequestsByID, responses)
-	getJobsResponse = <-responses
-	require.NoError(t, err)
-	assert.Equal(t, beeremote.Job_CANCELLED, getJobsResponse.GetResults()[0].GetJob().GetStatus().GetState())
-
-	for _, wr := range getJobsResponse.GetResults()[0].GetWorkResults() {
-		assert.Equal(t, flex.Work_CANCELLED, wr.GetWork().GetStatus().GetState())
-	}
-
-	// If we submit a job the state should be unknown if any work requests were
-	// failed and unable to be cancelled.
+	// If we submit a job the state should be unknown if any work requests were failed and unable to
+	// be cancelled.
 	expectedStatus.SetState(flex.Work_FAILED)
 	expectedStatus.SetMessage("test expects a failed request")
 
@@ -669,7 +610,7 @@ func TestManageErrorHandling(t *testing.T) {
 	jobID := jobResponse.GetJob().GetId()
 
 	// We should not be able to delete jobs in an unknown state:
-	updateJobRequest = beeremote.UpdateJobsRequest_builder{
+	updateJobRequest := beeremote.UpdateJobsRequest_builder{
 		JobId:    proto.String(jobID),
 		Path:     testJobRequest.GetPath(),
 		NewState: beeremote.UpdateJobsRequest_DELETED,

@@ -607,7 +607,7 @@ func (m *Manager) UpdateJobs(jobUpdate *beeremote.UpdateJobsRequest) (*beeremote
 		// from some other job, don't overwrite it:
 		response.SetOk(success && response.GetOk())
 		if newMessage != "" {
-			response.SetMessage(response.GetMessage() + newMessage + ";")
+			response.SetMessage(response.GetMessage() + "; " + newMessage)
 		}
 		// Only if the user requested a deletion and the job is safe to delete mark it for deletion:
 		if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_DELETED && safeToDelete {
@@ -698,13 +698,18 @@ func (m *Manager) UpdateJobs(jobUpdate *beeremote.UpdateJobsRequest) (*beeremote
 // By default completed jobs are not updated and always return success, !safeToDelete and a warning
 // message. As a safety hatch completed jobs can be forcibly updated by specifying forceUpdate.
 //
+// By default cancelled jobs are not updated and always return success, safeToDelete, and a warning
+// message. As a safety hatch cancelled jobs can be forcibly updated by specifying forceUpdate. This
+// will always attempt to re-abort completing the job with the remote storage target, which
+// may-or-may not be supported in an idempotent manner (i.e., an error may be returned).
+//
 // IMPORTANT: This should only be used when the state of a job's work requests need to be modified
 // on the assigned worker nodes. To update the job state in reaction to job results returned by a
 // worker node use updateJobResults().
 func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobsRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
 
 	if job.Status.GetState() == beeremote.Job_COMPLETED && !forceUpdate {
-		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to override)", job.Id)
+		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to attempt anyway)", job.GetId())
 	}
 
 	if newState == beeremote.UpdateJobsRequest_DELETED {
@@ -713,13 +718,29 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobsRequest_
 			job.GetStatus().SetUpdated(timestamppb.Now())
 		}()
 		if !job.InTerminalState() {
-			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.Id)
+			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.GetId())
 		}
 		job.GetStatus().SetMessage("job scheduled for deletion")
 		return true, true, ""
 	}
 
 	if newState == beeremote.UpdateJobsRequest_CANCELLED {
+		// Originally we would always attempt to verify the work requests were cancelled on the
+		// worker node, even if they were previously cancelled. However this isn't really necessary
+		// since unless the update is forced, the state of a job should never be cancelled unless
+		// the work requests were also cancelled. By now skipping this check unless the update is
+		// forced, we can optimized for the normal scenario where someone wants to quickly verify
+		// there are no active jobs running for some (possibly large) number of paths.
+		//
+		// That said the forceUpdate functionality is very overloaded since it forces the job state
+		// to to be cancelled even if we weren't actually able to cancel some part of the job. It
+		// relies on the user to careful examine the messages on the job and work requests to
+		// understand if the job was in fact full cancelled. It may be helpful in the future to add
+		// a way to retry cancelling already cancelled jobs, but return an error if something goes
+		// wrong and fail the job, instead of just logging warnings and updating the state anyway.
+		if job.GetStatus().GetState() == beeremote.Job_CANCELLED && !forceUpdate {
+			return true, true, fmt.Sprintf("ignoring update for already cancelled job ID %s (use the force update flag to attempt anyway)", job.GetId())
+		}
 		// When returning ensure the timestamp on the job state is updated.
 		defer func() {
 			job.GetStatus().SetUpdated(timestamppb.Now())
@@ -772,7 +793,7 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobsRequest_
 		}
 
 		job.GetStatus().SetState(beeremote.Job_CANCELLED)
-		job.GetStatus().SetMessage(job.GetStatus().GetMessage() + (job.GetStatus().GetMessage() + "; successfully requested the RST abort this job"))
+		job.GetStatus().SetMessage(job.GetStatus().GetMessage() + "; successfully requested the RST abort this job")
 		m.log.Debug("successfully updated job", zap.Any("job", job))
 		return true, true, ""
 	}
