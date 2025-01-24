@@ -129,17 +129,48 @@ func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beer
 	}()
 
 	err := s.jobMgr.GetJobs(stream.Context(), request, responses)
+	wg.Wait()
 	if err != nil {
 		return err
 	}
-	wg.Wait()
 	return nil
 }
 
-func (s *BeeRemoteServer) UpdateJob(ctx context.Context, request *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
+func (s *BeeRemoteServer) UpdatePaths(request *beeremote.UpdatePathsRequest, stream beeremote.BeeRemote_UpdatePathsServer) error {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	resp, err := s.jobMgr.UpdateJob(request)
+
+	responses := make(chan *beeremote.UpdatePathsResponse, 1024)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+	sendResponses:
+		for {
+			select {
+			case <-stream.Context().Done():
+				return
+			case resp, ok := <-responses:
+				if !ok {
+					break sendResponses
+				}
+				stream.Send(resp)
+			}
+		}
+	}()
+
+	err := s.jobMgr.UpdatePaths(stream.Context(), request, responses)
+	wg.Wait()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *BeeRemoteServer) UpdateJobs(ctx context.Context, request *beeremote.UpdateJobsRequest) (*beeremote.UpdateJobsResponse, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+	resp, err := s.jobMgr.UpdateJobs(request)
 	if err != nil {
 		if errors.Is(err, kvstore.ErrEntryNotInDB) {
 			return nil, status.Errorf(codes.NotFound, "%s", err)

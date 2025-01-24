@@ -15,7 +15,6 @@ import (
 	"github.com/thinkparq/beegfs-go/common/kvstore"
 	"github.com/thinkparq/beegfs-go/common/logger"
 	"github.com/thinkparq/beegfs-go/common/rst"
-	"github.com/thinkparq/beegfs-go/common/types"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
@@ -64,9 +63,9 @@ type Manager struct {
 	// jobRequests is where goroutines manged by JobMgr listen for requests.
 	jobRequests <-chan *beeremote.JobRequest
 	// JobUpdates is where external callers should submit requests to update existing jobs.
-	JobUpdates chan<- *beeremote.UpdateJobRequest
+	JobUpdates chan<- *beeremote.UpdateJobsRequest
 	//jobUpdates is where goroutines manged by JobMgr listen for requests.
-	jobUpdates <-chan *beeremote.UpdateJobRequest
+	jobUpdates <-chan *beeremote.UpdateJobsRequest
 	// WorkResults is where work results from worker nodes should be sent.
 	// These updates are sent to JobMgr via the gRPC server.
 	WorkResults chan<- *flex.Work
@@ -86,7 +85,7 @@ func NewManager(log *zap.Logger, config Config, workerManager *workermgr.Manager
 	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 	ctx, cancel := context.WithCancel(context.Background())
 	jobRequestChan := make(chan *beeremote.JobRequest, config.RequestQueueDepth)
-	jobUpdatesChan := make(chan *beeremote.UpdateJobRequest, config.RequestQueueDepth)
+	jobUpdatesChan := make(chan *beeremote.UpdateJobsRequest, config.RequestQueueDepth)
 	workResultsChan := make(chan *flex.Work, config.RequestQueueDepth)
 	return &Manager{
 		log:           log,
@@ -136,7 +135,6 @@ func (m *Manager) Start() error {
 	// We initialize databases in Manage() so we can ensure the DBs are closed properly when shutting down.
 	pathDBOpts := badger.DefaultOptions(m.config.PathDBPath)
 	pathDBOpts = pathDBOpts.WithLogger(logger.NewBadgerLoggerBridge("pathDB", m.log))
-	pathDBOpts = pathDBOpts.WithLoggingLevel(badger.INFO)
 	pathStore, closePathDB, err := kvstore.NewMapStore[map[string]*Job](pathDBOpts)
 	if err != nil {
 		return fmt.Errorf("unable to setup paths DB: %w", err)
@@ -183,7 +181,7 @@ func (m *Manager) Start() error {
 					m.log.Debug("submitted job request", zap.Any("response", response))
 				}
 			case jobUpdate := <-m.jobUpdates:
-				response, err := m.UpdateJob(jobUpdate)
+				response, err := m.UpdateJobs(jobUpdate)
 				if err != nil {
 					m.log.Error("error updating job request", zap.Error(err), zap.Any("jobUpdate", jobUpdate))
 				} else {
@@ -479,20 +477,73 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 	}.Build(), err
 }
 
-// UpdateJob will attempt to update the specified job(s) and any associated work requests. If a path
-// is specified then all jobs running for that path will be updated. If a path and job ID is
-// specified, then only that job is updated. UpdateJob is idempotent, so it can be called multiple
-// times to verify a job is updated, for example if there was an issue cancelling some of a job's
-// work requests.
+// UpdatePaths iterates over path entries with the specified request prefix and attempts to apply
+// the requested update to each path using UpdateJobs. The result for each path is returned on the
+// responses channel. Blocks and only returns once all paths have been updated, or if a fatal error
+// occurs. It is the responsibility of the caller to setup a separate goroutine to asynchronously
+// process responses.
+func (m *Manager) UpdatePaths(ctx context.Context, request *beeremote.UpdatePathsRequest, responses chan<- *beeremote.UpdatePathsResponse) error {
+
+	defer close(responses)
+
+	m.readyMu.RLock()
+	defer m.readyMu.RUnlock()
+	if !m.ready {
+		return fmt.Errorf("unable to update paths (JobMgr is not ready)")
+	}
+
+	// Similar approach as used to get the results for multiple paths.
+	nextEntry, cleanupEntries, err := m.pathStore.GetEntries(kvstore.WithKeyPrefix(request.GetPathPrefix()))
+	if err != nil {
+		return err
+	}
+	defer cleanupEntries()
+
+sendResponses:
+	for {
+		select {
+		case <-ctx.Done():
+			break sendResponses
+		default:
+			entry, err := nextEntry()
+			if err != nil {
+				return err
+			}
+			if entry == nil {
+				break sendResponses
+			}
+			request.GetRequestedUpdate().SetPath(entry.Key)
+			resp, err := m.UpdateJobs(request.GetRequestedUpdate())
+			if err != nil {
+				return err
+			}
+			responses <- beeremote.UpdatePathsResponse_builder{
+				Path:         entry.Key,
+				UpdateResult: resp,
+			}.Build()
+		}
+	}
+	return nil
+}
+
+// UpdateJobs will attempt to update the specified job(s) and any associated work requests for a
+// single path, optionally filtering jobs by remote target ID and/or job ID. UpdateJobs is
+// idempotent, so it can be called multiple times to verify a job is updated, for example if there
+// was an issue cancelling some of a job's work requests.
 //
-// An error is only returned if an internal error (such as a DB connection issue) occurs updating
-// any of the specified job(s). If the state of one or more jobs could not be updated then the
-// response will be !ok. The response message will indicate any jobs who's state remains unchanged
-// because the new state was invalid, for example trying to delete a job that is not complete. The
-// status message on individual jobs is updated if the job state was updated, but not to the desired
-// new state, for example if a job was cancelled but the work requests could not be cancelled. Note
-// in some cases the response may be ok but the message contains warnings, for example trying to
-// delete a completed job when the force update flag is not set.
+// An error is only returned if the specified path does not exist in the DB, or for other internal
+// errors (such as a DB connection issues) occurs updating any of the specified job(s).
+//
+// If the state of one or more jobs could not be updated then the response will be !ok. The response
+// message will indicate any jobs who's state remains unchanged because the new state was invalid,
+// for example trying to delete a job that is not complete. The status message on individual jobs is
+// updated if the job state was updated, but not to the desired new state, for example if a job was
+// cancelled but the work requests could not be cancelled. Note in some cases the response may be ok
+// but the message contains warnings, for example trying to delete a completed job when the force
+// update flag is not set.
+//
+// The response will also be !ok when updating a single job by its job ID, if the job ID does not
+// exist for this path or the job ID exists but is not for one of the specified remote targets.
 //
 // When force update != true, when updating jobs by path or ID, completed jobs are ignored and do
 // not affect if the response is ok, but a warning will always be logged in the response message.
@@ -502,7 +553,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 // lead to inconsistent behavior considering most internal errors are likely database issues that
 // would cause the status not to be actually updated. As a result while the actual status of the job
 // may be indeterminate, the status recorded in the database should reflect the previous state,
-// ensuring UpdateJob can be called multiple times once any internal issues are resolved. Generally
+// ensuring UpdateJobs can be called multiple times once any internal issues are resolved. Generally
 // internal errors should just be logged or returned to the user when handling interactive requests,
 // and the typical recovery path is to retry.
 //
@@ -511,19 +562,33 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 //	UNASSIGNED/SCHEDULED/RUNNING/STALLED/PAUSED/FAILED => CANCEL
 //	CANCELLED => DELETE / CANCEL
 //	COMPLETED => DELETE / CANCEL // only if ForceUpdate==true
-func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.UpdateJobResponse, error) {
+func (m *Manager) UpdateJobs(jobUpdate *beeremote.UpdateJobsRequest) (*beeremote.UpdateJobsResponse, error) {
 	m.readyMu.RLock()
 	defer m.readyMu.RUnlock()
 	if !m.ready {
 		return nil, fmt.Errorf("unable to get jobs (JobMgr is not ready)")
 	}
 
-	if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_UNSPECIFIED {
+	if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_UNSPECIFIED {
 		return nil, fmt.Errorf("no new job state specified (probably this indicates a bug in the caller)")
 	}
 
-	// The response will collect the results of all the job updates.
-	response := beeremote.UpdateJobResponse_builder{
+	pathEntry, releasePath, err := m.pathStore.GetAndLockEntry(jobUpdate.GetPath())
+	if err != nil {
+		return nil, fmt.Errorf("error getting jobs for path %s: %w", jobUpdate.GetPath(), err)
+	}
+	// WARNING: releasePath() is not called using a defer so we can adjust how it is called below
+	// depending if the path entry should be deleted. Use caution when adding additional returns.
+
+	// If we've been asked to delete jobs, after we verify they are in a terminal state and
+	// deletion is allowed, we'll mark them for deletion.
+	var jobsSafeToDelete []string
+	if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_DELETED {
+		jobsSafeToDelete = make([]string, 0)
+	}
+
+	// response contains results from updates that occur in this function from this point onwards.
+	response := beeremote.UpdateJobsResponse_builder{
 		// If updating any job fails this should be set to false.
 		Ok: true,
 		// If the state of any job remains unchanged, this message will indicate why.
@@ -531,125 +596,86 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 		Results: make([]*beeremote.JobResult, 0),
 	}.Build()
 
-	// We handle things a little differently depending if the job update was by path or job ID. A
-	// path can update multiple jobs, a job ID at most one. Both methods utilize a shared
-	// updateJobState for all job updates.
-	if query := jobUpdate.GetByExactPath(); query != "" {
-		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(query)
-		if err != nil {
-			return nil, fmt.Errorf("error retrieving jobs for path %s: %w", query, err)
-		}
-		// Don't use a defer to release the path entry, we want to control how it is released
-		// depending if it should be deleted. Be careful not to add a return without first releasing
-		// the entry!
-
-		// If we've been asked to delete jobs, after we verify they are in a terminal state and
-		// deletion is allowed, we'll mark them for deletion.
-		var jobsSafeToDelete []string
-		if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_DELETED {
-			jobsSafeToDelete = make([]string, 0)
-		}
-
-		for _, job := range pathEntry.Value {
-			// Attempt to apply the requested update.
-			success, safeToDelete, newMessage := m.updateJobState(job, jobUpdate.GetNewState(), jobUpdate.GetForceUpdate())
-			// If anything goes wrong the overall response should be !ok. If the response is already
-			// !ok from some other job, don't overwrite it:
-			response.SetOk(success && response.GetOk())
-			if newMessage != "" {
-				response.SetMessage(response.GetMessage() + newMessage + ";")
-			}
-			// Only if the user requested a deletion and the job is safe to delete do we mark it for deletion:
-			if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_DELETED && safeToDelete {
-				jobsSafeToDelete = append(jobsSafeToDelete, job.GetId())
-			}
-			response.SetResults(append(response.GetResults(), beeremote.JobResult_builder{
-				Job:          job.Get(),
-				WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
-				WorkResults:  getProtoWorkResults(job.WorkResults),
-			}.Build()))
-		}
-
-		if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_DELETED {
-			for _, deletedJobID := range jobsSafeToDelete {
-				delete(pathEntry.Value, deletedJobID)
-			}
-		}
-		if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_DELETED && len(pathEntry.Value) == 0 {
-			// Only clean up the path entry if there are no more jobs left for it.
-			// We want to delete the entry before releasing the lock, otherwise its
-			// possible someone else slips in a new job for this path and we would
-			// loose it. This is why we use the DeleteEntry release flag here.
-			err = releasePathEntry(kvstore.WithDeleteEntry(true))
-			if err != nil {
-				// If an error happens here we don't want to actually return the response since we
-				// don't know if the path entry was actually deleted.
-				return nil, fmt.Errorf("no jobs should remain for path %s but was unable to remove the path entry (try again): %w", query, err)
-			}
-		} else {
-			err = releasePathEntry()
-			if err != nil {
-				// If an error happens here we don't want to actually return a response since we
-				// don't know if the path entry was actually updated. Most likely it still reflects
-				// the previous state.
-				return nil, fmt.Errorf("unable to commit and release entry for path %s (try again): %w", query, err)
-			}
-		}
-
-		return response, nil
-
-	} else if query := jobUpdate.GetByIdAndPath(); query != nil {
-
-		if query.GetJobId() == "" || query.GetPath() == "" {
-			return nil, fmt.Errorf("to update by job ID and path, both must be specified")
-		}
-
-		pathEntry, releasePathEntry, err := m.pathStore.GetAndLockEntry(query.GetPath())
-		if err != nil {
-			return nil, fmt.Errorf("error retrieving jobs for path %s while searching for job ID %s : %w", query.GetPath(), query.GetJobId(), err)
-		}
-
-		job, ok := pathEntry.Value[query.GetJobId()]
-		if !ok {
-			var multiErr types.MultiError
-			multiErr.Errors = append(multiErr.Errors, fmt.Errorf("job ID %s does not exist for path %s", query.GetJobId(), query.GetPath()))
-			if err = releasePathEntry(); err != nil {
-				multiErr.Errors = append(multiErr.Errors, fmt.Errorf("unable to commit and release path entry %s: %w", query.GetPath(), err))
-			}
-			return nil, &multiErr
-		}
-
+	// applyUpdate is the common way to apply the update to a particular job and modify the response
+	// with the result. Most of the heavy lifting is done by updateJobState(). This could
+	// potentially be made into a standalone function if it ever needs to be reused elsewhere.
+	applyUpdate := func(job *Job) {
 		// Attempt to apply the requested update.
 		success, safeToDelete, newMessage := m.updateJobState(job, jobUpdate.GetNewState(), jobUpdate.GetForceUpdate())
-		response.SetOk(success)
+		// If anything goes wrong the overall response should be !ok. If the response is already !ok
+		// from some other job, don't overwrite it:
+		response.SetOk(success && response.GetOk())
 		if newMessage != "" {
-			response.SetMessage(response.GetMessage() + newMessage + ";")
+			response.SetMessage(response.GetMessage() + "; " + newMessage)
 		}
-		// Only if the user asked to delete the job and it is safe to delete should we delete it.
-		if jobUpdate.GetNewState() == beeremote.UpdateJobRequest_DELETED && safeToDelete {
-			delete(pathEntry.Value, query.GetJobId())
+		// Only if the user requested a deletion and the job is safe to delete mark it for deletion:
+		if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_DELETED && safeToDelete {
+			jobsSafeToDelete = append(jobsSafeToDelete, job.GetId())
 		}
-		// Only clean up the path entry if there are no more jobs left for it:
-		if len(pathEntry.Value) == 0 {
-			if err = releasePathEntry(kvstore.WithDeleteEntry(true)); err != nil {
-				return nil, fmt.Errorf("after deleting job ID %s no jobs should remain for path %s but was unable to remove the path entry (try again): %w", query.GetJobId(), query.GetPath(), err)
-			}
-		} else {
-			if err = releasePathEntry(); err != nil {
-				return nil, fmt.Errorf("unable to commit and release entry for path %s after updating job ID %s (try again): %w", query.GetPath(), query.GetJobId(), err)
-			}
-		}
+		// We must always return results.
 		response.SetResults(append(response.GetResults(), beeremote.JobResult_builder{
 			Job:          job.Get(),
 			WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
 			WorkResults:  getProtoWorkResults(job.WorkResults),
 		}.Build()))
-
-		return response, nil
-
-	} else {
-		return nil, fmt.Errorf("unable to update job (no job ID or path specified)")
 	}
+
+	// Handle different ways to query the job(s) to update:
+	if jobUpdate.HasJobId() {
+		// Just check if a single job for this path needs to be updated:
+		if job, ok := pathEntry.Value[jobUpdate.GetJobId()]; ok {
+			if jobUpdate.GetRemoteTargets() == nil || func() bool {
+				_, ok := jobUpdate.GetRemoteTargets()[job.GetRequest().GetRemoteStorageTarget()]
+				if !ok {
+					response.SetOk(false)
+					response.SetMessage(fmt.Sprintf("job ID %s for path %s is not for any of the specified remote targets %+v", jobUpdate.GetJobId(), jobUpdate.GetPath(), jobUpdate.GetRemoteTargets()))
+				}
+				return ok
+			}() {
+				applyUpdate(job)
+			}
+		} else {
+			response.SetOk(false)
+			response.SetMessage(fmt.Sprintf("job ID %s does not exist for path %s", jobUpdate.GetJobId(), jobUpdate.GetPath()))
+		}
+	} else {
+		// Otherwise check all the jobs for this path to see if they need an update:
+		for _, job := range pathEntry.Value {
+			if jobUpdate.GetRemoteTargets() != nil && !jobUpdate.GetRemoteTargets()[job.GetRequest().GetRemoteStorageTarget()] {
+				continue
+			}
+			applyUpdate(job)
+		}
+	}
+
+	// Handle when additional cleanup is needed as part of deleting jobs:
+	if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_DELETED {
+		for _, deletedJobID := range jobsSafeToDelete {
+			delete(pathEntry.Value, deletedJobID)
+		}
+	}
+	if jobUpdate.GetNewState() == beeremote.UpdateJobsRequest_DELETED && len(pathEntry.Value) == 0 {
+		// Only clean up the path entry if there are no more jobs left for it.
+		// We want to delete the entry before releasing the lock, otherwise its
+		// possible someone else slips in a new job for this path and we would
+		// loose it. This is why we use the DeleteEntry release flag here.
+		err = releasePath(kvstore.WithDeleteEntry(true))
+		if err != nil {
+			// If an error happens here we don't want to actually return the response since we
+			// don't know if the path entry was actually deleted.
+			return nil, fmt.Errorf("no jobs should remain for path %s but was unable to remove the path entry (try again): %w", jobUpdate.GetPath(), err)
+		}
+	} else {
+		err = releasePath()
+		if err != nil {
+			// If an error happens here we don't want to actually return a response since we
+			// don't know if the path entry was actually updated. Most likely it still reflects
+			// the previous state.
+			return nil, fmt.Errorf("unable to commit and release entry for path %s (try again): %w", jobUpdate.GetPath(), err)
+		}
+	}
+
+	return response, nil
 }
 
 // updateJobState takes an already locked job and and will attempt to apply newState. The job will
@@ -671,28 +697,49 @@ func (m *Manager) UpdateJob(jobUpdate *beeremote.UpdateJobRequest) (*beeremote.U
 // By default completed jobs are not updated and always return success, !safeToDelete and a warning
 // message. As a safety hatch completed jobs can be forcibly updated by specifying forceUpdate.
 //
+// By default cancelled jobs are not updated and always return success, safeToDelete, and a warning
+// message. As a safety hatch cancelled jobs can be forcibly updated by specifying forceUpdate. This
+// will always attempt to re-abort completing the job with the remote storage target, which
+// may-or-may not be supported in an idempotent manner (i.e., an error may be returned).
+//
 // IMPORTANT: This should only be used when the state of a job's work requests need to be modified
 // on the assigned worker nodes. To update the job state in reaction to job results returned by a
 // worker node use updateJobResults().
-func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
+func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobsRequest_NewState, forceUpdate bool) (success bool, safeToDelete bool, message string) {
 
 	if job.Status.GetState() == beeremote.Job_COMPLETED && !forceUpdate {
-		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to override)", job.Id)
+		return true, false, fmt.Sprintf("rejecting update for completed job ID %s (use the force update flag to attempt anyway)", job.GetId())
 	}
 
-	if newState == beeremote.UpdateJobRequest_DELETED {
+	if newState == beeremote.UpdateJobsRequest_DELETED {
 		// When returning ensure the timestamp on the job state is updated.
 		defer func() {
 			job.GetStatus().SetUpdated(timestamppb.Now())
 		}()
 		if !job.InTerminalState() {
-			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.Id)
+			return false, false, fmt.Sprintf("unable to delete job %s because it has not reached a terminal state (cancel it first)", job.GetId())
 		}
 		job.GetStatus().SetMessage("job scheduled for deletion")
 		return true, true, ""
 	}
 
-	if newState == beeremote.UpdateJobRequest_CANCELLED {
+	if newState == beeremote.UpdateJobsRequest_CANCELLED {
+		// Originally we would always attempt to verify the work requests were cancelled on the
+		// worker node, even if they were previously cancelled. However this isn't really necessary
+		// since unless the update is forced, the state of a job should never be cancelled unless
+		// the work requests were also cancelled. By now skipping this check unless the update is
+		// forced, we can optimized for the normal scenario where someone wants to quickly verify
+		// there are no active jobs running for some (possibly large) number of paths.
+		//
+		// That said the forceUpdate functionality is very overloaded since it forces the job state
+		// to to be cancelled even if we weren't actually able to cancel some part of the job. It
+		// relies on the user to careful examine the messages on the job and work requests to
+		// understand if the job was in fact full cancelled. It may be helpful in the future to add
+		// a way to retry cancelling already cancelled jobs, but return an error if something goes
+		// wrong and fail the job, instead of just logging warnings and updating the state anyway.
+		if job.GetStatus().GetState() == beeremote.Job_CANCELLED && !forceUpdate {
+			return true, true, fmt.Sprintf("ignoring update for already cancelled job ID %s (use the force update flag to attempt anyway)", job.GetId())
+		}
 		// When returning ensure the timestamp on the job state is updated.
 		defer func() {
 			job.GetStatus().SetUpdated(timestamppb.Now())
@@ -745,7 +792,7 @@ func (m *Manager) updateJobState(job *Job, newState beeremote.UpdateJobRequest_N
 		}
 
 		job.GetStatus().SetState(beeremote.Job_CANCELLED)
-		job.GetStatus().SetMessage(job.GetStatus().GetMessage() + (job.GetStatus().GetMessage() + "; successfully requested the RST abort this job"))
+		job.GetStatus().SetMessage(job.GetStatus().GetMessage() + "; successfully requested the RST abort this job")
 		m.log.Debug("successfully updated job", zap.Any("job", job))
 		return true, true, ""
 	}

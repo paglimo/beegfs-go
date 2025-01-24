@@ -150,7 +150,6 @@ func NewAndStart(log *zap.Logger, config Config, beeRemoteClient *beeremote.Clie
 	// Setup work journal:
 	workJournalOpts := badger.DefaultOptions(m.config.WorkJournalPath)
 	workJournalOpts = workJournalOpts.WithLogger(logger.NewBadgerLoggerBridge("workJournal", m.log))
-	workJournalOpts = workJournalOpts.WithLoggingLevel(badger.INFO)
 	workJournal, closeWorkJournal, err := kvstore.NewMapStore[workEntry](workJournalOpts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to setup work journal: %w", err)
@@ -161,7 +160,6 @@ func NewAndStart(log *zap.Logger, config Config, beeRemoteClient *beeremote.Clie
 	// Setup job store:
 	jobStoreOpts := badger.DefaultOptions(m.config.JobStorePath)
 	jobStoreOpts = jobStoreOpts.WithLogger(logger.NewBadgerLoggerBridge("jobStore", m.log))
-	jobStoreOpts = jobStoreOpts.WithLoggingLevel(badger.INFO)
 	jobStore, closeJobStore, err := kvstore.NewMapStore[map[string]string](jobStoreOpts)
 	if err != nil {
 		return nil, fmt.Errorf("unable to setup job store: %w", err)
@@ -460,7 +458,7 @@ func (m *Manager) UpdateWork(update *flex.UpdateWorkRequest) (*flex.Work, error)
 
 	jobEntry, releaseJob, err := m.jobStore.GetAndLockEntry(update.GetJobId())
 	if err != nil {
-		if err == kvstore.ErrEntryNotInDB {
+		if errors.Is(err, kvstore.ErrEntryNotInDB) {
 			m.log.Debug("no work requests for the specified job ID found on this worker node", zap.Any("jobID", update.GetJobId()), zap.Any("requestID", update.GetRequestId()))
 			return nil, status.Errorf(codes.NotFound, "work request %s for job ID %s was not found on this worker node", update.GetRequestId(), update.GetJobId())
 		}
