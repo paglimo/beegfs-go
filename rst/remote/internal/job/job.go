@@ -41,7 +41,10 @@ type Job struct {
 // status of a derived work request. For those cases, use proto.Clone() to create a deep copy of the
 // Job or particular field (like status), ensuring that changes do not impact the original instance.
 func (j *Job) Get() *beeremote.Job {
-	return j.Job
+	if j != nil {
+		return j.Job
+	}
+	return nil
 }
 
 // GetSegments() is used anywhere we need a slice of the protobuf defined segments. Notably for use
@@ -62,8 +65,12 @@ func (j *Job) GetSegments() []*flex.WorkRequest_Segment {
 // leaving orphaned requests on worker nodes. This should mirror the InTerminalState() method for
 // WorkResults.
 func (j *Job) InTerminalState() bool {
-	status := j.GetStatus()
-	return status.GetState() == beeremote.Job_COMPLETED || status.GetState() == beeremote.Job_CANCELLED
+	return j.GetStatus().GetState() == beeremote.Job_COMPLETED || j.GetStatus().GetState() == beeremote.Job_CANCELLED
+}
+
+// InActiveState() returns true if the job is active and not in a failed or terminal state.
+func (j *Job) InActiveState() bool {
+	return j.GetStatus().GetState() == beeremote.Job_SCHEDULED || j.GetStatus().GetState() == beeremote.Job_RUNNING
 }
 
 // GenerateSubmission creates a JobSubmission containing one or more work requests that can be
@@ -88,14 +95,14 @@ func (j *Job) InTerminalState() bool {
 // function as a method to determine if a file has changed and it is safe to resume a job or if it
 // should be cancelled. It also ensures even if the file changes the original job submission can be
 // recreated for troubleshooting.
-func (j *Job) GenerateSubmission(ctx context.Context, rstClient rst.Provider) (workermgr.JobSubmission, bool, error) {
+func (j *Job) GenerateSubmission(ctx context.Context, lastJob *Job, rstClient rst.Provider) (workermgr.JobSubmission, bool, error) {
 
 	var workRequests []*flex.WorkRequest
 
 	if j.Segments == nil {
 		var canRetry bool
 		var err error
-		workRequests, canRetry, err = rstClient.GenerateWorkRequests(ctx, j.Get(), 0)
+		workRequests, canRetry, err = rstClient.GenerateWorkRequests(ctx, lastJob.Get(), j.Get(), 0)
 		if err != nil {
 			return workermgr.JobSubmission{}, canRetry, err
 		}

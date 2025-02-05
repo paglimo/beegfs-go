@@ -167,8 +167,10 @@ func (m *Manager) Start() error {
 		}()
 
 		m.log.Info("now accepting job requests and work responses")
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/9. Use a pool of
-		// goroutines to process job requests and work responses.
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/11.
+		//
+		// Decide if this is still needed and consider removing. If it is kept consider using a pool
+		// of goroutines to process job requests and work responses.
 		for {
 			select {
 			case <-m.ctx.Done():
@@ -371,10 +373,14 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		}
 	}()
 
+	// lastJob is a reference to the last job for this path+RST (if one exists). For request types
+	// that are idempotent it is used to check if the current request is needed. Note this is NOT
+	// set if there is a conflictingJob.
+	var lastJob *Job
 	if len(pathEntry.Value) != 0 {
 
-		// Set true if we can't start a new job due to a conflict.
-		jobConflict := false
+		// Set if we can't start a new job due to a conflict.
+		var conflictingJob *Job
 		// Add jobs in a terminal state to a map based on their RST ID.
 		// We limit the number of historical jobs kept for each RST.
 		terminalJobsByRST := make(map[uint32][]*Job, 0)
@@ -382,7 +388,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		for _, existingJob := range pathEntry.Value {
 			if existingJob.Request.GetRemoteStorageTarget() == job.Request.GetRemoteStorageTarget() && !existingJob.InTerminalState() {
 				// We found an active job for this RST. We shouldn't try to start a new job but we also shouldn't clean up the active job.
-				jobConflict = true
+				conflictingJob = existingJob
 			} else if existingJob.InTerminalState() {
 				// Found a job in a terminal state, add it to the list to check if it should be cleaned up:
 				terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()] = append(terminalJobsByRST[existingJob.Request.GetRemoteStorageTarget()], existingJob)
@@ -394,33 +400,57 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 			// Otherwise we found a job for a different RST not in a terminal state. Don't touch it.
 		}
 
-		for _, jobsForRST := range terminalJobsByRST {
-			// It would be inefficient if we only cleaned up one entry at a
-			// time so we set a max number of entries before we start GC.
+		for rst, jobsForRST := range terminalJobsByRST {
+			// Sorting is expensive so we only sort when we need to and ensure to only sort once.
+			sorted := false
+			sortFunc := func() {
+				if !sorted {
+					// Sort the slice so we can determine the most recently created job.
+					sort.Slice(jobsForRST, func(i, j int) bool {
+						return jobsForRST[i].GetCreated().GetSeconds() < jobsForRST[j].GetCreated().GetSeconds()
+					})
+					sorted = true
+				}
+			}
+
+			// It would be inefficient if we only cleaned up one entry at a time so we set a max
+			// number of entries before we start GC.
 			if len(jobsForRST) > m.config.MaxJobEntriesPerRST {
-				// Sort the slice so we can delete old jobs based on the lowest
-				// job ID until we reach minJobEntriesPerRST.
-				sort.Slice(jobsForRST, func(i, j int) bool { return jobsForRST[i].GetId() < jobsForRST[j].GetId() })
+				// Delete old jobs based on the oldest job by creation time until we reach
+				// minJobEntriesPerRST.
+				sortFunc()
 				for _, gcJob := range jobsForRST[:m.config.MinJobEntriesPerRST+1] {
 					delete(pathEntry.Value, gcJob.GetId())
 				}
 			}
+			// No reason to get the lastJob if the request was forced.
+			if !job.GetRequest().GetForce() && rst == job.GetRequest().GetRemoteStorageTarget() {
+				sortFunc()
+				if len(jobsForRST) != 0 {
+					lastJob = jobsForRST[len(jobsForRST)-1]
+				}
+			}
 		}
 
-		if jobConflict {
-			// Initially we would add a cancelled job entry even if there was a
-			// conflict. The goal was to avoid potentially spamming the logs
-			// with rejected jobs. But typically users will submit jobs
-			// interactively giving us a chance to immediately return an error.
-			// And generally jobs submitted non-interactively are generated
-			// based on events. And our event handling functionality should know
-			// how to never create a job when there is already one running.
-			//
-			// A benefit of this approach is that we don't end up with a job
-			// with a higher ID that would be retained longer than the active
-			// job. We want the job with the highest ID for a particular RST
-			// to always be the latest job result for that path+RST combo.
-			return nil, fmt.Errorf("rejecting job request because the specified path entry %s already has an active job for RST %d (cancel or wait for it to complete first)", job.Request.GetPath(), job.Request.GetRemoteStorageTarget())
+		if conflictingJob != nil {
+			// When job creation was forced, return an error if there is a conflictingJob.
+			if job.GetRequest().GetForce() {
+				return nil, fmt.Errorf("rejecting forced job request because the specified path entry %s already has an active job for RST %d (cancel or wait for it to complete first)", job.Request.GetPath(), job.Request.GetRemoteStorageTarget())
+			}
+			// Otherwise depending on the state return the conflictingJob along with a specific error.
+			var err error
+			if conflictingJob.InActiveState() {
+				m.log.Debug("an equivalent active job already exists for the requested job, returning that job instead of creating a new one", zap.Any("conflictingJob", conflictingJob))
+				err = rst.ErrJobAlreadyExists
+			} else {
+				m.log.Debug("an equivalent failed job already exists for the requested job, returning that job instead of creating a new one", zap.Any("conflictingJob", conflictingJob))
+				err = rst.ErrJobNotAllowed
+			}
+			return beeremote.JobResult_builder{
+				Job:          conflictingJob.Get(),
+				WorkRequests: rst.RecreateWorkRequests(conflictingJob.Get(), conflictingJob.GetSegments()),
+				WorkResults:  getProtoWorkResults(conflictingJob.WorkResults),
+			}.Build(), err
 		}
 
 	}
@@ -430,8 +460,15 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		return nil, fmt.Errorf("rejecting job because the requested RST does not exist: %d", job.Request.GetRemoteStorageTarget())
 	}
 
-	jobSubmission, retry, err := job.GenerateSubmission(m.ctx, rstClient)
-	if err != nil && !retry {
+	jobSubmission, retry, err := job.GenerateSubmission(m.ctx, lastJob, rstClient)
+	if err != nil && errors.Is(err, rst.ErrJobAlreadyExists) {
+		m.log.Debug("an equivalent completed job already exists for the requested job, returning that job instead of creating a new one", zap.Any("job", lastJob), zap.Any("err", err))
+		return beeremote.JobResult_builder{
+			Job:          lastJob.Get(),
+			WorkRequests: rst.RecreateWorkRequests(lastJob.Get(), lastJob.GetSegments()),
+			WorkResults:  getProtoWorkResults(lastJob.WorkResults),
+		}.Build(), err
+	} else if err != nil && !retry {
 		return nil, fmt.Errorf("a fatal error occurred generating the job submission, please check the job or RST configuration before trying again: %w", err)
 	} else if err != nil {
 		// TODO: https://github.com/ThinkParQ/bee-remote/issues/27. If we decide to implement a

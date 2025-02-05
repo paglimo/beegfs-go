@@ -141,7 +141,7 @@ func TestManage(t *testing.T) {
 
 	// If we try to submit another job for the same path with the same RST an error should be returned:
 	jr, err := jobManager.SubmitJobRequest(testJobRequest)
-	assert.Nil(t, jr)
+	assert.NotNil(t, jr) // Should get back the original job request.
 	assert.Error(t, err)
 
 	// No job should be created:
@@ -622,7 +622,7 @@ func TestManageErrorHandling(t *testing.T) {
 	// We should reject new jobs while there is a job in an unknown state:
 	jobResponse, err = jobManager.SubmitJobRequest(testJobRequest)
 	require.Error(t, err)
-	assert.Nil(t, jobResponse)
+	assert.NotNil(t, jobResponse) // Should get back the job in an unknown state.
 
 	// We should be able to cancel jobs in an unknown state once the WRs can be cancelled:
 	expectedStatus.SetState(flex.Work_CANCELLED)

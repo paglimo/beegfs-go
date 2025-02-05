@@ -10,6 +10,7 @@ import (
 
 	"github.com/thinkparq/bee-remote/remote/internal/job"
 	"github.com/thinkparq/beegfs-go/common/kvstore"
+	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -97,11 +98,19 @@ func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.Subm
 	s.wg.Add(1)
 	defer s.wg.Done()
 	result, err := s.jobMgr.SubmitJobRequest(request.GetRequest())
+	var status beeremote.SubmitJobResponse_ResponseStatus = beeremote.SubmitJobResponse_CREATED
 	if err != nil {
-		return nil, err
+		if errors.Is(err, rst.ErrJobAlreadyExists) {
+			status = beeremote.SubmitJobResponse_EXISTING
+		} else if errors.Is(err, rst.ErrJobNotAllowed) {
+			status = beeremote.SubmitJobResponse_NOT_ALLOWED
+		} else {
+			return nil, err
+		}
 	}
 	return beeremote.SubmitJobResponse_builder{
 		Result: result,
+		Status: status,
 	}.Build(), nil
 }
 
@@ -116,21 +125,24 @@ func (s *BeeRemoteServer) GetJobs(request *beeremote.GetJobsRequest, stream beer
 		defer wg.Done()
 	sendResponses:
 		for {
-			select {
-			case <-stream.Context().Done():
-				return
-			case resp, ok := <-responses:
-				if !ok {
-					break sendResponses
-				}
-				stream.Send(resp)
+			resp, ok := <-responses
+			if !ok {
+				break sendResponses
 			}
+			// No reason to check the error because even if the stream breaks we need to continue
+			// reading from the channel until it is closed. Otherwise the sender side may become
+			// blocked permanently trying to send with no receiver if the channel is full and will
+			// never get a chance to check if the context is cancelled.
+			stream.Send(resp)
 		}
 	}()
 
 	err := s.jobMgr.GetJobs(stream.Context(), request, responses)
 	wg.Wait()
 	if err != nil {
+		if errors.Is(err, kvstore.ErrEntryNotInDB) {
+			return status.Errorf(codes.NotFound, err.Error())
+		}
 		return err
 	}
 	return nil

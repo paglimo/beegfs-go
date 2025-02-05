@@ -1,6 +1,6 @@
 module github.com/thinkparq/bee-remote
 
-go 1.23.1
+go 1.23.5
 
 require (
 	github.com/dgraph-io/badger/v4 v4.3.0
@@ -8,8 +8,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.9.0
-	github.com/thinkparq/beegfs-go v0.0.0-beta.4.0.20250124160146-98c20e9d9950
-	github.com/thinkparq/protobuf v0.0.0-beta.4.0.20250124154812-3dd9c71631dd
+	github.com/thinkparq/beegfs-go v0.0.0-beta.4.0.20250205174413-3c7edade6d9a
+	github.com/thinkparq/protobuf v0.0.0-beta.4.0.20250205022828-06acb9cb3970
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.69.4
 	google.golang.org/protobuf v1.36.2
