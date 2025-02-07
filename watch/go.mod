@@ -1,6 +1,6 @@
 module github.com/thinkparq/bee-watch
 
-go 1.23.1
+go 1.23.6
 
 require (
 	github.com/spf13/pflag v1.0.5
