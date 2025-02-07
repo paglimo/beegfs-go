@@ -58,6 +58,7 @@ nfpms:
     formats:
       - rpm
       - deb
+    epoch: "20"
     bindir: /opt/beegfs/sbin/
     contents:
       - src: /opt/beegfs/sbin/beegfs-remote
@@ -88,6 +89,7 @@ nfpms:
     formats:
       - rpm
       - deb
+    epoch: "20"
     bindir: /opt/beegfs/sbin/
     contents:
       - src: /opt/beegfs/sbin/beegfs-sync

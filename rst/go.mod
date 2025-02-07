@@ -1,6 +1,6 @@
 module github.com/thinkparq/bee-remote
 
-go 1.23.5
+go 1.23.6
 
 require (
 	github.com/dgraph-io/badger/v4 v4.3.0
