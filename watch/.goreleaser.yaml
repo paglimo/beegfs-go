@@ -34,8 +34,6 @@ nfpms:
     homepage: https://www.beegfs.io
     maintainer: BeeGFS Maintainers <packages@beegfs.com>
     description: BeeGFS Watch
-    provides:
-      - beegfs-watch
     license: BeeGFS EULA
     formats:
       - rpm
