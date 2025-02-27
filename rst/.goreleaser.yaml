@@ -52,8 +52,6 @@ nfpms:
     homepage: https://www.beegfs.io
     maintainer: BeeGFS Maintainers <packages@beegfs.com>
     description: BeeGFS Remote (Remote Storage Targets Coordinator)
-    provides:
-      - beegfs-remote
     license: BeeGFS EULA
     formats:
       - rpm
@@ -83,8 +81,6 @@ nfpms:
     homepage: https://www.beegfs.io
     maintainer: BeeGFS Maintainers <packages@beegfs.com>
     description: BeeGFS Sync (Remote Storage Targets Syncer)
-    provides:
-      - beegfs-sync
     license: BeeGFS EULA
     formats:
       - rpm
