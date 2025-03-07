@@ -29,6 +29,17 @@ type Handler struct {
 	// version has finished shutting down before we swap out the handler or
 	// delete it.
 	mu sync.Mutex
+	// lastSeqID is used to avoid sending duplicate events to subscribers after a restart. This is
+	// necessary because subscribers may acknowledge the last event they received before that event
+	// exists in the event buffer. Calling AckEvent() on an event that does not exist is essentially
+	// a no-op and the ack cursor is unmodified meaning it cannot be used to determine the next
+	// event expected by a subscriber.
+	//
+	// This approach avoids the need for a more complicated mechanism to collect the next event
+	// expected by all subscribers and wait for the event buffer to be repopulated. Once the event
+	// buffer is initialized and the subscribers ackCursor points at the correct event this field is
+	// redundant but still updated for consistency in case it is useful elsewhere in the future.
+	lastSeqID uint64
 }
 
 type HandlerConfig struct {
@@ -184,7 +195,13 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 		if ok {
 			// Note an error or a legitimate remote disconnect could result in a REMOTE_DISCONNECT.
 			h.log.Info("subscriber acknowledged last event received before disconnect", zap.Any("sequenceID", response.CompletedSeq))
-			h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
+			err := h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
+			if err != nil {
+				// Ignore errors, an error is expected if the event buffer is not fully repopulated.
+				// This is logged in case we start seeing errors unexpected under other circumstances.
+				h.log.Debug("error updating subscriber ack cursor with last event before disconnect", zap.Error(err))
+			}
+			h.lastSeqID = response.CompletedSeq
 		}
 		// TODO: Test what happens if we have a REMOTE_DISCONNECT here. Are we safe to just ignore it? It would be better to explicitly handle.
 	case <-time.After(time.Duration(h.config.MaxWaitForResponseAfterConnect) * time.Second):
@@ -194,6 +211,7 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 	// Move the send cursor back to the last acknowledged event.
 	// This may result in duplicate events being sent if the subscriber didn't tell us the last event they received.
 	h.metaEventBuffer.ResetSendCursor(h.ID)
+	loggedAckError := false
 
 	go func() {
 		defer close(done)
@@ -210,7 +228,20 @@ func (h *Handler) receiveLoop() (<-chan struct{}, context.CancelFunc) {
 					return
 				}
 				//h.log.Debug("received response from subscriber", zap.Any("response", response))
-				h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
+				err := h.metaEventBuffer.AckEvent(h.ID, response.CompletedSeq)
+				if err != nil {
+					if !loggedAckError {
+						// Ignore errors, an error is expected if the event buffer is not fully
+						// repopulated, or if the subscriber is setup to acknowledge the most recent
+						// event on a timer and all sent events are already acknowledged. This is
+						// logged to avoid masking errors in other circumstances.
+						h.log.Debug("unable to acknowledge the specified sequence ID (further occurrences will not be logged until this operation succeeds)", zap.Error(err), zap.String("hint", "if Watch just started this likely indicates the event buffer is not fully repopulated yet"))
+						loggedAckError = true
+					}
+				} else {
+					loggedAckError = false
+				}
+				h.lastSeqID = response.CompletedSeq
 
 				// TODO: https://linear.app/thinkparq/issue/BF-29/acknowledge-events-sent-to-all-subscribers-back-to-the-metadata-server
 				// Also consider if we need to better handle what we do with recvStream when we break out of the connectedLoop.
@@ -235,6 +266,7 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	h.log.Info("beginning normal event stream")
+	loggedAckError := false
 
 	go func() {
 		defer close(done)
@@ -264,9 +296,25 @@ func (h *Handler) sendLoop() (<-chan struct{}, context.CancelFunc) {
 
 						// Continue sending events until there are no more events to send:
 						if event != nil {
-							if err := h.Send(event); err != nil {
-								h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
-								return
+							// Don't send duplicate events.
+							if event.SeqId > h.lastSeqID || (event.SeqId == 0 && h.lastSeqID == 0) {
+								if err := h.Send(event); err != nil {
+									h.log.Error("unable to send event", zap.Error(err), zap.Any("event", event.SeqId))
+									return
+								}
+							} else {
+								// As an optimization, keep trying to ack the lastSeqID so once the
+								// buffer is repopulated we don't need to process/discard all events
+								// and can just immediately fast forward the ack cursor.
+								err := h.metaEventBuffer.AckEvent(h.ID, h.lastSeqID)
+								if err != nil {
+									if !loggedAckError {
+										h.log.Debug("ignoring event already sent to the subscriber and attempting to fast forward the ack cursor (further occurrences will not be logged until this operation succeeds)", zap.Error(err), zap.String("hint", "if Watch just started this likely indicates the event buffer is not fully repopulated yet"))
+										loggedAckError = true
+									}
+								} else {
+									loggedAckError = false
+								}
 							}
 						} else {
 							break sendEvents

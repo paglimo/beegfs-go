@@ -25,8 +25,8 @@ tls-disable = false
 
 [[metadata]]
 event-log-target = '/run/beegfs/eventlog'
-event-buffer-size = 10000000
-event-buffer-gc-frequency = 100000
+event-buffer-size = 4194304
+event-buffer-gc-frequency = 419430
 
 [handler]
 max-reconnect-backoff = 60
@@ -139,13 +139,31 @@ poll-frequency = 1
 # socket (should match sysFileEventLogTarget in beegfs-meta.conf).
 
 # event-buffer-size: How many events to keep in memory if the BeeGFS metadata service sends events
-# to Watch faster than they can be sent to subscribers, or a subscriber is temporarily
-# disconnected. Worst case memory usage is approximately (10KB x sysFileEventBufferSize). 
+# to Watch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.
+# Worst case memory usage is approximately (9KiB x event-buffer-size). Note the events stored in the
+# Watch event buffer are stored using protocol buffers, which are slightly larger than the raw
+# events sent from the Metadata server. 9KiB per event is a conservative "worst case" estimate.
+#
+# The event-buffer-size should be set taking into consideration the number of events that may be
+# stored in the on-disk metadata event queue as determined by sysFileEventPersistSize in
+# beegfs-meta.conf. Events stored in the metadata event queue can range in size from ~72 bytes
+# (e.g., creating a file in the root directory with a single letter name) up to ~8,287 bytes (e.g.,
+# renaming a file with a 4096 character name, the max in Linux). For example a 1GiB (1,048,576 KiB
+# or 1,073,741,824 bytes) on-disk metadata event queue could store between 129,569 and 14,913,080
+# events depending on their size.
+#
+# Ideally the event-buffer-size is set to be larger than the number of events in the metadata event
+# queue, which depends on the average event size. If this is unknown a good rule of thumb is to use
+# an average event size of 256 bytes then calculate the event-buffer-size using:
+# (sysFileEventPersistSize * 1024 * 1024 * 1024) / 256. For example if sysFileEventPersistSize=1g
+# then event-buffer-size could be set to 4,194,304 for a maximum memory footprint of 36 GiB with
+# 8,287 byte events. With this configuration for a metadata server generating 10,000 events per
+# second, a subscriber could be disconnected for around 419 seconds before events would be dropped.
 
 # event-buffer-gc-frequency: After how many new events should unused buffer space be reclaimed
 # automatically. This should be set taking into consideration the buffer size. More frequent garbage
 # collection will negatively impact performance, whereas less frequent garbage collection risks
-# running out of memory and dropping events. 
+# running out of memory and dropping events. A good starting point is 1/10 the event-buffer-size.
 
 
 #
