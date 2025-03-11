@@ -53,6 +53,13 @@ type SubscriberCursor struct {
 	ackCursor int
 	// cursorMutex is used when accessing the sendCursor or ackCursor.
 	cursorMutex sync.RWMutex
+	// ackError indicates if the result of the last AckEvent() for this cursor was an error. When
+	// true the cursor will not be considered in AllEventsAcknowledged() or delay shutdown since it
+	// is likely there are no valid events in the buffer to send to this subscriber so shutdown
+	// would be blocked forever. An SubscriberCursor typically only has an ackError when Watch is
+	// starting up before the next event expected by this subscriber shows up in the buffer. This
+	// state might also happen if a subscriber tries to acknowledge an invalid/non-existent event.
+	ackError bool
 }
 
 // Returns an ring buffer used to store pointers to events.
@@ -94,13 +101,14 @@ func (b *MultiCursorRingBuffer) RemoveCursor(subscriberID int) {
 	delete(b.cursors, subscriberID)
 }
 
-// AllEventsAcknowledged verifies the ackCursor for all subscribers points at
-// the end of the buffer. It should NOT be used while events are being added to
-// the buffer otherwise it will return unpredictable results. Its intended use
-// is determining when all subscribers have acknowledged all outstanding events
-// to coordinate shutdown. It is also safe to use when the list of subscribers
-// is being changed, for example if a misbehaving subscriber was removed while
-// were in the process of shutting down.
+// AllEventsAcknowledged verifies the ackCursor for all subscribers points at the end of the buffer
+// or are currently in an error state (see SubscriberCursor.ackError for what this means).
+//
+// It should NOT be used while events are being added to the buffer otherwise it will return
+// unpredictable results. Its intended use is determining when all subscribers have acknowledged all
+// outstanding events to coordinate shutdown. It is safe to use when the list of subscribers is
+// potentially being changed, for example if a misbehaving subscriber was removed while Watch was in
+// the process of shutting down.
 func (b *MultiCursorRingBuffer) AllEventsAcknowledged() bool {
 	b.cursorsMutex.RLock()
 	defer b.cursorsMutex.RUnlock()
@@ -108,7 +116,7 @@ func (b *MultiCursorRingBuffer) AllEventsAcknowledged() bool {
 	done := true
 
 	for _, c := range b.cursors {
-		if b.buffer[c.ackCursor] != nil {
+		if b.buffer[c.ackCursor] != nil && !c.ackError {
 			return false
 		}
 	}
@@ -303,10 +311,9 @@ func (b *MultiCursorRingBuffer) ResetSendCursor(subscriberID int) error {
 	return nil
 }
 
-// AckEvent moves the ackCursor for a subscriberID forward to the next unacknowledged seqID.
-// It will never advance the ackCursor past the sendCursor.
-// The ackCursor may be the same as the sendCursor if all sent events have been acknowledged.
-// It works as follows:
+// AckEvent moves the ackCursor for a subscriberID forward to the next unacknowledged seqID. It will
+// never advance the ackCursor past the sendCursor. The ackCursor may be the same as the sendCursor
+// if all sent events have been acknowledged. It works as follows:
 //
 //   - If the seqID of the current ackCursor is greater then the provided seqID do nothing.
 //   - If the seqID at the current ackCursor matches the provided seqID increase the ackCursor by one.
@@ -316,9 +323,10 @@ func (b *MultiCursorRingBuffer) ResetSendCursor(subscriberID int) error {
 //     If found increase the ackCursor by one.
 //     Otherwise point the ackCursor at the next highest seqID after the acknowledged seqID.
 //
-// If the seqID is greater than or equal to the seqID at the sendCursor it returns an error.
-// If the provided subscriberID doesn't exist it returns an error.
-// If the ackCursor points at a nil event it returns an error.
+// If the seqID is greater than or equal to the seqID at the sendCursor it returns an error. If the
+// provided subscriberID doesn't exist it returns an error. If the ackCursor points at a nil event
+// it returns an error. When AckEvent returns an error the subscribers ack cursor is considered to
+// be in an error state, see SubscriberCursor.ackError for what this means.
 func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) error {
 	// Take a read lock so the list of cursors can't be changed out from under us:
 	b.cursorsMutex.RLock()
@@ -331,8 +339,12 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 	c.cursorMutex.Lock()
 	defer c.cursorMutex.Unlock()
 
+	// ackError should always be set back to false and only set to true if an error occurs.
+	c.ackError = false
+
 	// This should only happen if the subscriber calls AckEvent before any events were actually sent (and the buffer is empty).
 	if b.buffer[c.ackCursor] == nil {
+		c.ackError = true
 		return fmt.Errorf("subscriber tried to acknowledge an event but the next event to acknowledge is nil: is the buffer empty? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 	}
 
@@ -348,7 +360,9 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 	}
 
 	if b.buffer[lastSentIndex] == nil {
-		// We shouldn't hit this unless there is a bug somewhere.
+		// This should typically only happen immediately after startup if the subscriber tries to
+		// ack an event before the buffer is refilled.
+		c.ackError = true
 		return fmt.Errorf("subscriber tried to acknowledge an event but the last sent event is nil: have any events been sent yet? (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 	}
 
@@ -357,6 +371,7 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 	lastSentSeqID = b.buffer[lastSentIndex].SeqId
 
 	if seqIDToAck > lastSentSeqID {
+		c.ackError = true
 		return fmt.Errorf("subscriber tried to acknowledge an event that wasn't sent yet (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 	} else if b.buffer[c.ackCursor].SeqId > seqIDToAck {
 		// Subscriber either sent a double ack or we dropped the event the subscriber tried to acknowledge.
@@ -405,6 +420,7 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 		// We should only ever attempt the search if the targetSeqID is less than the sendCursorSeqID.
 		// The search should only return -1 if all numbers between the ackCursor and sendCursor-1 are less than targetSeqID.
 		if ackdEventIndex == -1 {
+			c.ackError = true
 			return fmt.Errorf("unable to find the specified seqID or the next closest seqID (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 		}
 
@@ -421,6 +437,7 @@ func (b *MultiCursorRingBuffer) AckEvent(subscriberID int, seqIDToAck uint64) er
 	}
 
 	// This shouldn't happen unless the subscriber tries to ack an event not found in the buffer.
+	c.ackError = true
 	return fmt.Errorf("unable to acknowledge event (subscriber: %d, seqID %d)", subscriberID, seqIDToAck)
 }
 
