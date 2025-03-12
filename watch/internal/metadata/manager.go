@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -93,6 +94,8 @@ type Config struct {
 // some other component was misconfigured.
 func New(ctx context.Context, log *zap.Logger, metaConfigs []Config) (*Manager, func(), error) {
 
+	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
+
 	// TODO (https://github.com/ThinkParQ/bee-watch/issues/24): Support multiple metadata services.
 	// This is also checked in ValidateConfig() but we should also check here to avoid an index out
 	// of range panic.
@@ -123,13 +126,23 @@ func New(ctx context.Context, log *zap.Logger, metaConfigs []Config) (*Manager, 
 
 	}
 
+	socketDir := filepath.Dir(config.EventLogTarget)
+	if _, err := os.Stat(socketDir); os.IsNotExist(err) {
+		if err := os.Mkdir(socketDir, 0700); err != nil {
+			return nil, nil, fmt.Errorf("unable to create socket directory at %s", socketDir)
+		}
+		log.Debug("created new socket directory", zap.Any("socketDir", socketDir))
+	} else if err != nil {
+		return nil, nil, fmt.Errorf("unable to determine if socket directory %s already exists: %w", socketDir, err)
+	} else {
+		log.Debug("using existing socket directory", zap.Any("socketDir", socketDir))
+	}
+
 	socket, err := net.Listen("unixpacket", config.EventLogTarget)
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("error listening for unix packets using socket %s: %w", config.EventLogTarget, err)
 	}
-
-	log = log.With(zap.String("component", path.Base(reflect.TypeOf(Manager{}).PkgPath())))
 
 	cleanup := func() {
 		// This also handles deleting the file.
