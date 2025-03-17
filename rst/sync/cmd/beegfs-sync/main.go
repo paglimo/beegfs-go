@@ -140,11 +140,19 @@ Using environment variables:
 	if err != nil {
 		logger.Fatal("failed to initialize Sync gRPC server", zap.Error(err))
 	}
-	go jobServer.ListenAndServe()
+	// Most components should not shutdown unexpectedly once they are started, but anything that
+	// might should return an error on this channel signalling the application to shutdown. Increase
+	// the channel size as needed if other components may also use this channel to log errors.
+	errChan := make(chan error, 2)
+	jobServer.ListenAndServe(errChan)
 
 	// Block and wait for a shutdown signal:
-	<-sigs
-	logger.Info("shutdown signal received")
+	select {
+	case err := <-errChan:
+		logger.Error("component terminated unexpectedly", zap.Error(err))
+	case <-sigs:
+		logger.Info("shutdown signal received")
+	}
 	jobServer.Stop()
 	workMgr.Stop()
 	beeRemoteClient.Disconnect()

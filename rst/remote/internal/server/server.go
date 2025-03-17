@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"path"
 	"reflect"
@@ -67,23 +68,24 @@ func New(log *zap.Logger, config Config, jobMgr *job.Manager) (*BeeRemoteServer,
 	return &s, nil
 }
 
-// ListenAndServe should be called against a BeeRemoteServer initialized with
-// New(). The caller can decide if it should run asynchronously as a goroutine,
-// or synchronously. It will block and serve requests until an error occurs or
-// Stop() is called against the BeeRemoteServer.
-func (s *BeeRemoteServer) ListenAndServe() {
-
-	s.log.Debug("listening on local network address", zap.Any("address", s.Address))
-	lis, err := net.Listen("tcp", s.Address)
-	if err != nil {
-		s.log.Error("")
-	}
-
-	s.log.Info("serving gRPC requests")
-	err = s.grpcServer.Serve(lis)
-	if err != nil {
-		s.log.Error("unable to serve gRPC requests", zap.Error(err))
-	}
+// ListenAndServe should be called against a BeeRemoteServer initialized with New(). It spawns a new
+// goroutine to handle serving requests until an an error occurs or Stop() is called against the
+// BeeRemoteServer. It accepts an errChan where any errors will be returned if the gRPC server
+// terminates early unexpectedly.
+func (s *BeeRemoteServer) ListenAndServe(errChan chan<- error) {
+	go func() {
+		s.log.Info("listening on local network address", zap.Any("address", s.Address))
+		lis, err := net.Listen("tcp", s.Address)
+		if err != nil {
+			errChan <- fmt.Errorf("remote server: error listening on the specified address %s: %w", s.Address, err)
+			return
+		}
+		s.log.Info("serving gRPC requests")
+		err = s.grpcServer.Serve(lis)
+		if err != nil {
+			errChan <- fmt.Errorf("remote server: error serving gRPC requests: %w", err)
+		}
+	}()
 }
 
 // Stop should be called to gracefully terminate the server. It will stop the
