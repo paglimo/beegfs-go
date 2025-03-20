@@ -19,6 +19,8 @@ type = 'syslog'
 
 [management]
 address = "127.0.0.1:8010"
+auth-file = "/etc/beegfs/conn.auth"
+auth-disable = false
 tls-cert-file = "/etc/beegfs/cert.pem"
 tls-disable-verification = false
 tls-disable = false
@@ -113,7 +115,7 @@ poll-frequency = 1
 # Configuration for the BeeGFS management service must be specified under [management]. This
 # configuration is used to verify licensing and cannot be updated after the application is started.
 
-# address: The IP address and gRPC port for the BeeGFS management service. 
+# address: The IP address and gRPC port for the BeeGFS management service.
 
 # tls-disable-verification: Set to true to skip verifying the management TLS certificate. This
 # allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
@@ -124,8 +126,12 @@ poll-frequency = 1
 # system's default certificate pool. This parameter is ignored if tls-disable is set. 
 # Example: /etc/beegfs/cert.pem
 
-# grpc-tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
 # network. Discouraged for production as it exposes data to potential interception and tampering.
+
+# auth-file: The file containing the shared secret for BeeGFS connection authentication.
+
+# auth-disable: Disable BeeGFS connection authentication (not recommended).
 
 #
 # --- Section 3.3: [[Metadata Settings]] ---
