@@ -78,8 +78,8 @@ func runEntryInfoCmd(cmd *cobra.Command, args []string, frontendCfg entryInfoCfg
 	if err != nil {
 		return err
 	}
-	defaultColumns := []string{"path", "entry_id", "type", "meta_node", "meta_mirror", "storage_pool", "stripe_pattern", "storage_targets", "storage_mirrors", "remote_targets", "cool_down"}
-	allColumns := append(defaultColumns, "client_sessions", "data_state")
+	defaultColumns := []string{"path", "entry_id", "type", "meta_node", "meta_mirror", "storage_pool", "stripe_pattern", "storage_targets", "storage_mirrors", "remote_targets"}
+	allColumns := append(defaultColumns, "cool_down", "client_sessions", "data_state")
 	numColumns := len(allColumns)
 	var tbl cmdfmt.Printomatic
 	if frontendCfg.retro {
@@ -105,7 +105,7 @@ run:
 			}
 			// Still try and print as much information as possible if verbose details are not available.
 			if len(info.Entry.Verbose.Err.Errors) != 0 {
-				log.Warn("unable to generate all output needed to print verbose details, some information may be missing (ignoring)", zap.Error(err))
+				log.Warn("unable to generate all output needed to print verbose details, some information may be missing (ignoring)", zap.Any("errors", info.Entry.Verbose.Err.Errors))
 			}
 			if frontendCfg.retro {
 				tbl.AddItem(assembleRetroEntry(info, frontendCfg))
