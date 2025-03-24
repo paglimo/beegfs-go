@@ -135,6 +135,7 @@ func (w *worker) run(ctx context.Context, wg *sync.WaitGroup) {
 		case <-ctx.Done():
 			return
 		case work := <-w.workQueue:
+			beeSyncActiveWork.Add(1)
 			w.processWork(work)
 		}
 	}

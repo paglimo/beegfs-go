@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
+	"expvar"
 	"fmt"
 	"path"
 	"reflect"
@@ -22,6 +23,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+var beeRemoteJobRequest = expvar.NewInt("beeremote_job_requests")
+var beeRemoteWorkRequest = expvar.NewInt("beeremote_work_requests")
 
 // Register custom types for serialization/deserialization via Gob when the
 // package is initialized.
@@ -507,9 +511,12 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 
 	m.log.Debug("created job", zap.Any("job", job))
 
+	workRequests := rst.RecreateWorkRequests(job.Get(), job.GetSegments())
+	beeRemoteJobRequest.Add(1)
+	beeRemoteWorkRequest.Add(int64(len(workRequests)))
 	return beeremote.JobResult_builder{
 		Job:          job.Get(),
-		WorkRequests: rst.RecreateWorkRequests(job.Get(), job.GetSegments()),
+		WorkRequests: workRequests,
 		WorkResults:  getProtoWorkResults(job.WorkResults),
 	}.Build(), err
 }

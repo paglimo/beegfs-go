@@ -3,6 +3,7 @@ package workmgr
 import (
 	"context"
 	"errors"
+	"expvar"
 	"fmt"
 	"path"
 	"reflect"
@@ -25,6 +26,10 @@ import (
 
 var shouldReportIdleStatus bool = true
 var shouldReportActiveStatus bool = true
+
+var beeSyncReceivedWorkRequest = expvar.NewInt("beesync_received_work_requests")
+var beeSyncQueuedWork = expvar.NewInt("beesync_queued_work")
+var beeSyncActiveWork = expvar.NewInt("beesync_active_work")
 
 type Config struct {
 	WorkJournalPath string `mapstructure:"journal-db"`
@@ -351,6 +356,7 @@ func (m *Manager) pullInNewWork(startAtSubmissionID string) (string, error) {
 			m.log.Info("worker node is no longer idle")
 			shouldReportActiveStatus = false
 		}
+		beeSyncQueuedWork.Add(1)
 	}
 
 	nextExpectedSubmissionID := ""
@@ -425,6 +431,8 @@ func (m *Manager) SubmitWorkRequest(wr *flex.WorkRequest) (*flex.Work, error) {
 
 	workEntry.Value.WorkResult = workResult
 	job.Value[wr.GetRequestId()] = workEntryKey
+
+	beeSyncReceivedWorkRequest.Add(1)
 	return workResult.Work, nil
 }
 
