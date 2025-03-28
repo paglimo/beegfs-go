@@ -1,0 +1,246 @@
+# This is a config file for BeeGFS Watch.
+# http://www.beegfs.com
+
+
+# --- [Table of Contents] ---
+#
+# 1) Settings
+# 2) Command Line Arguments
+# 3) Basic Settings Documentation
+# 4) Subscriber Settings Documentation
+
+#
+# --- Section 1.1: [Basic Settings] ---
+#
+
+[log]
+level = 3
+type = 'syslog'
+
+[management]
+address = "127.0.0.1:8010"
+auth-file = "/etc/beegfs/conn.auth"
+auth-disable = false
+tls-cert-file = "/etc/beegfs/cert.pem"
+tls-disable-verification = false
+tls-disable = false
+
+[[metadata]]
+event-log-target = '/run/beegfs/eventlog'
+event-buffer-size = 4194304
+event-buffer-gc-frequency = 419430
+
+[handler]
+max-reconnect-backoff = 60
+max-wait-for-response-after-connect = 2
+poll-frequency = 1
+
+
+#
+# --- Section 1.2: [Subscriber Settings] ---
+#
+
+# [[subscriber]]
+# id = 1
+# name = 'subscriber-1'
+# type = 'grpc'
+# grpc-address = 'localhost:50051'
+# grpc-tls-cert-file = '/etc/beegfs/cert.pem'
+# grpc-tls-disable-verification = false
+# grpc-tls-disable = false
+# grpc-disconnect-timeout = 30
+
+# [[subscriber]]
+# id = 2
+# name = 'subscriber2'
+# type = 'grpc'
+# grpc-address = 'localhost:50052'
+# grpc-tls-cert-file = '/etc/beegfs/cert.pem'
+# grpc-tls-disable-verification = false
+# grpc-tls-disable = false
+# grpc-disconnect-timeout = 30
+
+
+#
+# --- Section 2: [Command Line Arguments] ---
+#
+
+# Use the command line argument "--cfg-file=/etc/anotherconfig.conf" to specify a different config
+# file for bee-watch. All other options in this file can also be used as command line arguments, or
+# set using environment variables, overriding the corresponding config file values. See `bee-watch
+# --help` for details on how to configure Watch using flags and/or environment variables.
+
+
+#
+# --- Section 3: [Basic Settings Documentation] ---
+#
+
+# Where indicated, Watch configuration can be updated without restarting Watch by updating
+# this file then running `systemctl reload bee-watch`.
+
+
+#
+# --- Section 3.1: [Logging Settings] ---
+#
+
+# Logging configuration must be specified under [log]. Except the log level, this configuration
+# cannot be updated after the application is started.
+
+# level: Adjust the logging verbosity. Supported levels:
+# 0 - Fatal Only (not recommended).
+# 1 - Fatal + Error
+# 2 - Warn + Error + Fatal
+# 3 - Info + Warn + Error + Fatal
+# 4, 5 - Debug, Info, Warn, Error, Fatal
+# Note: Levels above 3 might decrease performance.
+
+# type: Defines the logger type. This can either be "syslog" to send log messages to the general
+# system logger, "logfile", "stderr", or "stdout". If set to 'logfile' logs will be written to the
+# below file and rotated based on the provided settings. 
+
+# file: The path to the desired log file when logType is 'logfile'. As needed the directory and all
+# parent directories will be created.
+
+# max-size: When type is set to 'logfile' this is the maximum size of the file in megabytes before
+# it is rotated.
+
+# num-rotated-files: When type is 'logfile' the maximum number old file(s) to keep when max-size is
+# reached and the log is rotated.
+
+
+#
+# --- Section 3.2: [Management Settings] ---
+#
+
+# Configuration for the BeeGFS management service must be specified under [management]. This
+# configuration is used to verify licensing and cannot be updated after the application is started.
+
+# address: The IP address and gRPC port for the BeeGFS management service.
+
+# tls-disable-verification: Set to true to skip verifying the management TLS certificate. This
+# allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
+# cannot verify the management service is the expected one.
+
+# tls-cert-file: Specify the path to a certificate used to verify the identity of the Management
+# node and to encrypt communication. If this parameter is left empty, the application will use the
+# system's default certificate pool. This parameter is ignored if tls-disable is set. 
+# Example: /etc/beegfs/cert.pem
+
+# tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
+
+# auth-file: The file containing the shared secret for BeeGFS connection authentication.
+
+# auth-disable: Disable BeeGFS connection authentication (not recommended).
+
+#
+# --- Section 3.3: [[Metadata Settings]] ---
+#
+
+# Configuration for the BeeGFS metadata service Watch is listening to must be specified under
+# [[metadata]]. Currently only a single metadata service can be specified. This configuration cannot
+# be updated after the application is started.
+
+# event-log-target: The path where the BeeGFS metadata service expected to log events to a unix
+# socket (should match sysFileEventLogTarget in beegfs-meta.conf).
+
+# event-buffer-size: How many events to keep in memory if the BeeGFS metadata service sends events
+# to Watch faster than they can be sent to subscribers, or a subscriber is temporarily disconnected.
+# Worst case memory usage is approximately (9KiB x event-buffer-size). Note the events stored in the
+# Watch event buffer are stored using protocol buffers, which are slightly larger than the raw
+# events sent from the Metadata server. 9KiB per event is a conservative "worst case" estimate.
+#
+# The event-buffer-size should be set taking into consideration the number of events that may be
+# stored in the on-disk metadata event queue as determined by sysFileEventPersistSize in
+# beegfs-meta.conf. Events stored in the metadata event queue can range in size from ~72 bytes
+# (e.g., creating a file in the root directory with a single letter name) up to ~8,287 bytes (e.g.,
+# renaming a file with a 4096 character name, the max in Linux). For example a 1GiB (1,048,576 KiB
+# or 1,073,741,824 bytes) on-disk metadata event queue could store between 129,569 and 14,913,080
+# events depending on their size.
+#
+# Ideally the event-buffer-size is set to be larger than the number of events in the metadata event
+# queue, which depends on the average event size. If this is unknown a good rule of thumb is to use
+# an average event size of 256 bytes then calculate the event-buffer-size using:
+# (sysFileEventPersistSize * 1024 * 1024 * 1024) / 256. For example if sysFileEventPersistSize=1g
+# then event-buffer-size could be set to 4,194,304 for a maximum memory footprint of 36 GiB with
+# 8,287 byte events. With this configuration for a metadata server generating 10,000 events per
+# second, a subscriber could be disconnected for around 419 seconds before events would be dropped.
+
+# event-buffer-gc-frequency: After how many new events should unused buffer space be reclaimed
+# automatically. This should be set taking into consideration the buffer size. More frequent garbage
+# collection will negatively impact performance, whereas less frequent garbage collection risks
+# running out of memory and dropping events. A good starting point is 1/10 the event-buffer-size.
+
+
+#
+# --- Section 3.4: [Handler Settings] ---
+#
+
+# Configuration for subscriber handlers must be specified under [handler]. This configuration
+# applies to all subscribers and may be updated after the application has started.
+
+# max-reconnect-backoff: When a connection cannot be made to a subscriber subscriber reconnection
+# attempts will be made with an exponential backoff. This is the maximum time in seconds between
+# reconnection attempts to avoid increasing the backoff timer forever.
+
+# max-wait-for-response-after-connect: When a subscriber connects/reconnects wait this long for the
+# subscriber to acknowledge the sequence ID of the last event it received successfully. This
+# prevents sending duplicate events if the connection was disrupted unexpectedly. 
+
+# poll-frequency: How often subscribers should poll the metadata buffer for new events (causes more
+# CPU utilization when idle).
+
+
+#
+# --- Section 4.1: [Basic Subscriber Settings] ---
+#
+
+# Configuration for each subscriber must be specified under a new [[subscriber]] header.
+# Configuration options in this setting should be specified for each [[subscriber]] they apply to.
+# Subscribers may be added, removed, and updated after the application has started.
+
+# id: The `id` option is used to keep track of what events should/have been sent to a particular
+# subscriber. This means all other subscriber configuration (including the type) can be changed
+# without losing events intended for a particular subscriber as long as the ID remains the same. 
+
+# name: The `name` option no special significance and is intended to help users identify this
+# subscriber in logs and configuration files.
+
+# type: The `type` option is used to specify what protocol should be used to communicate with this
+# subscriber. Additional options will be needed based on the provided type. Support types: 'grpc'.
+
+
+#
+# --- Section 4.2: [gRPC Subscriber Settings] ---
+#
+
+# The configuration options in this section must be specified under each [[subscriber]] when the
+# subscriber's type is set to 'grpc'.
+
+# grpc-address: The IP address or hostname and port of the subscriber. No default.
+
+# grpc-disconnect-timeout: When a local disconnect is requested, how long to wait (in seconds) for
+# the remote subscriber to also shutdown their end of the connection before just closing the
+# connection. If this value is to short then we may not receive acknowledgement of events the
+# subscriber has processed (subscribers should resend the acknowledgement when they reconnect). If
+# this value is to long, then reconfiguration attempts or shutting down Watch may hang for an
+# inconvenient amount of time. Default: 30 (seconds).
+
+# Using TLS to encrypt events sent to subscribers: Because file system modification events can carry
+# potentially sensitive information, it is recommended to use TLS to authenticate subscribers and
+# encrypt all communication. If subscribers are configured to use a valid certificate signed by a
+# recognized Certificate Authority (CA), or your organization is using its own signing server and
+# adding the necessary certificate(s) to the system running Watch, no additional steps will be
+# required. If this is not the case there are a few options: 
+
+# grpc-tls-cert-file: Specify the path to a certificate used to verify the identity of the subscriber and
+# to encrypt communication. If this parameter is left empty, the application will use the system's
+# default certificate pool. This parameter is ignored if tls-disable is set.
+# Example: /etc/beegfs/cert.pem
+
+# grpc-tls-disable-verification: Set to true to skip verifying the subscribers TLS certificate. This
+# allows traffic to be encrypted, but puts the client at risk of a man-in-the-middle attack since it
+# cannot verify the subscriber is the expected one.
+
+# grpc-tls-disable: Set to disable TLS encryption and send all gRPC messages in clear text over the
+# network. Discouraged for production as it exposes data to potential interception and tampering.
