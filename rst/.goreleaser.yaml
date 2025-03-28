@@ -1,0 +1,138 @@
+version: 2
+
+# These before hooks shouldn't be necessary because checks/testing should have already run in a
+# separate workflow on whatever commit is tagged for release. If it was deemed necessary we could
+# also run some checks here as well.
+# before:
+#   hooks:
+#     - make install-tools
+#     - make test
+
+builds:
+  - id: beegfs_remote
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.binaryName=beegfs-remote
+      - -X main.commit={{ .Commit }}
+      - -X main.buildTime={{ .Date }}
+    binary: beegfs-remote
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: remote/cmd/beegfs-remote/main.go
+  - id: beegfs_sync
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.binaryName=beegfs-sync
+      - -X main.commit={{ .Commit }}
+      - -X main.buildTime={{ .Date }}
+    binary: beegfs-sync
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: sync/cmd/beegfs-sync/main.go
+
+nfpms:
+  - id: beegfs_remote
+    builds:
+      - beegfs_remote
+    package_name: beegfs-remote
+    file_name_template: "beegfs-remote-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
+    vendor: "ThinkparQ GmbH"
+    homepage: https://www.beegfs.io
+    maintainer: BeeGFS Maintainers <packages@beegfs.com>
+    description: BeeGFS Remote (Remote Storage Targets Coordinator)
+    license: BeeGFS EULA
+    formats:
+      - rpm
+      - deb
+    epoch: "20"
+    bindir: /opt/beegfs/sbin/
+    contents:
+      - src: /opt/beegfs/sbin/beegfs-remote
+        dst: /usr/sbin/beegfs-remote
+        type: "symlink"
+      - src: remote/build/beegfs-remote.service
+        dst: /usr/lib/systemd/system/beegfs-remote.service
+        type: config
+      - src: remote/build/beegfs-remote.toml
+        dst: /etc/beegfs/beegfs-remote.toml
+        type: config
+      - src: remote/NOTICE.md
+        dst: /usr/share/doc/beegfs-remote/NOTICE.md
+      - src: LICENSE.md
+        dst: /usr/share/doc/beegfs-remote/LICENSE.md
+  - id: beegfs_sync
+    builds:
+      - beegfs_sync
+    package_name: beegfs-sync
+    file_name_template: "beegfs-sync-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
+    vendor: "ThinkparQ GmbH"
+    homepage: https://www.beegfs.io
+    maintainer: BeeGFS Maintainers <packages@beegfs.com>
+    description: BeeGFS Sync (Remote Storage Targets Syncer)
+    license: BeeGFS EULA
+    formats:
+      - rpm
+      - deb
+    epoch: "20"
+    bindir: /opt/beegfs/sbin/
+    contents:
+      - src: /opt/beegfs/sbin/beegfs-sync
+        dst: /usr/sbin/beegfs-sync
+        type: "symlink"
+      - src: sync/build/beegfs-sync.service
+        dst: /usr/lib/systemd/system/beegfs-sync.service
+        type: config
+      - src: sync/build/beegfs-sync.toml
+        dst: /etc/beegfs/beegfs-sync.toml
+        type: config
+      - src: sync/NOTICE.md
+        dst: /usr/share/doc/beegfs-sync/NOTICE.md
+      - src: LICENSE.md
+        dst: /usr/share/doc/beegfs-sync/LICENSE.md
+
+# This can be enabled when/if a Dockerfile is added to the project.
+# dockers:
+# - image_templates: ["ghcr.io/thinkparq/beegfs-remote:{{ .Version }}"]
+#   dockerfile: Dockerfile
+#   build_flag_templates:
+#   - --label=org.opencontainers.image.title={{ .ProjectName }}
+#   - --label=org.opencontainers.image.description={{ .ProjectName }}
+#   - --label=org.opencontainers.image.url=https://github.com/thinkparq/beegfs-remote
+#   - --label=org.opencontainers.image.source=https://github.com/thinkparq/beegfs-remote
+#   - --label=org.opencontainers.image.version={{ .Version }}
+#   - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+#   - --label=org.opencontainers.image.revision={{ .FullCommit }}
+#   - --label=org.opencontainers.image.licenses=Proprietary
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+signs:
+  # Note we could optionally limit what artifacts are signed instead of specifying 'all'. For example
+  # only signing the checksums file is common.
+  - artifacts: checksum
+    cmd: gpg2
+    args:
+      - "--batch"
+      - "-u"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"

@@ -1,0 +1,18 @@
+[Unit]
+Description=BeeGFS Sync (Remote Storage Targets Syncer)
+Documentation=http://www.beegfs.com/content/documentation/
+After=remote-fs.target beegfs-client.service
+Wants=basic.target
+
+[Service]
+Type=simple
+ExecStart=/opt/beegfs/sbin/beegfs-sync --cfg-file=/etc/beegfs/beegfs-sync.toml
+ExecReload=/bin/kill -HUP $MAINPID
+
+# The TimeoutStopSec just needs to be long enough to allow workers to gracefully stop and save their
+# current state to the database before shutting down. Probably the default will always be long
+# enough but TimeoutStopSec is specified here to ensure consistent behavior across distributions.
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

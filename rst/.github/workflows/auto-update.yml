@@ -1,0 +1,68 @@
+# .github/workflows/auto-update.yml
+name: auto-update
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub recommends not scheduling workflows at the start of the hour as scheduled workflows are
+    # delayed during periods of high load and may even be dropped if there are enough queued jobs.
+    # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule
+    - cron: "13 18 * * *" # Will run at 18:13 GMT.
+
+jobs:
+  auto_update_dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Go version
+        id: extract_go_version
+        shell: bash
+        run: |
+          VERSION=$(awk '/^go /{print $2}' go.mod)
+          if [ -z "$VERSION" ]; then
+            echo "Go version not found in go.mod"
+            exit 1
+          fi
+          echo "GO_VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+        env:
+          GO_VERSION: ${{ env.GO_VERSION }}
+      - name: Configure git
+        # Make sure the runner has access to the internal repos repo using an access token
+        run: git config --global url."https://${{ secrets.CI_PROTOBUF_ACCESS }}@github.com/thinkparq".insteadOf https://github.com/thinkparq
+      - name: Install toolchains and tools
+        run: make install-tools
+      - name: Update ThinkParQ dependencies if needed
+        run: |
+          go get -u github.com/thinkparq/protobuf@latest
+          go get -u github.com/thinkparq/beegfs-go@latest
+        env:
+          # This is required to update dependencies using go get.
+          GOPRIVATE: github.com/thinkparq/*
+
+      - name: Ensure all dependencies have been tidied and the NOTICE file is up-to-date
+        run: |
+          go mod tidy        
+          make generate-notices
+      - name: Submit Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bot/update-thinkparq-dependencies
+          commit-message: |
+            Auto update ThinkParQ dependencies
+          title: "[Bot] Auto Update ThinkParQ Dependencies"
+          body: |
+            Created by the GitHub Actions auto-update workflow.
+          delete-branch: true
+          reviewers: |
+            iamjoemccormick
+          token: ${{ secrets.CI_AUTO_UPDATE }}
+          author: ThinkParQ System User <145799034+thinkparq-system-user@users.noreply.github.com>
+          committer: ThinkParQ System User <145799034+thinkparq-system-user@users.noreply.github.com>
