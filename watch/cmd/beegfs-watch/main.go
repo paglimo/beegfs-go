@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thinkparq/bee-watch/internal/config"
-	"github.com/thinkparq/bee-watch/internal/metadata"
-	"github.com/thinkparq/bee-watch/internal/subscribermgr"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/watch/internal/config"
+	"github.com/thinkparq/beegfs-go/watch/internal/metadata"
+	"github.com/thinkparq/beegfs-go/watch/internal/subscribermgr"
 	"go.uber.org/zap"
 )
 

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/thinkparq/bee-watch/internal/metadata"
+	"github.com/thinkparq/beegfs-go/watch/internal/metadata"
 )
 
 func TestUpdateAllowed(t *testing.T) {
