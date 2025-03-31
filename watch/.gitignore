@@ -1,9 +1,0 @@
-bin/*
-out/*
-**/scratch/
-scratch*
-*.log
-# Ignore files generated for build packaging:
-build/dist/DEBIAN/control
-build/dist/opt/beegfs/sbin
-dist/

@@ -54,6 +54,22 @@ builds:
       - amd64
       - arm64
     main: rst/sync/cmd/beegfs-sync/main.go
+  - id: beegfs_watch
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.binaryName=beegfs-watch
+      - -X main.commit={{ .Commit }}
+      - -X main.buildTime={{ .Date }}
+    binary: beegfs-watch
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: watch/cmd/beegfs-watch/main.go
 
 nfpms:
   - id: beegfs_tools
@@ -145,6 +161,50 @@ nfpms:
         dst: /usr/share/doc/beegfs-sync/NOTICE.md
       - src: LICENSE.md
         dst: /usr/share/doc/beegfs-sync/LICENSE.md
+  - id: beegfs_watch
+    ids:
+      - beegfs_watch
+    package_name: beegfs-watch
+    file_name_template: "beegfs-watch-{{ .Version }}-{{ .Os }}.{{ .Arch }}"
+    vendor: "ThinkparQ GmbH"
+    homepage: https://www.beegfs.io
+    maintainer: BeeGFS Maintainers <packages@beegfs.com>
+    description: BeeGFS Watch
+    license: BeeGFS EULA
+    formats:
+      - rpm
+      - deb
+    epoch: "20"
+    bindir: /opt/beegfs/sbin/
+    contents:
+      - src: /opt/beegfs/sbin/beegfs-watch
+        dst: /usr/sbin/beegfs-watch
+        type: "symlink"
+      - src: watch/build/beegfs-watch.service
+        dst: /usr/lib/systemd/system/beegfs-watch.service
+        type: config
+      - src: watch/build/beegfs-watch.toml
+        dst: /etc/beegfs/beegfs-watch.toml
+        type: config
+      - src: watch/NOTICE.md
+        dst: /usr/share/doc/beegfs-watch/NOTICE.md
+      - src: LICENSE.md
+        dst: /usr/share/doc/beegfs-watch/LICENSE.md
+
+# TODO (https://github.com/ThinkParQ/bee-watch/issues/31): Add support for building multi-platform
+# (amd64+arm64) images using GitHub Actions.
+dockers:
+  - image_templates: ["ghcr.io/thinkparq/beegfs-watch:{{ .Version }}"]
+    dockerfile: watch/Dockerfile
+    build_flag_templates:
+      - --label=org.opencontainers.image.title="beegfs-watch"
+      - --label=org.opencontainers.image.description="BeeGFS file system modification event watcher"
+      - --label=org.opencontainers.image.url=https://github.com/ThinkParQ/beegfs-go/pkgs/container/beegfs-watch
+      - --label=org.opencontainers.image.source=https://github.com/thinkparq/beegfs-go
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.created={{ time "2006-01-02T15:04:05Z07:00" }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.licenses=Proprietary
 
 changelog:
   sort: asc

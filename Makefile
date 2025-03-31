@@ -5,7 +5,8 @@ SHELL := /bin/bash
 INSTALL_TARGETS := \
   ctl:beegfs:./ctl/cmd/beegfs \
   remote:beegfs-remote:./rst/remote/cmd/beegfs-remote \
-  sync:beegfs-sync:./rst/sync/cmd/beegfs-sync
+  sync:beegfs-sync:./rst/sync/cmd/beegfs-sync \
+  watch:beegfs-watch:./watch/cmd/beegfs-watch
 INSTALL_DIR=$(HOME)/go/bin
 
 .PHONY: all install uninstall
@@ -64,6 +65,7 @@ generate-notices:
 	@go-licenses report ./ctl/... --template ctl/build/notice.tpl > ctl/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 	@go-licenses report ./rst/remote/... --template rst/remote/build/notice.tpl > rst/remote/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 	@go-licenses report ./rst/sync/... --template rst/sync/build/notice.tpl > rst/sync/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq	
+	@go-licenses report ./watch/... --template watch/build/notice.tpl > watch/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets:
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -163,7 +165,12 @@ check-licenses: generate-notices
 	@if [ -n "$$(git status --porcelain rst/sync/NOTICE.md)" ]; then \
         echo "BeeGFS Sync NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
         exit 1; \
-    fi		
+    fi
+	@if [ -n "$$(git status --porcelain watch/NOTICE.md)" ]; then \
+        echo "NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi
+
 
 # Targets for installation of various prerequisites:
 .PHONY: install-tools
