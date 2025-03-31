@@ -11,13 +11,13 @@ import (
 	"syscall"
 
 	"github.com/spf13/pflag"
-	"github.com/thinkparq/bee-remote/sync/internal/beeremote"
-	"github.com/thinkparq/bee-remote/sync/internal/config"
-	"github.com/thinkparq/bee-remote/sync/internal/server"
-	"github.com/thinkparq/bee-remote/sync/internal/workmgr"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/rst/sync/internal/beeremote"
+	"github.com/thinkparq/beegfs-go/rst/sync/internal/config"
+	"github.com/thinkparq/beegfs-go/rst/sync/internal/server"
+	"github.com/thinkparq/beegfs-go/rst/sync/internal/workmgr"
 	"go.uber.org/zap"
 )
 

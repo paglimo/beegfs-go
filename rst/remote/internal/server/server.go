@@ -9,9 +9,9 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/thinkparq/bee-remote/remote/internal/job"
 	"github.com/thinkparq/beegfs-go/common/kvstore"
 	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/job"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
