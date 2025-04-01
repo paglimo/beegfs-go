@@ -1,7 +1,5 @@
 BeeGFS Watch <!-- omit in toc -->
 ========
-[![Checks](https://github.com/ThinkParQ/bee-watch/actions/workflows/checks.yml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/checks.yml)
-[![Release](https://github.com/ThinkParQ/bee-watch/actions/workflows/release.yml/badge.svg)](https://github.com/ThinkParQ/bee-watch/actions/workflows/release.yml)
 
 # Contents <!-- omit in toc -->
 
@@ -69,7 +67,7 @@ subscribers without restarting Watch:
    distribution. Eventually packages will be made available through the BeeGFS
    package repositories but until then there are two options to use a package:
    1. Pre-built packages are available under
-      [releases](https://github.com/ThinkParQ/bee-watch/releases).
+      [releases](https://github.com/ThinkParQ/beegfs-go/releases).
    2. Clone the GitHub repository and [build the packages yourself](build/README.md).
 
 2. Install the selected package using your package manager. For example on
@@ -114,8 +112,8 @@ Prerequisites:
   `172.17.0.1:50052`.
 * Docker installed on the same server as the Metadata service.
 * The Watch container image downloaded from the [GitHub container
-  registry](https://github.com/ThinkParQ/bee-watch/pkgs/container/bee-watch)
-  (`docker pull ghcr.io/thinkparq/bee-watch:latest`)or [built
+  registry](https://github.com/ThinkParQ/beegfs-go/pkgs/container/beegfs-watch)
+  (`docker pull ghcr.io/thinkparq/beegfs-watch:latest`)or [built
   manually](build/README.md).
   * Currently this package is private, so you must first [login to the
     registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-to-the-container-registry).
@@ -127,7 +125,7 @@ step-by-step:
 docker run \
     -v /run/beegfs:/run/beegfs \
     -v /etc/beegfs/:/etc/beegfs \
-    ghcr.io/thinkparq/bee-watch:latest \
+    ghcr.io/thinkparq/beegfs-watch:latest \
     --cfg-file=/etc/beegfs/beegfs-watch.toml \
     --log.type=stdout
 ```
@@ -139,10 +137,10 @@ Unix socket where the metadata service expects to output events.
 (2) The `-v /etc/beegfs:/etc/beegfs` bind mounts the configuration file with the metadata
 configuration and subscriber list into the container.
 
-(3) The `ghcr.io/thinkparq/bee-watch:latest` is the name of the container image. If you just want to
-download the latest image from GitHub Container Registry this can be used as is. Otherwise specify
-name of the container image built using `make packaged-docker` (then see `docker images` if you're
-not sure the name).
+(3) The `ghcr.io/thinkparq/beegfs-watch:latest` is the name of the container image. If you just want
+to download the latest image from GitHub Container Registry this can be used as is. Otherwise
+specify name of the container image built using `make package-all` (then see `docker images` if
+you're not sure the name).
 
 (4) The rest of the command are regular arguments passed to Watch and at minimum should specify the
 path to the config file (inside the container) with the metadata and subscriber configuration
@@ -161,7 +159,7 @@ with a period by the config parser:
 docker run \
     -v /run/beegfs:/run/beegfs \
     -e Watch_LOG__TYPE=stdout \
-    ghcr.io/thinkparq/bee-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml
+    ghcr.io/thinkparq/beegfs-watch:latest --cfg-file=/etc/beegfs/beegfs-watch.toml
 ```
 
 The ability to use a mix of flags, environment variables, and a configuration file provides
@@ -217,7 +215,7 @@ tls-cert-file = "/etc/beegfs/cert.pem"
 tls-disable-verification = true
 tls-disable = true
 ```
-1. Start Watch: `go run cmd/bee-watch/main.go --cfg-file=scratch/beegfs-watch.toml`
+1. Start Watch: `go run cmd/beegfs-watch/main.go --cfg-file=scratch/beegfs-watch.toml`
    1. At this point Watch will begin buffering any events it receives from the metadata service
       until it reaches the `event-buffer-size`, then the oldest events will start to be dropped.
       This default behavior keeps as many historical events as possible so subscribers can be added

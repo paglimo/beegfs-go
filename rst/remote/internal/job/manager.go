@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
 	"github.com/thinkparq/beegfs-go/common/kvstore"
 	"github.com/thinkparq/beegfs-go/common/logger"
 	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"

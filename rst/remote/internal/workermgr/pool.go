@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thinkparq/bee-remote/remote/internal/worker"
 	"github.com/thinkparq/beegfs-go/common/types"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/flex"
 )
 

@@ -1,20 +1,52 @@
 # force the usage of /bin/bash instead of /bin/sh
 SHELL := /bin/bash
 
-BINARY_NAME=beegfs
+# Define install/uninstall targets for all binaries (target name:output binary:path to main.go):
+INSTALL_TARGETS := \
+  ctl:beegfs:./ctl/cmd/beegfs \
+  remote:beegfs-remote:./rst/remote/cmd/beegfs-remote \
+  sync:beegfs-sync:./rst/sync/cmd/beegfs-sync \
+  watch:beegfs-watch:./watch/cmd/beegfs-watch
 INSTALL_DIR=$(HOME)/go/bin
 
-.PHONY: install
-install:
-	@echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)"
-	go install ./ctl/cmd/$(BINARY_NAME)/
-	@echo "Installation complete! Note you may need to add $(INSTALL_DIR) to your \$$PATH."
+.PHONY: all install uninstall
+all: install
 
-.PHONY: uninstall
-uninstall:
-	@echo "Removing $(BINARY_NAME) from $(INSTALL_DIR)"
-	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
+# Shared install rule:
+define INSTALL_RULE
+.PHONY: install-$(1)
+install-$(1):
+	@echo "Installing $(2) from $(3) to $(INSTALL_DIR)"
+	go install $(3)
+	@echo 'Installation complete! Note you may need to add $(INSTALL_DIR) to your $$$$PATH.'
+endef 
+# Note: The $$$$ is needed because it's first evaluated by Make as $$, then passed to the shell as
+# $$PATH, which is finally evaluated as the literal $PATH.
+
+# Shared uninstall rule:
+define UNINSTALL_RULE
+.PHONY: uninstall-$(1)
+uninstall-$(1):
+	@echo "Uninstalling $(2) from $(INSTALL_DIR)"
+	rm -f $(INSTALL_DIR)/$(2)
 	@echo "Uninstallation complete!"
+endef
+
+# Generate install/uninstall targets for each binary:
+$(foreach target,$(INSTALL_TARGETS),\
+	$(eval NAME := $(word 1,$(subst :, ,$(target))))\
+	$(eval BIN := $(word 2,$(subst :, ,$(target))))\
+	$(eval SRC := $(word 3,$(subst :, ,$(target))))\
+	$(eval $(call INSTALL_RULE,$(NAME),$(BIN),$(SRC)))\
+	$(eval $(call UNINSTALL_RULE,$(NAME),$(BIN),$(SRC)))\
+)
+
+# Generate targets to install/uninstall all binaries:
+INSTALL_ALL_TARGETS := $(foreach t,$(INSTALL_TARGETS),install-$(word 1,$(subst :, ,$(t))))
+UNINSTALL_ALL_TARGETS := $(foreach t,$(INSTALL_TARGETS),uninstall-$(word 1,$(subst :, ,$(t))))
+
+install: $(INSTALL_ALL_TARGETS)
+uninstall: $(UNINSTALL_ALL_TARGETS)
 
 # Trigger a "local-only" release using goreleaser to generate OS packages that can be used locally
 # (Ref: https://goreleaser.com/quick-start/ and https://goreleaser.com/customization/snapshots/):
@@ -30,7 +62,10 @@ package-all:
 # Generate NOTICE file.
 .PHONY: generate-notices
 generate-notices:
-	@go-licenses report ./... --template ./build/notice.tpl > NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
+	@go-licenses report ./ctl/... --template ctl/build/notice.tpl > ctl/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
+	@go-licenses report ./rst/remote/... --template rst/remote/build/notice.tpl > rst/remote/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
+	@go-licenses report ./rst/sync/... --template rst/sync/build/notice.tpl > rst/sync/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq	
+	@go-licenses report ./watch/... --template watch/build/notice.tpl > watch/NOTICE.md --ignore git.beegfs.io --ignore github.com/thinkparq
 
 # Test targets:
 # Test targets may make change to the local repository (e.g. running go mod tidy) to
@@ -40,8 +75,8 @@ generate-notices:
 .PHONY: test
 test: check-go-version check-gofmt check-linters check-go-tidy test-unit check-vulnerabilities check-licenses
 
-# This check is primarily meant to ensure when the Go version in go.mod changes, CI workflows are
-# also updated to use this version of Go.
+# Verify the installed version of Go matches go.mod. CI installs whatever version of Go is requested
+# by go.mod, so this is mostly helpful when testing locally in case tooling breaks between versions.
 .PHONY: check-go-version
 check-go-version:
 	@echo "Checking Go version..."
@@ -119,10 +154,23 @@ check-licenses: generate-notices
 		--ignore git.beegfs.io \
 		--ignore github.com/thinkparq \
 		--ignore github.com/hashicorp/hcl
-	@if [ -n "$$(git status --porcelain NOTICE.md)" ]; then \
-        echo "ERROR: The NOTICE.md file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+	@if [ -n "$$(git status --porcelain ctl/NOTICE.md)" ]; then \
+        echo "BeeGFS CTL NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
         exit 1; \
-    fi		
+    fi
+	@if [ -n "$$(git status --porcelain rst/remote/NOTICE.md)" ]; then \
+        echo "BeeGFS Remote NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi
+	@if [ -n "$$(git status --porcelain rst/sync/NOTICE.md)" ]; then \
+        echo "BeeGFS Sync NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi
+	@if [ -n "$$(git status --porcelain watch/NOTICE.md)" ]; then \
+        echo "NOTICE file is not up to date. Please run 'make generate-notices' and commit the changes."; \
+        exit 1; \
+    fi
+
 
 # Targets for installation of various prerequisites:
 .PHONY: install-tools

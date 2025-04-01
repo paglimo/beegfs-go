@@ -66,8 +66,8 @@ poll-frequency = 1
 #
 
 # Use the command line argument "--cfg-file=/etc/anotherconfig.conf" to specify a different config
-# file for bee-watch. All other options in this file can also be used as command line arguments, or
-# set using environment variables, overriding the corresponding config file values. See `bee-watch
+# file for beegfs-watch. All other options in this file can also be used as command line arguments,
+# or set using environment variables, overriding the corresponding file values. See `beegfs-watch
 # --help` for details on how to configure Watch using flags and/or environment variables.
 
 
@@ -76,7 +76,7 @@ poll-frequency = 1
 #
 
 # Where indicated, Watch configuration can be updated without restarting Watch by updating
-# this file then running `systemctl reload bee-watch`.
+# this file then running `systemctl reload beegfs-watch`.
 
 
 #

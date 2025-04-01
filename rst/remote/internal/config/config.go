@@ -6,14 +6,14 @@ import (
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
-	"github.com/thinkparq/bee-remote/remote/internal/job"
-	"github.com/thinkparq/bee-remote/remote/internal/server"
-	"github.com/thinkparq/bee-remote/remote/internal/worker"
-	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/logger"
 	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/beegfs-go/common/types"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/job"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/server"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/flex"
 )
 

@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/thinkparq/bee-remote/sync/internal/workmgr"
+	"github.com/thinkparq/beegfs-go/rst/sync/internal/workmgr"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

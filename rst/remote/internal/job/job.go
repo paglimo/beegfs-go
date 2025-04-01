@@ -10,9 +10,9 @@ import (
 	"slices"
 
 	"github.com/google/uuid"
-	"github.com/thinkparq/bee-remote/remote/internal/worker"
-	"github.com/thinkparq/bee-remote/remote/internal/workermgr"
 	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"

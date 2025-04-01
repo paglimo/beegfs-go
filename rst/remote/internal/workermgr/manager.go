@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/thinkparq/bee-remote/remote/internal/worker"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"

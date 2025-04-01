@@ -15,12 +15,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thinkparq/bee-watch/internal/config"
-	"github.com/thinkparq/bee-watch/internal/metadata"
-	"github.com/thinkparq/bee-watch/internal/subscribermgr"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/watch/internal/config"
+	"github.com/thinkparq/beegfs-go/watch/internal/metadata"
+	"github.com/thinkparq/beegfs-go/watch/internal/subscribermgr"
 	"go.uber.org/zap"
 )
 
@@ -79,7 +79,7 @@ Using environment variables:
 	To specify configuration using environment variables specify %sKEY=VALUE where KEY is the flag name you want to specify in all capitals replacing dots (.) with double underscores (__) and hyphens (-) with an underscore (_).
 	Examples: 
 	export %sLOG__DEVELOPER=true
-	export %sCONFIG_FILE=/etc/beegfs/bee-watch.toml
+	export %sCONFIG_FILE=/etc/beegfs/beegfs-watch.toml
 `
 		fmt.Fprintf(os.Stderr, helpText, envVarPrefix, envVarPrefix, envVarPrefix)
 		os.Exit(0)

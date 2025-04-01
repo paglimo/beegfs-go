@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/thinkparq/bee-remote/remote/internal/worker"
+	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
 	"github.com/thinkparq/protobuf/go/flex"
 )
 
