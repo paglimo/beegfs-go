@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/thinkparq/beegfs-go/common/filesystem"
+
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
@@ -17,20 +17,54 @@ import (
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
-type SyncJobRequestCfg struct {
-	RSTID      uint32
-	Path       string
-	Overwrite  bool
-	RemotePath string
-	Download   bool
-	ChanSize   int
-	Force      bool
+// To add a new job request type, update the following components:
+// * Job Request Logic:
+// 	  - Update the JobRequestCfg struct if additional configuration parameters are needed.
+// 	  - Extend the JobType constants and update JobTypeString() to include the new type.
+// 	  - Implement a new getXXXJobRequest() function (similar to getSyncJobRequest())
+// 	  	to construct the specific job request.
+// 	  - Modify sendJobRequest() to handle the new JobType and call the corresponding
+// 	  	getXXXJobRequest() function.
+// 	  - Adjust getJobType() logic to correctly select and return the new type based on
+// 	  	the configuration and file system state.
+//
+// * Protobuf Definitions:
+// 	  - Add the new job request message type to the flex package.
+// 	  - Update the JobRequest message enumeration in the protobuf definitions to include
+// 	  	the new job request type.
+
+type JobType int32
+
+const (
+	JobTypeUnspecified JobType = 0
+	JobTypeSync        JobType = 1
+)
+
+func JobTypeString(jobType JobType) string {
+	var jobTypeString string
+	switch jobType {
+	case JobTypeUnspecified:
+		jobTypeString = "unspecified"
+	case JobTypeSync:
+		jobTypeString = "sync"
+	}
+	return jobTypeString
 }
 
-type SyncJobResponse struct {
+type JobRequestCfg struct {
+	RSTID      uint32
+	Path       string
+	RemotePath string
+	Download   bool // Whether the operation should be a download operation
+	StubOnly   bool // Whether the local file should be a stub file after the operation
+	Overwrite  bool // Whether existing files should be overwritten
+	Flatten    bool // Whether the directory path should be preserved
+	Force      bool // Attempt to force the job request
+}
+
+type JobResponse struct {
 	Path     string
 	Result   *beeremote.JobResult
 	Status   beeremote.SubmitJobResponse_ResponseStatus
@@ -38,302 +72,314 @@ type SyncJobResponse struct {
 	FatalErr bool
 }
 
-// SubmitSyncJobRequests asynchronously submits jobs returning the responses over the provided
-// channel. It will immediately return an error if anything went wrong during setup. Subsequent
-// errors that occur while submitting requests will be returned over the respChan. Most errors
-// returned over respChan are likely limited to the specific request (i.e., an invalid request) and
-// it is up to the caller to decide to continue making requests or cancel the context. If a fatal
-// error occurs that is likely to prevent scheduling all future requests (such as errors walking a
-// directory or connecting to BeeRemote) then the response will have FatalError=true and all
-// outstanding goroutines will be immediately cancelled. In all cases the channel is closed once
-// there are no more responses to receive.
-func SubmitSyncJobRequests(ctx context.Context, cfg SyncJobRequestCfg) (<-chan *SyncJobResponse, error) {
+type jobRequestWithError struct {
+	Request  *beeremote.JobRequest
+	Err      error
+	FatalErr bool
+}
 
+// SubmitJobRequest asynchronously submits jobs returning the responses over the provided
+// channel. It will immediately return an error if anything went wrong during setup. Subsequent
+// errors that occur while submitting requests will be returned over the JobResponse channel. Most
+// errors returned over the channel are likely limited to the specific request (i.e., an invalid
+// request) and it is up to the caller to decide to continue making requests or cancel the context.
+// If a fatal error occurs that is likely to prevent scheduling all future requests (such as errors
+// walking a directory or connecting to BeeRemote) then the response will have FatalError=true and
+// all outstanding goroutines will be immediately cancelled. In all cases the channel is closed once
+// there are no more responses to receive.
+func SubmitJobRequest(ctx context.Context, cfg JobRequestCfg, chanSize int) (<-chan *JobResponse, context.CancelFunc, error) {
 	mappings, err := util.GetMappings(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("unable to proceed without entity mappings: %w", err)
+		return nil, nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
 	}
 
-	respChan := make(chan *SyncJobResponse, cfg.ChanSize)
-	// TODO: https://github.com/ThinkParQ/bee-remote/issues/40 Support directory downloads. For
-	// downloads we cannot just setup the BeeGFSClient using the path, since it is likely the file
-	// doesn't yet exist in BeeGFS. For now since we only support file downloads the parent
-	// directory must always exist, so we can use it to setup the BeeGFS client. This also works for
-	// uploads regardless if they are by path or file.
-	beegfs, err := config.BeeGFSClient(filepath.Dir(cfg.Path))
-	if err != nil {
-		return nil, fmt.Errorf("unable to setup BeeGFS client: %w", err)
-	}
-	pathInMount, err := beegfs.GetRelativePathWithinMount(cfg.Path)
-	if err != nil {
-		return nil, err
-	}
-
-	beeRemote, err := config.BeeRemoteClient()
-	if err != nil {
-		return nil, err
-	}
-
-	var operation flex.SyncJob_Operation
-	var isDir bool
-	pathStat, err := beegfs.Lstat(pathInMount)
-	switch {
-	case cfg.Download:
-		operation = flex.SyncJob_DOWNLOAD
-		if err != nil {
-			// For downloads its expected the file doesn't already exist in BeeGFS. All other errors
-			// should be returned.
-			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
-			}
-		} else if !cfg.Overwrite {
-			return nil, fmt.Errorf("download would overwrite an existing file in BeeGFS (set the overwrite flag to ignore)")
-		} else {
-			if pathStat.IsDir() {
-				return nil, fmt.Errorf("downloading a directory is not supported (yet)")
-			}
-		}
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/40
-		// Support directory downloads. For now assume all downloads are files.
-		isDir = false
-	default:
-		operation = flex.SyncJob_UPLOAD
-		if err != nil {
-			return nil, err
-		}
-		isDir = pathStat.IsDir()
-	}
-
-	baseRequest := &beeremote.JobRequest{
-		Force:               cfg.Force,
-		Path:                "",
-		RemoteStorageTarget: cfg.RSTID,
-		Type: &beeremote.JobRequest_Sync{
-			Sync: &flex.SyncJob{
-				Operation:  operation,
-				Overwrite:  cfg.Overwrite,
-				RemotePath: cfg.RemotePath,
-			},
-		},
-	}
-
-	// Ignore readers and writers when force is set. Otherwise for uploads we can always ignore
-	// readers. For downloads we should check for readers or writers.
-	ignoreReaders := cfg.Force
-	ignoreWriters := cfg.Force
-	if baseRequest.GetSync().Operation == flex.SyncJob_UPLOAD {
-		ignoreReaders = true
-	}
-
-	if !isDir {
-		// Complete the request in a separate goroutine otherwise if the caller provided an
-		// unbuffered channel we would block here.
-		go func() {
-			defer close(respChan)
-			baseRequest.Path = pathInMount
-			resp := &SyncJobResponse{
-				Path: baseRequest.Path,
-			}
-			var rstIDs []uint32
-
-			// If the path already exists in BeeGFS check if the entry has any existing sessions.
-			// This could happen for uploads, or downloads if the user asked to overwrite an
-			// existing file.
-			if pathStat != nil {
-				// TODO: https://github.com/ThinkParQ/bee-remote/issues/25 Support symbolic links.
-				if !pathStat.Mode().IsRegular() {
-					resp.Err = ErrFileTypeUnsupported
-					respChan <- resp
-					return
-				}
-				rstIDs, err = checkEntryAndDetermineRSTs(ctx, mappings, baseRequest.RemoteStorageTarget, baseRequest.Path, ignoreReaders, ignoreWriters)
-				if err != nil {
-					resp.Err = err
-					respChan <- resp
-					return
-				}
-			} else {
-				// Otherwise the requested operation doesn't require an existing entry. Just use the
-				// RST provided by the user.
-				rstIDs = []uint32{baseRequest.RemoteStorageTarget}
-			}
-			for _, rst := range rstIDs {
-				baseRequest.RemoteStorageTarget = rst
-				r, err := beeRemote.SubmitJob(ctx, &beeremote.SubmitJobRequest{Request: baseRequest})
-				if err != nil {
-					// We have to check the error because r could be nil so we shouldn't try and
-					// deference resp to set the resp.Result.
-					resp.Err = err
-					respChan <- resp
-				} else {
-					resp.Result = r.Result
-					resp.Status = r.GetStatus()
-					respChan <- resp
-				}
-			}
-		}()
-		return respChan, nil
-	}
-
-	// The channel size here is somewhat of an arbitrary selection. We mainly want to avoid blocking
-	// walkDir() if possible. We could expose it to the user but then its one more thing to think
-	// about. Testing shows with BR and CTL running on the same system with 4 workers submitting
-	// requests and a channel size of 100 we are unlikely to ever block walkDir(). Possibly this
-	// would be a problem if the number of workers was very low (due to few CPUs) and/or network
-	// latency between CTL and BR is high. 2048 seems like a reasonable enough channel size to
-	// smooth out bumps in network latency, while using a reasonable amount of memory.
-	pathChan := make(chan string, 2048)
-	// Because we have multiple senders to the respChan we have the goroutine that handles walking the
-	// directory wait and close the channel once requests have been submitted for all paths.
-	wg := sync.WaitGroup{}
-	// This context signals if the goroutine walking the directory tree and the goroutines
-	// submitting job requests should shutdown early.
 	ctx, cancel := context.WithCancel(ctx)
+	beegfs, err := config.BeeGFSClient(cfg.Path)
+	if err != nil {
+		return nil, cancel, err
+	}
 
-	submitRequestFn := func() {
-		defer wg.Done()
+	requestChan := make(chan *jobRequestWithError, chanSize)
+	go func() {
+		defer close(requestChan)
+		sendJobRequest(ctx, beegfs, mappings, &cfg, requestChan)
+	}()
+
+	respChan, err := submitJobRequests(ctx, cancel, requestChan, false)
+	if err != nil {
+		return nil, cancel, err
+	}
+	return respChan, cancel, nil
+}
+
+// StreamSubmitJobRequests asynchronously streams job requests from the caller while returning
+// responses over the response channel unless ignoreResponses==true. It will immediately return an
+// error if anything went wrong during setup. It is the responsibility of the caller to close the
+// *JobRequestCfg channel.
+//
+// If a fatal error occurs that is likely to prevent scheduling any future requests (such as
+// connecting to BeeRemote) then the response will have FatalError=true and the stream will be
+// cancelled immediately.
+//
+//	jobRequestCfgChan, jobResponseChan, closeStream, err := rst.StreamSubmitJobRequests(ctx, beegfs, 2048)
+//	if err != nil {
+//	    return fmt.Errorf("unable to stream job requests: %w", err)
+//	}
+//	jobRequestCfgChan <- (...)
+//	close(jobRequestCfgChan)
+func StreamSubmitJobRequests(ctx context.Context, beegfs filesystem.Provider, chanSize int, ignoreResponses bool) (chan<- *JobRequestCfg, <-chan *JobResponse, error) {
+	mappings, err := util.GetMappings(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	cfgChan := make(chan *JobRequestCfg, chanSize)
+	requestChan := make(chan *jobRequestWithError, chanSize)
+	go func() {
+		defer close(requestChan)
 		for {
 			select {
 			case <-ctx.Done():
+				// Drain cfgChan to avoid blocking the caller
+				for range cfgChan {
+				}
 				return
-			case path, ok := <-pathChan:
+			case cfg, ok := <-cfgChan:
 				if !ok {
 					return
 				}
-				req := proto.Clone(baseRequest).(*beeremote.JobRequest)
-				req.Path, err = beegfs.GetRelativePathWithinMount(path)
-				if err != nil {
-					respChan <- &SyncJobResponse{
-						Path:   path,
-						Result: nil,
-						Err:    err,
-					}
-					// Most likely we were provided a relative path, and we were unable to convert
-					// it to a relative path within the mount point. Likely because we couldn't get
-					// the cwd. Don't keep trying if this happens.
-					cancel()
-					return
-				}
-
-				resp := &SyncJobResponse{
-					Path: req.Path,
-				}
-
-				rstIDs, err := checkEntryAndDetermineRSTs(ctx, mappings, req.RemoteStorageTarget, req.Path, ignoreReaders, ignoreWriters)
-				if err != nil {
-					resp.Err = err
-					respChan <- resp
-					continue
-				}
-
-				for _, rst := range rstIDs {
-					req.RemoteStorageTarget = rst
-					r, err := beeRemote.SubmitJob(ctx, &beeremote.SubmitJobRequest{Request: req})
-					if err != nil {
-						// We have to check the error because r could be nil so we shouldn't try and
-						// deference r to set the resp.Result and some errors are handled specially.
-						if st, ok := status.FromError(err); ok {
-							switch st.Code() {
-							case codes.Unavailable:
-								resp.Err = fmt.Errorf("fatal error sending request to BeeRemote: %w", err)
-								resp.FatalErr = true
-								respChan <- resp
-								// This would happen if there is an error connecting to BeeRemote.
-								// Don't keep trying and signal other goroutines to shutdown as well.
-								cancel()
-								return
-							}
-						}
-						resp.Err = err
-						respChan <- resp
-					} else {
-						resp.Result = r.Result
-						resp.Status = r.GetStatus()
-						respChan <- resp
-					}
-				}
+				sendJobRequest(ctx, beegfs, mappings, cfg, requestChan)
 			}
 		}
+	}()
+
+	respChan, err := submitJobRequests(ctx, cancel, requestChan, ignoreResponses)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfgChan, respChan, nil
+}
+
+func submitJobRequests(ctx context.Context, cancel context.CancelFunc, requestChan <-chan *jobRequestWithError, ignoreResponses bool) (<-chan *JobResponse, error) {
+	remote, err := config.BeeRemoteClient()
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 
-	numWorkers := viper.GetInt(config.NumWorkersKey)
-	if numWorkers > 1 {
-		// One worker will be dedicated for walkDir (this function) unless there is only one CPU.
-		numWorkers = viper.GetInt(config.NumWorkersKey) - 1
+	if ignoreResponses {
+		for range numWorkers() {
+			go func() {
+				submitJobRequestWorker(ctx, cancel, remote, requestChan, nil)
+			}()
+		}
+		return nil, nil
 	}
 
-	for range numWorkers {
+	wg := sync.WaitGroup{}
+	respChan := make(chan *JobResponse, cap(requestChan))
+	for range numWorkers() {
 		wg.Add(1)
-		go submitRequestFn()
+		go func() {
+			defer wg.Done()
+			submitJobRequestWorker(ctx, cancel, remote, requestChan, respChan)
+		}()
 	}
 
+	// Start a go routine to wait for the workers to finish before closing the response channel.
+	// This allows the responses to be streamed to the caller.
 	go func() {
-		walkDirFunc := func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				if d.Type()&fs.ModeSymlink != 0 {
-					// TODO: https://github.com/ThinkParQ/bee-remote/issues/25
-					// Support symbolic links.
-					relPath, err := beegfs.GetRelativePathWithinMount(path)
-					if err != nil {
-						// An error at this point is unlikely given previous steps also get relative
-						// paths. To be safe note this in the error that is returned and just return
-						// the absolute path instead. This shouldn't be a security issue since the
-						// user should have access to this path if they were able to start a job
-						// request for it.
-						relPath = path
-						err = fmt.Errorf("%w: unable to determine relative path", ErrFileTypeUnsupported)
-					} else {
-						err = ErrFileTypeUnsupported
-					}
-					respChan <- &SyncJobResponse{
-						Path: relPath,
-						Err:  err,
-					}
-				} else if !d.IsDir() {
-					// Only send file paths to the channel.
-					pathChan <- path
-				}
-			}
-			return nil
-		}
-
-		err := beegfs.WalkDir(pathInMount, walkDirFunc)
-		if err != nil {
-			respChan <- &SyncJobResponse{
-				Err:      fmt.Errorf("fatal error walking directory tree: %w", err),
-				FatalErr: true,
-			}
-			cancel()
-		}
-		close(pathChan)
-		// Wait to close the response channel until we finish creating requests for all paths.
 		wg.Wait()
 		close(respChan)
 	}()
-
 	return respChan, nil
 }
 
-// checkEntryAndDetermineRSTs returns specific errors if any clients have the specified path open
-// for reading, writing, or both. These checks can be skipped for readers and/or writers by setting
-// the ignoreX arguments. If rstID is set it returns a slice with only that RST otherwise it checks
-// if any RSTs are set on the entry and returns a slice with each of the RSTs, or ErrFileHasNoRSTs
-// if rstID is not set and the entry has no RSTs defined.
-func checkEntryAndDetermineRSTs(ctx context.Context, mappings *util.Mappings, rstID uint32, path string, ignoreReaders bool, ignoreWriters bool) ([]uint32, error) {
+func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, cfg *JobRequestCfg, requestChan chan<- *jobRequestWithError) {
+	var err error
+	var pathInfo mountPathInfo
+	sendError := func(err error) {
+		requestChan <- &jobRequestWithError{
+			Request: &beeremote.JobRequest{Path: pathInfo.Path, RemoteStorageTarget: cfg.RSTID},
+			Err:     err,
+		}
+	}
+
+	pathInfo, err = getMountPathInfo(beegfs, cfg.Path)
+	if err != nil {
+		sendError(err)
+		return
+	}
+
+	var rstIds []uint32
+	jobBuilder := false
+	if !pathInfo.Exists || pathInfo.IsDir {
+		jobBuilder = true
+		if !validRstId(cfg.RSTID) {
+			sendError(fmt.Errorf("unable to send job requests! Invalid RST identifier"))
+		}
+		rstIds = []uint32{cfg.RSTID}
+	} else {
+		entry, err := getEntry(ctx, mappings, pathInfo.Path)
+		if err != nil {
+			sendError(err)
+		}
+
+		ignoreReaders := cfg.Force || !cfg.Download
+		ignoreWriters := cfg.Force
+		err = checkEntry(entry.Entry, ignoreReaders, ignoreWriters)
+		if err != nil {
+			sendError(err)
+		}
+
+		if validRstId(cfg.RSTID) {
+			rstIds = []uint32{cfg.RSTID}
+		} else if rstIds, err = getEntryRSTs(entry.Entry); err != nil {
+			sendError(err)
+		}
+	}
+
+	var jobRequest *beeremote.JobRequest
+	for _, rstId := range rstIds {
+		rst := mappings.RstIdToConfig[rstId]
+		switch rst.WhichType() {
+		case flex.RemoteStorageTarget_S3_case:
+			jobRequest = getSyncJobRequest(pathInfo.Path, rstId, cfg)
+		default:
+			sendError(ErrFileTypeUnsupported)
+			continue
+		}
+
+		jobRequest.JobBuilder = jobBuilder
+		requestChan <- &jobRequestWithError{Request: jobRequest}
+	}
+}
+
+func submitJobRequest(ctx context.Context, cancel context.CancelFunc, remote beeremote.BeeRemoteClient, request *beeremote.JobRequest) *JobResponse {
+	resp := &JobResponse{Path: request.Path}
+	select {
+	case <-ctx.Done():
+		return nil
+	default:
+		submission, err := remote.SubmitJob(ctx, &beeremote.SubmitJobRequest{Request: request})
+		if err != nil {
+			resp.Err = err
+			// We have to check the error because submission could be nil so we shouldn't try and
+			// deference it to set the resp.Result and some errors are handled specially.
+			if st, ok := status.FromError(err); ok {
+				switch st.Code() {
+				case codes.Unavailable:
+					resp.Err = fmt.Errorf("fatal error sending request to BeeRemote: %w", err)
+					resp.FatalErr = true
+					// This would happen if there is an error connecting to BeeRemote.
+					// Don't keep trying and signal other goroutines to shutdown as well.
+					cancel()
+				}
+			}
+		} else {
+			resp.Result = submission.Result
+			resp.Status = submission.GetStatus()
+		}
+	}
+	return resp
+}
+
+func submitJobRequestWorker(ctx context.Context, cancel context.CancelFunc, remote beeremote.BeeRemoteClient, requestChan <-chan *jobRequestWithError, respChan chan<- *JobResponse) {
+	send := func(jobResp *JobResponse) {
+		if respChan != nil {
+			respChan <- jobResp
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case request, ok := <-requestChan:
+			if !ok {
+				return
+			}
+
+			if request.Err != nil {
+				if request.FatalErr {
+					send(&JobResponse{Path: request.Request.Path, Err: request.Err, FatalErr: request.FatalErr})
+					cancel()
+					return
+				}
+				send(&JobResponse{Path: request.Request.Path, Err: request.Err})
+				continue
+			}
+
+			resp := submitJobRequest(ctx, cancel, remote, request.Request)
+			if resp != nil {
+				send(resp)
+			}
+		}
+	}
+}
+
+func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *beeremote.JobRequest {
+	var operation flex.SyncJob_Operation
+	if cfg.Download {
+		operation = flex.SyncJob_DOWNLOAD
+	} else {
+		operation = flex.SyncJob_UPLOAD
+	}
+
+	return &beeremote.JobRequest{
+		Path:                inMountPath,
+		RemoteStorageTarget: rstId,
+		Type: &beeremote.JobRequest_Sync{
+			Sync: &flex.SyncJob{
+				RemotePath: cfg.RemotePath,
+				Operation:  operation,
+				Overwrite:  cfg.Overwrite,
+				StubOnly:   cfg.StubOnly,
+				Flatten:    cfg.Flatten,
+			}}}
+}
+
+type mountPathInfo struct {
+	Path   string
+	Exists bool
+	IsDir  bool
+}
+
+func getMountPathInfo(beegfs filesystem.Provider, path string) (mountPathInfo, error) {
+	result := mountPathInfo{Path: path}
+	pathInMount, err := beegfs.GetRelativePathWithinMount(path)
+	if err != nil {
+		return result, err
+	}
+	result.Path = pathInMount
+
+	info, err := beegfs.Lstat(pathInMount)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return result, err
+		}
+		return result, nil
+	}
+	result.Exists = true
+	result.IsDir = info.IsDir()
+	return result, nil
+}
+
+func getEntry(ctx context.Context, mappings *util.Mappings, path string) (*entry.GetEntryCombinedInfo, error) {
 	entry, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, path)
 	if err != nil {
 		return nil, err
 	}
-	if !ignoreWriters && entry.Entry.NumSessionsWrite > 0 {
+	return entry, nil
+}
+
+func checkEntry(entry entry.Entry, ignoreReaders bool, ignoreWriters bool) error {
+	var err error
+	if !ignoreWriters && entry.NumSessionsWrite > 0 {
 		err = ErrFileOpenForWriting
 	}
-	if !ignoreReaders && entry.Entry.NumSessionsRead > 0 {
+	if !ignoreReaders && entry.NumSessionsRead > 0 {
 		// Not using errors.Join because it adds a newline when printing each error which looks
 		// awkward in the CTL output.
 		if err != nil {
@@ -342,22 +388,26 @@ func checkEntryAndDetermineRSTs(ctx context.Context, mappings *util.Mappings, rs
 			err = ErrFileOpenForReading
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
+	return err
+}
 
-	var rstIDs []uint32
-	if rstID != 0 {
-		// If the user provided an RST we MUST always use that RST ID and ONLY that RST ID otherwise
-		// this would cause weird behavior when downloading and overwriting an existing files that
-		// had RSTs set, because we might try and create multiple downloads from different RSTs that
-		// would all clobber each other and certainly wouldn't be what the user wanted.
-		rstIDs = []uint32{rstID}
-	} else if len(entry.Entry.Remote.RSTIDs) > 0 {
-		rstIDs = make([]uint32, len(entry.Entry.Remote.RSTIDs))
-		copy(rstIDs, entry.Entry.Remote.RSTIDs)
-	} else {
+func validRstId(rstId uint32) bool {
+	return rstId != 0
+}
+
+func getEntryRSTs(entry entry.Entry) ([]uint32, error) {
+	if len(entry.Remote.RSTIDs) == 0 {
 		return nil, ErrFileHasNoRSTs
 	}
+	rstIDs := make([]uint32, len(entry.Remote.RSTIDs))
+	copy(rstIDs, entry.Remote.RSTIDs)
 	return rstIDs, nil
+}
+
+func numWorkers() int {
+	count := viper.GetInt(config.NumWorkersKey)
+	if count > 1 {
+		return count - 1
+	}
+	return 1
 }

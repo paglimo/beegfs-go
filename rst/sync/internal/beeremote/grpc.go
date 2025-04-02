@@ -61,5 +61,23 @@ func (c *grpcProvider) updateWork(ctx context.Context, workResult *flex.Work) er
 		}
 		return err
 	}
+
+	return nil
+}
+
+func (c *grpcProvider) submitJob(ctx context.Context, jobRequest *beeremote.JobRequest) error {
+	_, err := c.client.SubmitJob(ctx, beeremote.SubmitJobRequest_builder{Request: jobRequest}.Build())
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.
+			// Note this is just a hint to the user, other error conditions may have the same
+			// message so we don't adjust behavior (i.e., treat it as fatal).
+			if strings.Contains(st.Message(), "error reading server preface: EOF") {
+				return fmt.Errorf("%w (hint: check TLS is configured correctly on the client and server)", err)
+			}
+		}
+		return err
+	}
+
 	return nil
 }

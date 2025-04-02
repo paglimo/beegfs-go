@@ -20,7 +20,7 @@ import (
 // To test directly (for example the RST package tests):
 //
 //	rstClient := &rst.MockClient{}
-//	mockClient.On("GenerateRequests",mock.Anything, fileSize, availWorkers).Return(externalID, requests, false, nil)
+//	mockClient.On("GenerateWorkRequests",mock.Anything, fileSize, availWorkers).Return(externalID, requests, false, nil)
 //
 // To test indirectly use the Mock RST type when initializing WorkerMgr:
 //
@@ -30,7 +30,7 @@ import (
 // If you are using the client directly, use type assertion to get at the underlying mock client to setup expectations:
 //
 //	mockClient, _ := workerManager.RemoteStorageTargets["0"].(*rst.MockClient)
-//	mockClient.On("GenerateRequests",mock.Anything, fileSize, availWorkers).Return(externalID, requests, false, nil)
+//	mockClient.On("GenerateWorkRequests",mock.Anything, fileSize, availWorkers).Return(externalID, requests, false, nil)
 //
 // Or if you are using the ClientStore, use the testing hook:
 //
@@ -86,6 +86,19 @@ func (rst *MockClient) ExecuteWorkRequestPart(ctx context.Context, request *flex
 		part.Completed = true
 	}
 	return err
+}
+
+func (rst *MockClient) ExecuteJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+
+	if request.GetMock() != nil {
+		if request.GetMock().ShouldFail {
+			return fmt.Errorf("test requested an error")
+		}
+		return nil
+	}
+
+	args := rst.Called(ctx, request)
+	return args.Error(0)
 }
 
 func (rst *MockClient) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
