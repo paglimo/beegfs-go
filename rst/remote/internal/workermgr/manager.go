@@ -173,6 +173,8 @@ func (m *Manager) SubmitJob(js JobSubmission) (map[string]worker.WorkResult, *be
 		switch workRequest.WhichType() {
 		case flex.WorkRequest_Mock_case:
 			nodeType = worker.Mock
+		case flex.WorkRequest_DirSync_case:
+			nodeType = worker.BeeSync
 		case flex.WorkRequest_Sync_case:
 			nodeType = worker.BeeSync
 		default:

@@ -8,14 +8,18 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/beeremote"
-	"github.com/thinkparq/beegfs-go/rst/sync/internal/config"
+	iConfig "github.com/thinkparq/beegfs-go/rst/sync/internal/config"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/server"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/workmgr"
 	"go.uber.org/zap"
@@ -85,12 +89,12 @@ Using environment variables:
 	}
 
 	// We initialize ConfigManager first because all components require the initial config to start up.
-	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &config.AppConfig{})
+	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &iConfig.AppConfig{})
 	if err != nil {
 		log.Fatalf("unable to get initial configuration: %s", err)
 	}
 	c := cfgMgr.Get()
-	initialCfg, ok := c.(*config.AppConfig)
+	initialCfg, ok := c.(*iConfig.AppConfig)
 	if !ok {
 		log.Fatalf("configuration manager returned invalid configuration (expected BeeSync application configuration)")
 	}
@@ -106,6 +110,43 @@ Using environment variables:
 			http.ListenAndServe(fmt.Sprintf(":%d", initialCfg.Developer.PerfProfilingPort), nil)
 		}()
 	}
+
+	// // NOTE: The following global flags are required for sync nodes to utilize the beegfs-go ctl
+	// // library for submitting job requests. This is not meant to be a permanent solution and should
+	// // not be merged until one is implemented.
+	// //   - The following has hardcoded values and will need to be updated.
+	globalFlagSet := pflag.FlagSet{}
+	globalFlagSet.String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, "")
+	globalFlagSet.String(config.BeeRemoteAddrKey, "192.168.1.116:9010", "")
+	globalFlagSet.String(config.BeeGFSMountPointKey, "auto", "")
+	globalFlagSet.Bool(config.TlsDisableKey, false, "")
+	globalFlagSet.String(config.TlsCertFile, "/etc/beegfs/cert.pem", "")
+	globalFlagSet.Bool(config.TlsDisableVerificationKey, false, "")
+	globalFlagSet.Bool(config.AuthDisableKey, false, "")
+	globalFlagSet.String(config.AuthFileKey, "/etc/beegfs/conn.auth", "")
+	globalFlagSet.Int(config.NumWorkersKey, runtime.GOMAXPROCS(0), "")
+	globalFlagSet.Duration(config.ConnTimeoutKey, time.Millisecond*500, "")
+	globalFlagSet.Int8(config.LogLevelKey, initialCfg.Log.Level, "")
+
+	// // globalFlagSet is required to interact with ctl library.
+	// globalFlagSet := pflag.FlagSet{}
+	// globalFlagSet.String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, "")
+	// globalFlagSet.String(config.BeeGFSMountPointKey, "auto", "")
+	// globalFlagSet.Bool(config.TlsDisableKey, initialCfg.Management.TLSDisable, "")
+	// globalFlagSet.String(config.TlsCertFile, initialCfg.Management.TLSCertFile, "")
+	// globalFlagSet.Bool(config.TlsDisableVerificationKey, initialCfg.Management.TLSDisableVerification, "")
+	// globalFlagSet.Bool(config.AuthDisableKey, initialCfg.Management.AuthDisable, "")
+	// globalFlagSet.String(config.AuthFileKey, initialCfg.Management.AuthFile, "")
+	// globalFlagSet.Int(config.NumWorkersKey, runtime.GOMAXPROCS(0), "")
+	// globalFlagSet.Duration(config.ConnTimeoutKey, time.Millisecond*500, "")
+	// globalFlagSet.Int8(config.LogLevelKey, initialCfg.Log.Level, "")
+	viper.SetEnvPrefix("beegfs")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
+	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
+		viper.BindEnv(flag.Name)
+		viper.BindPFlag(flag.Name, flag)
+	})
 
 	logger, err := logger.New(initialCfg.Log)
 	if err != nil {

@@ -76,3 +76,5 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/thinkparq/protobuf v0.0.0-rc.0 => ../protobuf

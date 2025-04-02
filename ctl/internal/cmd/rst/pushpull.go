@@ -20,7 +20,7 @@ type pushPullCfg struct {
 
 func newPushCmd() *cobra.Command {
 	frontendCfg := pushPullCfg{}
-	backendCfg := rst.SyncJobRequestCfg{}
+	backendCfg := rst.JobRequestCfg{}
 	cmd := &cobra.Command{
 		Use:   "push <path>",
 		Short: "Upload a file or directory in BeeGFS to a Remote Storage Target",
@@ -49,12 +49,13 @@ WARNING: Files are always uploaded and existing files overwritten unless the rem
 	cmd.Flags().MarkHidden("force")
 	cmd.Flags().BoolVar(&frontendCfg.verbose, "verbose", false, "Print additional details about each job (use --debug) to also print work requests and results.")
 	cmd.Flags().IntVar(&frontendCfg.width, "column-width", 35, "Set the maximum width of some columns before they overflow.")
+	cmd.Flags().BoolVar(&backendCfg.StubOnly, "migrate", false, "Replace with a stub after the file is uploaded.")
 	return cmd
 }
 
 func newPullCmd() *cobra.Command {
 	frontendCfg := pushPullCfg{}
-	backendCfg := rst.SyncJobRequestCfg{
+	backendCfg := rst.JobRequestCfg{
 		Download: true,
 	}
 	cmd := &cobra.Command{
@@ -79,6 +80,8 @@ func newPullCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&backendCfg.Overwrite, "overwrite", false, "Overwrite existing files in BeeGFS. Note this only overwrites the file's contents, metadata including any configured RSTs will remain.")
 	cmd.Flags().StringVarP(&backendCfg.RemotePath, "remote-path", "p", "", "The name/path of the object/file in the remote target you wish to download.")
 	cmd.MarkFlagRequired("remote-path")
+	cmd.Flags().BoolVar(&backendCfg.StubOnly, "stub-only", false, "Create stub files for the remote objects or files.")
+	cmd.Flags().BoolVar(&backendCfg.Flatten, "flatten", false, "Flatten the remote directory structure. The directory delimiter will be replaced with an underscore.")
 	cmd.Flags().BoolVar(&backendCfg.Force, "force", false, "Force pulling file(s) from the remote target even if the file is already in sync or another client currently has them open for reading or writing (note other clients may see errors, the job may later fail, or the downloaded file may not be the latest version).")
 	cmd.Flags().MarkHidden("force")
 	cmd.Flags().BoolVar(&frontendCfg.verbose, "verbose", false, "Print additional details about each job (use --debug) to also print work requests and results.")
@@ -86,11 +89,10 @@ func newPullCmd() *cobra.Command {
 	return cmd
 }
 
-func runPushOrPullCmd(cmd *cobra.Command, frontendCfg pushPullCfg, backendCfg rst.SyncJobRequestCfg) error {
+func runPushOrPullCmd(cmd *cobra.Command, frontendCfg pushPullCfg, backendCfg rst.JobRequestCfg) error {
 
 	// This could be made user configurable if it ever makes sense.
-	backendCfg.ChanSize = 1024
-	responses, err := rst.SubmitSyncJobRequests(cmd.Context(), backendCfg)
+	responses, _, err := rst.SubmitJobRequest(cmd.Context(), backendCfg, 1024)
 	if err != nil {
 		return err
 	}
@@ -140,12 +142,10 @@ writeResponses:
 			switch resp.Status {
 			case beeremote.SubmitJobResponse_CREATED:
 				syncStarted++
+			case beeremote.SubmitJobResponse_ALREADY_COMPLETE:
+				syncCompleted++
 			case beeremote.SubmitJobResponse_EXISTING:
-				if resp.Result.Job.GetStatus().GetState() == beeremote.Job_COMPLETED {
-					syncCompleted++
-				} else {
-					syncInProgress++
-				}
+				syncInProgress++
 			case beeremote.SubmitJobResponse_NOT_ALLOWED:
 				// This indicates the last job failed and requires manual intervention. Always print
 				// these jobs as the user will likely want to see them anyway.

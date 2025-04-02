@@ -61,6 +61,11 @@ type Provider interface {
 	// an error. Errors can be retried if the error was likely transient, such as a network issue,
 	// otherwise retry is be false if generating requests is not possible, such as the request type
 	// is invalid for this RST.
+	//
+	// canRetry indicates whether the RST provider's GenerateWorkRequests() call left the job in a
+	// valid state and no further cleanup is needed. If true, the job can be safely retried. If
+	// false, the job should not be retried; the user must be forced to resolve the issue and cancel
+	// the job before attempting any subsequent retries.
 	GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error)
 	// ExecuteWorkRequestPart accepts a request and which part of the request it should carry out.
 	// It blocks until the request is complete, but the caller can cancel the provided context to
@@ -124,7 +129,7 @@ func New(ctx context.Context, config *flex.RemoteStorageTarget, mountPoint files
 // The segment slice should be in the original order segments were generated to ensure consistent
 // request IDs.
 func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segment) (requests []*flex.WorkRequest) {
-
+	request := job.GetRequest()
 	// Ensure when adding new fields that all reference types are cloned to ensure WRs are
 	// initialized properly and don't share references with anything else. Otherwise this can lead
 	// to weird bugs where at best we panic due to a segfault, and at worst a change to one object
@@ -135,26 +140,29 @@ func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segme
 			JobId:      job.GetId(),
 			RequestId:  strconv.Itoa(i),
 			ExternalId: job.GetExternalId(),
-			Path:       job.Request.GetPath(),
+			Path:       request.GetPath(),
 			// Intentionally don't use Clone for the Segment as a performance optimization for
 			// callers like BeeRemote that don't store the slice of segments directly and therefore
 			// already generate new segments (i.e., job.GetSegments()) that can just be reused
 			// directly when they call RecreateWorkRequests().
 			Segment:             s,
-			RemoteStorageTarget: job.Request.GetRemoteStorageTarget(),
+			RemoteStorageTarget: request.GetRemoteStorageTarget(),
 		}
 
-		switch job.Request.Type.(type) {
-		case *beeremote.JobRequest_Sync:
+		switch request.WhichType() {
+		case beeremote.JobRequest_Sync_case:
 			wr.Type = &flex.WorkRequest_Sync{
-				Sync: proto.Clone(job.Request.GetSync()).(*flex.SyncJob),
+				Sync: proto.Clone(request.GetSync()).(*flex.SyncJob),
 			}
-		case *beeremote.JobRequest_Mock:
+		case beeremote.JobRequest_DirSync_case:
+			wr.Type = &flex.WorkRequest_DirSync{
+				DirSync: proto.Clone(request.GetDirSync()).(*flex.DirSyncJob),
+			}
+		case beeremote.JobRequest_Mock_case:
 			wr.Type = &flex.WorkRequest_Mock{
-				Mock: proto.Clone(job.Request.GetMock()).(*flex.MockJob),
+				Mock: proto.Clone(request.GetMock()).(*flex.MockJob),
 			}
 		}
-
 		workRequests = append(workRequests, &wr)
 	}
 	return workRequests

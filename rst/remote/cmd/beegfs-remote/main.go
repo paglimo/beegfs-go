@@ -22,13 +22,15 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/mock"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
 	"github.com/thinkparq/beegfs-go/common/rst"
-	"github.com/thinkparq/beegfs-go/rst/remote/internal/config"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
+	iConfig "github.com/thinkparq/beegfs-go/rst/remote/internal/config"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/job"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/server"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
@@ -149,12 +151,12 @@ Using environment variables:
 	}
 
 	// We initialize ConfigManager first because all components require the initial config to start up.
-	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &config.AppConfig{}, config.SetRSTTypeHook())
+	cfgMgr, err := configmgr.New(pflag.CommandLine, envVarPrefix, &iConfig.AppConfig{}, iConfig.SetRSTTypeHook())
 	if err != nil {
 		log.Fatalf("unable to get initial configuration: %s", err)
 	}
 	c := cfgMgr.Get()
-	initialCfg, ok := c.(*config.AppConfig)
+	initialCfg, ok := c.(*iConfig.AppConfig)
 	if !ok {
 		log.Fatalf("configuration manager returned invalid configuration (expected BeeRemote application configuration)")
 	}
@@ -173,6 +175,26 @@ Using environment variables:
 			http.ListenAndServe(fmt.Sprintf(":%d", initialCfg.Developer.PerfProfilingPort), nil)
 		}()
 	}
+
+	globalFlagSet := pflag.FlagSet{}
+	globalFlagSet.String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, "")
+	globalFlagSet.String(config.BeeGFSMountPointKey, "auto", "")
+	globalFlagSet.String(config.BeeRemoteAddrKey, initialCfg.Server.Address, "")
+	globalFlagSet.Bool(config.TlsDisableKey, initialCfg.Management.TLSDisable, "")
+	globalFlagSet.String(config.TlsCertFile, initialCfg.Management.TLSCertFile, "")
+	globalFlagSet.Bool(config.TlsDisableVerificationKey, initialCfg.Management.TLSDisableVerification, "")
+	globalFlagSet.Bool(config.AuthDisableKey, initialCfg.Management.AuthDisable, "")
+	globalFlagSet.String(config.AuthFileKey, initialCfg.Management.AuthFile, "")
+	globalFlagSet.Int(config.NumWorkersKey, runtime.GOMAXPROCS(0), "")
+	globalFlagSet.Duration(config.ConnTimeoutKey, time.Millisecond*500, "")
+	globalFlagSet.Int8(config.LogLevelKey, initialCfg.Log.Level, "")
+	viper.SetEnvPrefix("beegfs")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
+	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
+		viper.BindEnv(flag.Name)
+		viper.BindPFlag(flag.Name, flag)
+	})
 
 	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
@@ -600,7 +622,7 @@ func benchmarkGetFilepaths(path string, count int) <-chan string {
 	return fileChan
 }
 
-func benchmarkMockTarget(cfg *config.AppConfig) filesystem.Provider {
+func benchmarkMockTarget(cfg *iConfig.AppConfig) filesystem.Provider {
 	cfg.WorkerMgr = workermgr.Config{}
 	cfg.Workers = []worker.Config{
 		{
