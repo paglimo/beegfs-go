@@ -82,22 +82,23 @@ func assertDBEntriesLenForTesting(mgr *Manager, expectedLen int) error {
 // newWorkFromRequest() accepts a work request and generates the initial work result. The state of
 // the new work will always be scheduled.
 func newWorkFromRequest(workRequest *workRequest) *work {
-
 	numberOfParts := workRequest.Segment.GetPartsStop() - workRequest.Segment.GetPartsStart() + 1
-
 	parts := make([]*flex.Work_Part, 0, numberOfParts)
-	genPart := generatePartsFromSegment(workRequest.Segment)
-
-	for {
-		if partNum, offsetStart, offsetStop := genPart(); partNum != -1 {
-			parts = append(parts, flex.Work_Part_builder{
-				PartNumber:  partNum,
-				OffsetStart: offsetStart,
-				OffsetStop:  offsetStop,
-			}.Build())
-			continue
+	if workRequest.Segment == nil {
+		parts = append(parts, &flex.Work_Part{})
+	} else {
+		genPart := generatePartsFromSegment(workRequest.Segment)
+		for {
+			if partNum, offsetStart, offsetStop := genPart(); partNum != -1 {
+				parts = append(parts, flex.Work_Part_builder{
+					PartNumber:  partNum,
+					OffsetStart: offsetStart,
+					OffsetStop:  offsetStop,
+				}.Build())
+				continue
+			}
+			break
 		}
-		break
 	}
 
 	return &work{
@@ -115,19 +116,34 @@ func newWorkFromRequest(workRequest *workRequest) *work {
 }
 
 // generatePartsFromSegment generates the part numbers and offset ranges that should be used for
-// each part in a segment.
+// each part in a segment. It returns -1, -1, -1 once all parts have been generated.
 //
-// IMPORTANT: Parts are expected to start at 1 or higher and offsets at zero or higher.
 // For example given the following segment:
-// * OffsetStart: 0
-// * OffsetStop: 10
-// * PartsStart: 1
-// * PartsStop: 3
+//   - OffsetStart: 0
+//   - OffsetStop: 10
+//   - PartsStart: 1
+//   - PartsStop: 3
+//
 // It would generate the following parts:
-// * Part 1: OffsetStart: 0, OffsetStop: 2 (3 bytes)
-// * Part 2: OffsetStart: 3, OffsetStop: 5 (3 bytes)
-// * Part 3: OffsetStart: 6, OffsetStop: 10 (5 bytes)
+//   - Part 1: OffsetStart: 0, OffsetStop: 2 (3 bytes)
+//   - Part 2: OffsetStart: 3, OffsetStop: 5 (3 bytes)
+//   - Part 3: OffsetStart: 6, OffsetStop: 10 (5 bytes)
+//
+// Parts are expected to start at 1 or higher and offsets at zero or higher, except as a special
+// case for empty files the OffsetStop may be -1 which will return exactly one part:
+//   - Part 1: OffsetStart: 0, OffsetStop: -1 (0 bytes)
 func generatePartsFromSegment(segment *flex.WorkRequest_Segment) func() (int32, int64, int64) {
+
+	if segment.GetOffsetStop() == -1 {
+		called := false
+		return func() (int32, int64, int64) {
+			if called {
+				return -1, -1, -1
+			}
+			called = true
+			return segment.GetPartsStart(), segment.GetOffsetStart(), segment.GetOffsetStop()
+		}
+	}
 
 	numberOfParts := int64(segment.GetPartsStop() - segment.GetPartsStart() + 1)
 	totalXferSize := segment.GetOffsetStop() - segment.GetOffsetStart() + 1

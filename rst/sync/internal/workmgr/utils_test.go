@@ -47,6 +47,11 @@ func TestGenerateParts(t *testing.T) {
 
 	tests := []test{
 		{
+			name:     "test when the offset stop is -1 signaling an empty file",
+			segment:  flex.WorkRequest_Segment_builder{OffsetStart: 0, OffsetStop: -1, PartsStart: 1, PartsStop: 2}.Build(),
+			expected: []expectation{{1, 0, -1}, {-1, -1, -1}},
+		},
+		{
 			name:     "test when offsets evenly divide into parts",
 			segment:  flex.WorkRequest_Segment_builder{OffsetStart: 0, OffsetStop: 99, PartsStart: 1, PartsStop: 10}.Build(),
 			expected: []expectation{{1, 0, 9}, {2, 10, 19}, {3, 20, 29}, {4, 30, 39}, {5, 40, 49}, {6, 50, 59}, {7, 60, 69}, {8, 70, 79}, {9, 80, 89}, {10, 90, 99}, {-1, -1, -1}},

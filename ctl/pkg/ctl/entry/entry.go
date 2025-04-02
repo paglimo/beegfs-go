@@ -333,7 +333,7 @@ func getEntryAndOwnerFromPathViaRPC(ctx context.Context, mappings *util.Mappings
 		if err != nil {
 			return msg.EntryInfo{}, beegfs.Node{}, err
 		} else if resp.Result != 0 {
-			return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("unexpected search result for '%s': %s", searchPath, resp.Result)
+			return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("unexpected search result for '%s': %w", searchPath, resp.Result)
 		}
 
 		// If the directory is buddy mirrored, the owner ID will be a buddy group ID. We have to map
@@ -370,4 +370,157 @@ func getEntryAndOwnerFromPathViaRPC(ctx context.Context, mappings *util.Mappings
 	}
 
 	return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("max search steps exceeded for path: %s", searchPath)
+}
+
+func SetFileRstIds(ctx context.Context, mappings *util.Mappings, path string, rstIds []uint32) error {
+	entry, ownerNode, err := GetEntryAndOwnerFromPath(ctx, mappings, path)
+	if err != nil {
+		return err
+	}
+	if entry.EntryType != beegfs.EntryRegularFile {
+		return errors.ErrUnsupported
+	}
+
+	setFileRstIds(ctx, entry, ownerNode, path, rstIds)
+	return nil
+}
+
+func GetFileDataState(ctx context.Context, mappings *util.Mappings, path string) (beegfs.DataState, error) {
+	state, err := getFileState(ctx, mappings, path)
+	if err != nil {
+		return beegfs.DataStateMask.GetDataState(), fmt.Errorf("failed to get file data state: %w", err)
+	}
+	return state.GetDataState(), nil
+}
+
+func SetDataState(ctx context.Context, mappings *util.Mappings, path string, state beegfs.DataState) error {
+	entry, ownerNode, err := GetEntryAndOwnerFromPath(ctx, mappings, path)
+	if err != nil {
+		return fmt.Errorf("unable to retrieve entry info: %w", err)
+	}
+	store, err := config.NodeStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	info := &msg.GetEntryInfoResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, &msg.GetEntryInfoRequest{EntryInfo: entry}, info)
+	if err != nil {
+		return fmt.Errorf("unable to get data state for path, %s: %w", path, err)
+	}
+
+	fs := info.FileState.WithDataState(state)
+
+	response := &msg.SetFileStateResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, &msg.SetFileStateRequest{EntryInfo: entry, FileState: fs}, response)
+	if err != nil {
+		return err
+	}
+	if response.Result != beegfs.OpsErr_SUCCESS {
+		return fmt.Errorf("server returned an error setting data state for path, %s: %w", path, response.Result)
+	}
+	return nil
+}
+
+func GetFileAccessFlags(ctx context.Context, mappings *util.Mappings, path string) (beegfs.AccessFlags, error) {
+	state, err := getFileState(ctx, mappings, path)
+	if err != nil {
+		return beegfs.AccessFlagMask.GetAccessFlags(), fmt.Errorf("failed to get file access flags: %w", err)
+	}
+	return state.GetAccessFlags(), nil
+}
+
+func SetAccessFlags(ctx context.Context, mappings *util.Mappings, path string, flags beegfs.AccessFlags) error {
+	if err := setAccessFlags(ctx, mappings, path, flags, false); err != nil {
+		return fmt.Errorf("failed to set file access flags: %w", err)
+	}
+	return nil
+}
+
+func ClearAccessFlags(ctx context.Context, mappings *util.Mappings, path string, flags beegfs.AccessFlags) error {
+	if err := setAccessFlags(ctx, mappings, path, flags, true); err != nil {
+		return fmt.Errorf("failed to clear file access flags: %w", err)
+	}
+	return nil
+}
+
+func getFileState(ctx context.Context, mappings *util.Mappings, path string) (beegfs.FileState, error) {
+	entry, ownerNode, err := GetEntryAndOwnerFromPath(ctx, mappings, path)
+	if err != nil {
+		mask := beegfs.NewFileState(beegfs.AccessFlagMask.GetAccessFlags(), beegfs.AccessFlagMask.GetDataState())
+		return mask, err
+	}
+
+	store, err := config.NodeStore(ctx)
+	if err != nil {
+		mask := beegfs.NewFileState(beegfs.AccessFlagMask.GetAccessFlags(), beegfs.AccessFlagMask.GetDataState())
+		return mask, err
+	}
+
+	request := &msg.GetEntryInfoRequest{EntryInfo: entry}
+	resp := &msg.GetEntryInfoResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, request, resp)
+	if err != nil {
+		mask := beegfs.NewFileState(beegfs.AccessFlagMask.GetAccessFlags(), beegfs.AccessFlagMask.GetDataState())
+		return mask, err
+	}
+
+	return resp.FileState, nil
+}
+
+func setAccessFlags(ctx context.Context, mappings *util.Mappings, path string, flags beegfs.AccessFlags, clearFlags bool) error {
+	entry, ownerNode, err := GetEntryAndOwnerFromPath(ctx, mappings, path)
+	if err != nil {
+		return err
+	}
+
+	store, err := config.NodeStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	info := &msg.GetEntryInfoResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, &msg.GetEntryInfoRequest{EntryInfo: entry}, info)
+	if err != nil {
+		return err
+	}
+
+	fs := info.FileState
+	if clearFlags {
+		fs = fs.WithoutAccessState(flags)
+	} else {
+		fs = fs.WithAccessState(flags)
+	}
+
+	response := &msg.SetFileStateResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, &msg.SetFileStateRequest{EntryInfo: entry, FileState: fs}, response)
+	if err != nil {
+		return err
+	}
+	if response.Result != beegfs.OpsErr_SUCCESS {
+		return fmt.Errorf("server returned an error setting file access flags, %s: %w", path, response.Result)
+	}
+	return nil
+}
+
+func setFileRstIds(ctx context.Context, entry msg.EntryInfo, ownerNode beegfs.Node, path string, rstIds []uint32) error {
+	if rstIds == nil {
+		return nil
+	}
+	store, err := config.NodeStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	rstIdRequest := &msg.SetFilePatternRequest{EntryInfo: entry, RST: msg.RemoteStorageTarget{RSTIDs: rstIds}}
+	rstIdResp := &msg.SetFilePatternResponse{}
+	err = store.RequestTCP(ctx, ownerNode.Uid, rstIdRequest, rstIdResp)
+	if err != nil {
+		return err
+	}
+	if rstIdResp.Result != beegfs.OpsErr_SUCCESS {
+		return fmt.Errorf("server returned an error configuring file targets, %s: %w", path, rstIdResp.Result)
+	}
+
+	return nil
 }
