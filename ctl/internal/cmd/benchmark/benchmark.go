@@ -339,7 +339,9 @@ func printResultsSummary(t table.Writer, results []benchmark.StorageBenchResult)
 	// Refuse to summarize results for mixed test types.
 	testType := "unknown"
 	if len(benchType) == 1 {
-		testType = strings.ToUpper(benchType[0].String())
+		for _, t := range benchType {
+			testType = strings.ToUpper(t.String())
+		}
 	} else if len(benchType) > 1 {
 		fmt.Println("Unable to summarize results - found results for both read and write benchmarks.")
 		return
