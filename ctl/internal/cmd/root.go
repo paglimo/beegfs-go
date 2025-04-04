@@ -68,7 +68,11 @@ BeeGFS is crafted with 💛 by contributors worldwide.
 Thank you for using BeeGFS and supporting its ongoing development! 🐝
 		`, longHelpHeader, strings.Repeat("=", len(longHelpHeader))),
 		SilenceUsage: true,
-		// PersistentPreRunE: // Do not set here, see attachPersistentPreRunE() to modify instead.
+		// This is inherited by ALL commands even if they also define there own PersistentPreRunE.
+		// See attachPersistentPreRunE() for more details.
+		PersistentPreRunE: func(c *cobra.Command, args []string) error {
+			return globalPersistentPreRunE(c)
+		},
 	}
 
 	// Normalize flags to lowercase - makes the program accept case insensitive flags
@@ -164,19 +168,23 @@ func attachCustomArgsErr(argsFn cobra.PositionalArgs) cobra.PositionalArgs {
 
 // attachPersistentPreRunE ensures checkCommand() is executed before running all commands. It is not
 // sufficient to simply set checkCommand as the PersistentPreRunE of the root command, because it
-// would be overridden if a command defined its own PersistentPreRunE. This approach ensures
-// checkCommand always runs before the PersistentPreRunE defined on each sub-command.
+// would be overridden if a command defined its own PersistentPreRunE. This approach ensures the
+// globalPersistentPreRunE always runs before the PersistentPreRunE defined by any sub-command.
 func attachPersistentPreRunE(cmd *cobra.Command) {
-	original := cmd.PersistentPreRunE
-	cmd.PersistentPreRunE = func(c *cobra.Command, args []string) error {
-		if err := globalPersistentPreRunE(c); err != nil {
-			return err
+	if cmd.PersistentPreRunE != nil {
+		origFunc := cmd.PersistentPreRunE
+		newFunc := func(c *cobra.Command, args []string) error {
+			if err := globalPersistentPreRunE(c); err != nil {
+				return err
+			}
+			return origFunc(c, args)
 		}
-		if original != nil {
-			return original(c, args)
-		}
-		return nil
+		cmd.PersistentPreRunE = newFunc
 	}
+	// Commands with a nil PersistentPreRunE will inherit their parent's commands PersistentPreRunE
+	// (if any) via Cobra's lazy inheritance. We do not assign a new function to these commands to
+	// preserve that behavior, otherwise sub-commands of a command with a PersistentPreRunE defined
+	// would only use the globalPersistentPreRunE, not their parents wrapped PersistentPreRunE func.
 }
 
 // globalPersistentPreRunE() implements any functionality that should run before all commands after
