@@ -4,15 +4,12 @@ beegfs-go <!-- omit in toc -->
 
 # Contents <!-- omit in toc -->
 - [Getting Started](#getting-started)
-  - [Working with Executables](#working-with-executables)
+  - [Prerequisites](#prerequisites)
+  - [Building (With or Without Packaging)](#building-with-or-without-packaging)
   - [Importing functionality into other Go projects](#importing-functionality-into-other-go-projects)
-  - [Versioning](#versioning)
-- [Contributing to beegfs-go](#contributing-to-beegfs-go)
-  - [Coding Standards](#coding-standards)
-  - [Documentation](#documentation)
-  - [Testing](#testing)
 - [FAQs:](#faqs)
-  - [Why not just use the same version for the Go module and binaries it provides?](#why-not-just-use-the-same-version-for-the-go-module-and-binaries-it-provides)
+  - [How is the project versioned?](#how-is-the-project-versioned)
+    - [Why not just use the same version for the Go module and binaries it provides?](#why-not-just-use-the-same-version-for-the-go-module-and-binaries-it-provides)
     - [Is there precedence for this versioning scheme?](#is-there-precedence-for-this-versioning-scheme)
     - [Will eventually the version namespaces collide?](#will-eventually-the-version-namespaces-collide)
     - [Why not just use different tags for the module and binaries?](#why-not-just-use-different-tags-for-the-module-and-binaries)
@@ -21,37 +18,41 @@ beegfs-go <!-- omit in toc -->
 
 The purpose of this repository is twofold:
 
-* Provide common Go packages for interacting with BeeGFS.
-* Host BeeGFS-related software written in Go, such as the `beegfs` command-line tool.
+* Provide Go packages for interacting with BeeGFS.
+* Provide BeeGFS-related software written in Go, such as the `beegfs` command-line tool.
 
-Repository structure:
+The overall project is setup as a [Go module](https://go.dev/blog/using-go-modules) which is a
+collection of Go packages stored in a file tree with a `go.mod` file at its root:
 
 * `common/`: Contains shared Go packages that can be imported by other projects. These packages
   provide common "low-level" functionality for interacting with BeeGFS and along with basic
   application components (logging, configuration, databases, etc.) and serve as building blocks
-  "higher-level" applications and libraries.
-* Top-level directories (e.g., `ctl/`): Contain "higher-level" applications and libraries
-  built on the low-level functionality and other components in `common/`. Most developers interested
-  in integrating BeeGFS with some external application will want to start here.
+  "higher-level" applications and libraries written in Go.
+* Other top-level directories (e.g., `ctl/`) contain applications and libraries built on the
+  low-level functionality and other components in `common/`. Most developers interested in
+  integrating BeeGFS with some external application will want to start here.
+  * These directories generally adhere to the unofficial [Standard Go Project
+    Layout](https://github.com/golang-standards/project-layout).
 
 IMPORTANT: This repository is not be used for storing protocol buffers as those are not specific to
 projects in Go. See the [protocol buffers](https://github.com/thinkparq/protobuf) repository for
-`.proto` files and precompiled code libraries for Go and other languages.
+`.proto` files and precompiled libraries for Go and other languages.
 
 # Getting Started
 
-The beegfs-go project is setup as a [Go module](https://go.dev/blog/using-go-modules) which is a
-collection of Go packages stored in a file tree with a `go.mod` file at its root. If you're not
-familiar with Go, check out the ThinkParQ [Getting Started with
-Go](https://github.com/ThinkParQ/developer-handbook/tree/main/getting_started/go) section of the
-developer handbook.
+## Prerequisites
 
-## Working with Executables
+* If you just want to build/run the project without OS packages, all you need to do is [install
+  Go](https://go.dev/doc/install).
+* If you want to build packages you also need to [install Go
+  Releaser](https://goreleaser.com/install/#go-install).
 
-Besides providing shared Go packages, this project hosts a number of components that are meant to be
-built into binaries. These components generally adhere to the unofficial [Standard Go Project
-Layout](https://github.com/golang-standards/project-layout). Once you have [installed
-Go](https://go.dev/doc/install) there are a few options to run these components:
+If you are interested in contributing to the project please refer to [Getting Started with
+Go](https://github.com/ThinkParQ/beegfs-go/wiki/Getting-Started-with-Go) in the project wiki.
+
+## Building (With or Without Packaging)
+
+There are a few ways to run the components found in this project:
 
 * Directly build and run (best for debugging): `go run ctl/cmd/beegfs/main.go`
 
@@ -63,15 +64,16 @@ Go](https://go.dev/doc/install) there are a few options to run these components:
 * Build and install using OS packages: `make package-all` 
   * Install the resulting packages using `dpkg -i <package>` or similar.
 
-Refer to the documentation included with each component for more details.
+Below replace `ctl/cmd/beegfs/main.go` with the path to the `main.go` file for the component you
+want to run. Refer to the documentation included with each component for more details.
 
 ## Importing functionality into other Go projects
 
 If you just want to use some common functionality in your project, first run `go get
 github.com/thinkparq/beegfs-go@latest` then import/use the shared package(s) as needed throughout
 your project. The `beegfs-go` project is meant to be used as a Go module meaning you can (and
-should) pin your `go.mod` file to a particular stable version of beegfs-go. See the versioning
-section above to ensure you use the correct version.
+should) pin your `go.mod` file to a particular stable version of beegfs-go. See versioning in the
+FAQ section below to ensure you use the correct version.
 
 Individual modules can then be imported, for example to use the logging package:
 
@@ -94,7 +96,9 @@ command line `go doc` (e.g., `go doc logging`). An interactive doc site can also
 the godoc tool (`go get golang.org/x/tools/cmd/godoc`) with `godoc -http=:8080`. Some packages may
 also provide additional documentation in markdown format.
 
-## Versioning
+# FAQs:
+
+## How is the project versioned?
 
 BeeGFS OS packages/binaries built from this repository and the `beegfs-go` module that provides
 reusable Go packages currently follow slightly different versioning schemes:
@@ -112,52 +116,7 @@ reusable Go packages currently follow slightly different versioning schemes:
     version is tagged, you would use a [pseudo-version](https://go.dev/ref/mod#pseudo-versions) by
     running `go get github.com/thinkparq/beegfs-go@<LONG-COMMIT-HASH>` to import a specific commit.
 
-See the FAQ section for more on why the project is versioned this way.
-
-# Contributing to beegfs-go
-
-## Coding Standards
-
-This project strives to adhere to existing standards and best practices generally accepted by the Go
-community. These include: 
-
-* [Effective Go](https://golang.org/doc/effective_go)
-* [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
-
-It is expected before submitting a pull request that `gofmt`. `golint`, and `go vet` have already
-been run to ensure some of the more common "nitpicks" have already been addressed. You could also
-run `make test` to locally execute the checks that will run in GitHub Actions.
-
-## Documentation 
-
-Ensure to provide quality documentation using [Go Doc comments](https://tip.golang.org/doc/comment)
-for all new/updated code. Note it is generally preferred to use Go doc comments instead of providing
-extensive documentation using a README.  If necessary a README can be provided, but these should
-generally be limited to providing step-by-step instructions or examples for a particular use case to
-help users understand generally how to use the package. Don't just reproduce API documentation in a
-README as this is the intent of the Go doc comments which are used to automatically generate API
-documentation. 
-
-## Testing
-
-Include appropriate tests for new or modified functionality and ensure that all tests pass before
-submitting a pull request. Tests also often serve as [runnable
-examples](https://github.com/golang/go/wiki/CodeReviewComments#examples)/
-
-Note integration tests with external dependencies such as a mounted BeeGFS file system should use
-[build constraints](https://pkg.go.dev/go/build#hdr-Build_Constraints) (also known as a build tag)
-so they don't run by default. Build constraints that are in use: 
-
-| Constraint | Requires                           |
-| ---------- | ---------------------------------- |
-| beegfs     | BeeGFS must be mounted /mnt/beegfs |
-
-To specify a constraint use `-tags=<constraint>`, for example: `go test
-github.com/thinkparq/beegfs-go/common/ioctl -tags=integration`
-
-# FAQs:
-
-## Why not just use the same version for the Go module and binaries it provides?
+### Why not just use the same version for the Go module and binaries it provides?
 
 There are a few reasons for this:
 
