@@ -339,7 +339,9 @@ func printResultsSummary(t table.Writer, results []benchmark.StorageBenchResult)
 	// Refuse to summarize results for mixed test types.
 	testType := "unknown"
 	if len(benchType) == 1 {
-		testType = strings.ToUpper(benchType[0].String())
+		for _, t := range benchType {
+			testType = strings.ToUpper(t.String())
+		}
 	} else if len(benchType) > 1 {
 		fmt.Println("Unable to summarize results - found results for both read and write benchmarks.")
 		return
@@ -350,7 +352,14 @@ func printResultsSummary(t table.Writer, results []benchmark.StorageBenchResult)
 
 	perfSummary := perfResults.summarize()
 	t.SetTitle("%s Test Summary", testType)
-	t.AppendHeader(table.Row{"metric", "bandwidth", "target ID", "target alias", "on node"})
+	t.AppendHeader(table.Row{"metric", "throughput", "target ID", "target alias", "on node"})
+	// Right align throughput to make it easier to visually distinguish orders of magnitude.
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{
+			Number: 2,
+			Align:  text.AlignRight,
+		},
+	})
 	t.AppendRows([]table.Row{
 		{"Minimum", normalizeStorageBenchResults(perfSummary.SlowestTargetThroughput), perfSummary.SlowestTarget.LegacyId, perfSummary.SlowestTarget.Alias, perfSummary.SlowestTargetNode.Alias},
 		{"Maximum", normalizeStorageBenchResults(perfSummary.FastestTargetThroughput), perfSummary.FastestTarget.LegacyId, perfSummary.FastestTarget.Alias, perfSummary.FastestTargetNode.Alias},
@@ -363,6 +372,13 @@ func printResultsSummary(t table.Writer, results []benchmark.StorageBenchResult)
 func printResultsByTarget(t table.Writer, results []benchmark.StorageBenchResult) {
 	t.SetTitle("Benchmark Results by Target")
 	t.AppendHeader(table.Row{"type", "throughput", "target ID", "target alias", "on node"})
+	// Right align throughput to make it easier to visually distinguish orders of magnitude.
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{
+			Number: 2,
+			Align:  text.AlignRight,
+		},
+	})
 	t.SortBy([]table.SortBy{
 		{Name: "target ID", Mode: table.Asc},
 	})
@@ -397,7 +413,7 @@ func normalizeStorageBenchResults(throughput int) string {
 		// happens just return results as they were originally.
 		parsedThroughput = fmt.Sprintf("%d%s", throughput, "kiB/s")
 	} else {
-		parsedThroughput = fmt.Sprintf("%sB/s", strings.TrimRight(unitconv.FormatPrefix(float64(raw), unitconv.IEC, 0), " "))
+		parsedThroughput = fmt.Sprintf("%sB/s", strings.TrimRight(unitconv.FormatPrefix(float64(raw), unitconv.IEC, 2), " "))
 	}
 	return parsedThroughput
 }
