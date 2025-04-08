@@ -104,17 +104,19 @@ BeeGFS OS packages/binaries built from this repository and the `beegfs-go` modul
 reusable Go packages currently follow slightly different versioning schemes:
 
 * OS packages/binaries built from this repository follow the same versioning scheme as the other BeeGFS
-  components and start at version `v8.x.y`. 
+  components and start at version `v8.y.z`. 
   * For example if you want to build the version of the `beegfs` tool compatible with BeeGFS 8.0.0
     you would check out the `v8.0.0` tag.
 * The Go module and reusable packages it provides will remain at `v0` indicating the Go module's API
-  is not necessarily guaranteed to be stable and each `v8.x.y` BeeGFS release, the module's API will
-  be versioned as `v0.x.y`.
-  * For example, to import Go packages from the `beegfs-go` module that work with BeeGFS `v8.0.0`
-    you would run `go get github.com/thinkparq/beegfs-go@v0.0.0`.
-  * If you make changes to `beegfs-go` that need to be imported elsewhere before a new "official"
-    version is tagged, you would use a [pseudo-version](https://go.dev/ref/mod#pseudo-versions) by
-    running `go get github.com/thinkparq/beegfs-go@<LONG-COMMIT-HASH>` to import a specific commit.
+  is not necessarily guaranteed to be stable. For each `v8.y` BeeGFS `major.minor` release, the
+  module's API will be versioned as `v0.8.y`. Patch versions will not have a corresponding module
+  version tag and instead a [pseudo-version](https://go.dev/ref/mod#pseudo-versions) should be used.
+  Examples:
+  * To import Go packages from the `beegfs-go` module that work with BeeGFS `v8.1.0` you
+    would run `go get github.com/thinkparq/beegfs-go@v0.8.1`.
+  * If you needed to import new functionality or a bug fix in between major/minor versions you would
+    use a [pseudo-version](https://go.dev/ref/mod#pseudo-versions) by running `go get
+    github.com/thinkparq/beegfs-go@<LONG-COMMIT-HASH>` to import a specific commit.
 
 ### Why not just use the same version for the Go module and binaries it provides?
 
@@ -166,7 +168,7 @@ were then merged into a unified public repo: `beegfs-go`.
 The full commit histories were preserved and stitched together to enable investigation into
 architectural decisions made during early development. However, as part of the consolidation
 process, the code was reorganized into subdirectories. This means that older commits prior to
-`v8.0.0` (or `v0.0.0`) may not build successfully, since their original structure may have changed.
+`v8.0.0` (or `v0.8.0`) may not build successfully, since their original structure may have changed.
 
 Note those original repositories are archived and read-only. All development now happens on the
 public `beegfs-go` repository.
