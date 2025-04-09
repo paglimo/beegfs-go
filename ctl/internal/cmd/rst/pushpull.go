@@ -44,12 +44,12 @@ WARNING: Files are always uploaded and existing files overwritten unless the rem
 			return runPushOrPullCmd(cmd, frontendCfg, backendCfg)
 		},
 	}
-	cmd.Flags().Uint32VarP(&backendCfg.RSTID, "remote-target", "t", 0, "Perform a one time push to the specified Remote Storage Target ID.")
+	cmd.Flags().Uint32VarP(&backendCfg.RSTID, "remote-target", "r", 0, "Perform a one time push to the specified Remote Storage Target ID.")
 	cmd.Flags().BoolVar(&backendCfg.Force, "force", false, "Force push file(s) to the remote target even if the file is already in sync or another client currently has them open for writing (note the job may later fail or the uploaded file may not be the latest version).")
 	cmd.Flags().MarkHidden("force")
-	cmd.Flags().BoolVar(&frontendCfg.verbose, "verbose", false, "Print additional details about each job (use --debug) to also print work requests and results.")
+	cmd.Flags().BoolVarP(&frontendCfg.verbose, "verbose", "v", false, "Print additional details about each job (use --debug) to also print work requests and results.")
 	cmd.Flags().IntVar(&frontendCfg.width, "column-width", 35, "Set the maximum width of some columns before they overflow.")
-	cmd.Flags().BoolVar(&backendCfg.StubOnly, "migrate", false, "Replace with a stub after the file is uploaded.")
+	cmd.Flags().BoolVarP(&backendCfg.StubLocal, "stub-local", "s", false, "Replace with a stub after the file is uploaded.")
 	return cmd
 }
 
@@ -75,15 +75,15 @@ func newPullCmd() *cobra.Command {
 			return runPushOrPullCmd(cmd, frontendCfg, backendCfg)
 		},
 	}
-	cmd.Flags().Uint32VarP(&backendCfg.RSTID, "remote-target", "t", 0, "The ID of the Remote Storage Target where the file should be pulled from.")
+	cmd.Flags().Uint32VarP(&backendCfg.RSTID, "remote-target", "r", 0, "The ID of the Remote Storage Target where the file should be pulled from.")
 	cmd.MarkFlagRequired("remote-target")
 	cmd.Flags().BoolVar(&backendCfg.Overwrite, "overwrite", false, "Overwrite existing files in BeeGFS. Note this only overwrites the file's contents, metadata including any configured RSTs will remain.")
 	cmd.Flags().StringVarP(&backendCfg.RemotePath, "remote-path", "p", "", "The name/path of the object/file in the remote target you wish to download. If absent, the in-mount path will be used.")
-	cmd.Flags().BoolVar(&backendCfg.StubOnly, "stub-only", false, "Create stub files for the remote objects or files.")
+	cmd.Flags().BoolVarP(&backendCfg.StubLocal, "stub-local", "s", false, "Create stub files for the remote objects or files.")
 	cmd.Flags().BoolVar(&backendCfg.Flatten, "flatten", false, "Flatten the remote directory structure. The directory delimiter will be replaced with an underscore.")
 	cmd.Flags().BoolVar(&backendCfg.Force, "force", false, "Force pulling file(s) from the remote target even if the file is already in sync or another client currently has them open for reading or writing (note other clients may see errors, the job may later fail, or the downloaded file may not be the latest version).")
 	cmd.Flags().MarkHidden("force")
-	cmd.Flags().BoolVar(&frontendCfg.verbose, "verbose", false, "Print additional details about each job (use --debug) to also print work requests and results.")
+	cmd.Flags().BoolVarP(&frontendCfg.verbose, "verbose", "v", false, "Print additional details about each job (use --debug) to also print work requests and results.")
 	cmd.Flags().IntVar(&frontendCfg.width, "column-width", 35, "Set the maximum width of some columns before they overflow.")
 	return cmd
 }

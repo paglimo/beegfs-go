@@ -224,7 +224,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 	}
 
 	if fileSize == objectFileSize && mtime.Equal(objectMtime) {
-		if syncJob.StubOnly {
+		if syncJob.StubLocal {
 			// File is already synced so just create a stub to finish the migration
 			store, err := config.NodeStore(ctx)
 			if err != nil {
@@ -268,9 +268,9 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 	if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
 		return nil, true, fmt.Errorf("unable to determine stub file status: %w", err)
 	} else if isStub {
-		if syncJob.StubOnly {
+		if syncJob.StubLocal {
 			// This is a migration so if the stub url matches return already complete
-			err = entry.VerifyOffloadedFileDataState(r.mountPoint, request.Path, syncJob.RemotePath, request.RemoteStorageTarget)
+			err = entry.VerifyOffloadedContent(r.mountPoint, request.Path, syncJob.RemotePath, request.RemoteStorageTarget)
 			if err != nil {
 				return nil, true, fmt.Errorf("failed to complete migration! File is already a stub: %w", err)
 			} else {
@@ -318,7 +318,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 	}
 
 	overwrite := syncJob.Overwrite
-	if syncJob.StubOnly {
+	if syncJob.StubLocal {
 		store, err := config.NodeStore(ctx)
 		if err != nil {
 			return nil, true, err
@@ -331,7 +331,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 			if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
 				return nil, true, fmt.Errorf("unable to determine stub status: %w", err)
 			} else if isStub {
-				err = entry.VerifyOffloadedFileDataState(r.mountPoint, request.Path, syncJob.RemotePath, request.RemoteStorageTarget)
+				err = entry.VerifyOffloadedContent(r.mountPoint, request.Path, syncJob.RemotePath, request.RemoteStorageTarget)
 				if err != nil {
 					if !overwrite {
 						return nil, true, fmt.Errorf("unable to create stub file: %w", err)
@@ -365,7 +365,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 		if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
 			return nil, true, fmt.Errorf("unable to determine stub status: %w", err)
 		} else if isStub {
-			if err := entry.SetFileDataStateLocal(ctx, mappings, store, request.Path); err != nil {
+			if err := entry.ClearFileDataState(ctx, mappings, store, request.Path); err != nil {
 				return nil, true, fmt.Errorf("unable to clear stub file flag: %w", err)
 			}
 			overwrite = true
@@ -389,6 +389,56 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 
 	workRequests := RecreateWorkRequests(job, generateSegments(objectFileSize, segCount, partsPerSegment))
 	return workRequests, true, nil
+}
+
+func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, walkChan <-chan *WalkResponse, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+	sync := request.GetSync()
+	inMountPath := request.Path
+	remotePath := sync.RemotePath
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case walkResp, ok := <-walkChan:
+			if !ok {
+				return nil
+			}
+			if walkResp.FatalErr {
+				return walkResp.Err
+			}
+
+			switch sync.Operation {
+			case flex.SyncJob_DOWNLOAD:
+				remotePath = walkResp.Path
+				inMountPath = mapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
+				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
+					return err
+				}
+
+				// TODO: Set exclusive read-write lock on inMountPath
+
+			case flex.SyncJob_UPLOAD:
+				inMountPath = walkResp.Path
+
+				// TODO: Set read-only lock on inMountPath
+
+			}
+
+			jobRequest := &beeremote.JobRequest{
+				Path:                inMountPath,
+				RemoteStorageTarget: request.RemoteStorageTarget,
+				Type: &beeremote.JobRequest_Sync{
+					Sync: &flex.SyncJob{
+						RemotePath: remotePath,
+						Operation:  sync.Operation,
+						Overwrite:  sync.Overwrite,
+						StubLocal:  sync.StubLocal,
+					},
+				},
+			}
+			jobSubmissionChan <- jobRequest
+		}
+	}
 }
 
 func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
@@ -442,7 +492,7 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 		}
 	}
 
-	if syncJob.StubOnly {
+	if syncJob.StubLocal {
 		store, err := config.NodeStore(ctx)
 		if err != nil {
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
@@ -710,56 +760,6 @@ func (r *S3Client) Download(ctx context.Context, path string, remotePath string,
 		return fmt.Errorf("%w (expected: %d, actual: %d)", ErrPartialPartDownload, part.OffsetStop-part.OffsetStart+1, copiedBytes)
 	}
 	return nil
-}
-
-func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, walkChan <-chan *WalkResponse, jobSubmissionChan chan<- *beeremote.JobRequest) error {
-	sync := request.GetSync()
-	inMountPath := request.Path
-	remotePath := sync.RemotePath
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case walkResp, ok := <-walkChan:
-			if !ok {
-				return nil
-			}
-			if walkResp.FatalErr {
-				return walkResp.Err
-			}
-
-			switch sync.Operation {
-			case flex.SyncJob_DOWNLOAD:
-				remotePath = walkResp.Path
-				inMountPath = mapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
-				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
-					return err
-				}
-
-				// TODO: Set exclusive read-write lock on inMountPath
-
-			case flex.SyncJob_UPLOAD:
-				inMountPath = walkResp.Path
-
-				// TODO: Set read-only lock on inMountPath
-
-			}
-
-			jobRequest := &beeremote.JobRequest{
-				Path:                inMountPath,
-				RemoteStorageTarget: request.RemoteStorageTarget,
-				Type: &beeremote.JobRequest_Sync{
-					Sync: &flex.SyncJob{
-						RemotePath: remotePath,
-						Operation:  sync.Operation,
-						Overwrite:  sync.Overwrite,
-						StubOnly:   sync.StubOnly,
-					},
-				},
-			}
-			jobSubmissionChan <- jobRequest
-		}
-	}
 }
 
 type WalkResponse struct {

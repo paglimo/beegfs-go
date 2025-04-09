@@ -58,7 +58,7 @@ type JobRequestCfg struct {
 	Path       string
 	RemotePath string
 	Download   bool // Whether the operation should be a download operation
-	StubOnly   bool // Whether the local file should be a stub file after the operation
+	StubLocal  bool // Whether the local file should be a stub file after the operation
 	Overwrite  bool // Whether existing files should be overwritten
 	Flatten    bool // Whether the directory path should be preserved
 	Force      bool // Attempt to force the job request
@@ -335,7 +335,7 @@ func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *be
 				RemotePath: cfg.RemotePath,
 				Operation:  operation,
 				Overwrite:  cfg.Overwrite,
-				StubOnly:   cfg.StubOnly,
+				StubLocal:  cfg.StubLocal,
 				Flatten:    cfg.Flatten,
 			}}}
 }

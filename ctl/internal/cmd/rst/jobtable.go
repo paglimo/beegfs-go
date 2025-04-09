@@ -102,7 +102,7 @@ func (t *jobsTable) Row(result *beeremote.JobResult) {
 	if request.HasSync() {
 		syncJob := request.GetSync()
 		operation = syncJob.Operation.String()
-		if syncJob.Operation == flex.SyncJob_UPLOAD && syncJob.StubOnly {
+		if syncJob.Operation == flex.SyncJob_UPLOAD && syncJob.StubLocal {
 			operation = "MIGRATE"
 		}
 	} else {

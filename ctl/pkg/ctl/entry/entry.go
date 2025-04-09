@@ -376,11 +376,25 @@ func getEntryAndOwnerFromPathViaRPC(ctx context.Context, mappings *util.Mappings
 	return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("max search steps exceeded for path: %s", searchPath)
 }
 
-func SetFileDataStateLocal(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, path string) error {
+func ClearFileDataState(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, path string) error {
+	// TODO: https://github.com/ThinkParQ/beegfs-core/issues/4167. Currently, FileDataStateLocal
+	// represents a local beegfs file but it will be changed to FileDataStateReadLock and
+	// FileDataStateNone will represent a local beegfs file.
 	return setFileDataState(ctx, mappings, store, path, beegfs.FileDataStateLocal)
 }
 
+func SetFileReadOnly(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, path string) error {
+	// TODO: https://github.com/ThinkParQ/beegfs-core/issues/4167. Currently, there is no read-only
+	// fileDataState so we're currently going to use FileDataStateLocked until it's implemented.
+	return setFileDataState(ctx, mappings, store, path, beegfs.FileDataStateLocked)
+}
+
+func SetFileDataStateLocked(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, path string) error {
+	return setFileDataState(ctx, mappings, store, path, beegfs.FileDataStateLocked)
+}
+
 func SetFileDataStateOffloaded(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, path string) error {
+	// TODO: https://github.com/ThinkParQ/beegfs-core/issues/4167. This will have to set FileDataStateLocked and then populate the file with
 	return setFileDataState(ctx, mappings, store, path, beegfs.FileDataStateOffloaded)
 }
 
@@ -421,7 +435,7 @@ func setFileDataState(ctx context.Context, mappings *util.Mappings, store *beems
 	}
 	return nil
 }
-func VerifyOffloadedFileDataState(beegfs filesystem.Provider, path string, remotePath string, rstId uint32) error {
+func VerifyOffloadedContent(beegfs filesystem.Provider, path string, remotePath string, rstId uint32) error {
 	// Amazon s3 allows object key names to be up to 1024 bytes in length. Note that this is a
 	// byte limit, so if your key contains multi-byte UTF-8 characters, the number of characters
 	// may be fewer than 1024. The extra 0 bytes on the right will be trimmed.
