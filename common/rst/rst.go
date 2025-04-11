@@ -165,6 +165,8 @@ func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segme
 			Path:                request.GetPath(),
 			Segment:             nil,
 			RemoteStorageTarget: request.GetRemoteStorageTarget(),
+			JobBuilder:          true,
+			StubLocal:           job.Request.StubLocal,
 		}
 		addJobType(jobBuilderWorkRequest)
 		return []*flex.WorkRequest{jobBuilderWorkRequest}
@@ -182,6 +184,7 @@ func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segme
 			// directly when they call RecreateWorkRequests().
 			Segment:             s,
 			RemoteStorageTarget: request.GetRemoteStorageTarget(),
+			StubLocal:           job.Request.StubLocal,
 		}
 		addJobType(wr)
 		workRequests = append(workRequests, wr)

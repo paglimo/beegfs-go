@@ -92,6 +92,10 @@ func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.
 	}
 
 	sync := request.GetSync()
+	if sync.RemotePath == "" {
+		sync.SetRemotePath(request.Path)
+	}
+
 	switch sync.Operation {
 	case flex.SyncJob_UPLOAD:
 		return r.generateSyncJobWorkRequest_Upload(ctx, lastJob, job, availableWorkers)
@@ -198,7 +202,7 @@ func activeJobAlreadyExists(request *beeremote.JobRequest, lastJob *beeremote.Jo
 	}
 
 	state := lastJob.Status.State
-	if state == beeremote.Job_COMPLETED || state == beeremote.Job_CANCELLED || state == beeremote.Job_FAILED {
+	if state == beeremote.Job_OFFLOADED || state == beeremote.Job_COMPLETED || state == beeremote.Job_CANCELLED || state == beeremote.Job_FAILED {
 		return false
 	}
 	return true
@@ -207,9 +211,6 @@ func activeJobAlreadyExists(request *beeremote.JobRequest, lastJob *beeremote.Jo
 func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) ([]*flex.WorkRequest, bool, error) {
 	request := job.GetRequest()
 	sync := request.GetSync()
-	if sync.RemotePath == "" {
-		sync.SetRemotePath(request.Path)
-	}
 
 	// The most likely reason for an stat error is the path wasn't found because the request is for
 	// a file in BeeGFS that doesn't exist or was removed after the request was submitted. Less
@@ -229,8 +230,9 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 		return nil, true, fmt.Errorf("error retrieving remote object's metadata: %w", err)
 	}
 
+	// Check whether the file already is synced
 	if fileSize == objectFileSize && mtime.Equal(objectMtime) {
-		if sync.StubLocal {
+		if request.StubLocal {
 			// File is already synced so just create a stub to finish the migration
 			store, err := config.NodeStore(ctx)
 			if err != nil {
@@ -245,8 +247,8 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 			if err != nil {
 				return nil, true, fmt.Errorf("file is already synced but failed to create stub file: %w", err)
 			}
+			return nil, true, ErrJobAlreadyOffloaded
 		}
-
 		return nil, true, ErrJobAlreadyComplete
 	}
 
@@ -271,16 +273,16 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 	if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
 		return nil, true, fmt.Errorf("unable to proceed without entity mappings: %w", err)
 	}
+
 	if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
 		return nil, true, fmt.Errorf("unable to determine stub file status: %w", err)
 	} else if isStub {
-		if sync.StubLocal {
-			// This is a migration so if the stub url matches return already complete
+		if request.StubLocal {
 			err = entry.VerifyOffloadedContent(r.mountPoint, request.Path, sync.RemotePath, request.RemoteStorageTarget)
 			if err != nil {
 				return nil, true, fmt.Errorf("failed to complete migration! File is already a stub: %w", err)
 			} else {
-				return nil, true, ErrJobAlreadyComplete
+				return nil, true, ErrJobAlreadyOffloaded
 			}
 		}
 		return nil, true, fmt.Errorf("unable to upload stub file: %w", rst.ErrFileTypeUnsupported)
@@ -302,9 +304,6 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) ([]*flex.WorkRequest, bool, error) {
 	request := job.GetRequest()
 	sync := request.GetSync()
-	if sync.RemotePath == "" {
-		sync.SetRemotePath(request.Path)
-	}
 
 	objectFileSize, objectMtime, err := r.GetObjectMetadata(ctx, sync.RemotePath, true)
 	if err != nil {
@@ -323,7 +322,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 	}
 
 	overwrite := sync.Overwrite
-	if sync.StubLocal {
+	if request.StubLocal {
 		store, err := config.NodeStore(ctx)
 		if err != nil {
 			return nil, true, err
@@ -342,7 +341,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 						return nil, true, fmt.Errorf("unable to create stub file: %w", err)
 					}
 				} else {
-					return nil, true, ErrJobAlreadyComplete
+					return nil, true, ErrJobAlreadyOffloaded
 				}
 
 			} else if !overwrite {
@@ -354,7 +353,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 		if err != nil {
 			return nil, true, err
 		}
-		return nil, true, ErrJobAlreadyComplete
+		return nil, true, ErrJobAlreadyOffloaded
 	}
 
 	if fileExists {
@@ -433,12 +432,12 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 			jobRequest := &beeremote.JobRequest{
 				Path:                inMountPath,
 				RemoteStorageTarget: request.RemoteStorageTarget,
+				StubLocal:           request.StubLocal,
 				Type: &beeremote.JobRequest_Sync{
 					Sync: &flex.SyncJob{
 						RemotePath: remotePath,
 						Operation:  sync.Operation,
 						Overwrite:  sync.Overwrite,
-						StubLocal:  sync.StubLocal,
 					},
 				},
 			}
@@ -449,7 +448,7 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 
 func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
 	request := job.GetRequest()
-	syncJob := request.GetSync()
+	sync := request.GetSync()
 
 	stat, err := r.mountPoint.Lstat(request.Path)
 	if err != nil {
@@ -498,7 +497,7 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 		}
 	}
 
-	if syncJob.StubLocal {
+	if request.StubLocal {
 		store, err := config.NodeStore(ctx)
 		if err != nil {
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
@@ -508,10 +507,11 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
 		}
 
-		err = createOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, syncJob.RemotePath, request.RemoteStorageTarget, true)
+		err = createOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
 		if err != nil {
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
 		}
+		job.GetStatus().SetState(beeremote.Job_OFFLOADED)
 	}
 	return nil
 }

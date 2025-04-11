@@ -86,7 +86,6 @@ func newWorkFromRequest(workRequest *workRequest) *work {
 	parts := make([]*flex.Work_Part, 0, numberOfParts)
 	if workRequest.Segment == nil {
 		parts = append(parts, &flex.Work_Part{})
-		workRequest.JobBuilder = true
 	} else {
 		genPart := generatePartsFromSegment(workRequest.Segment)
 		for {
@@ -104,9 +103,10 @@ func newWorkFromRequest(workRequest *workRequest) *work {
 
 	return &work{
 		Work: flex.Work_builder{
-			Path:      workRequest.Path,
-			JobId:     workRequest.JobId,
-			RequestId: workRequest.RequestId,
+			Path:       workRequest.Path,
+			JobId:      workRequest.JobId,
+			RequestId:  workRequest.RequestId,
+			JobBuilder: workRequest.JobBuilder,
 			Status: flex.Work_Status_builder{
 				State:   flex.Work_SCHEDULED,
 				Message: "worker node accepted work request",

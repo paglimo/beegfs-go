@@ -465,16 +465,39 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 
 	jobSubmission, retry, err := job.GenerateSubmission(m.ctx, lastJob, rstClient)
 	if err != nil {
-		if errors.Is(err, rst.ErrJobAlreadyComplete) {
-			m.log.Debug("requested job is already complete", zap.Any("job", lastJob), zap.Any("err", err))
+		if errors.Is(err, rst.ErrJobAlreadyOffloaded) {
+			m.log.Debug("Offload is already complete", zap.Any("job", lastJob), zap.Any("err", err))
 			status := job.GetStatus()
-			status.State = beeremote.Job_COMPLETED
+			status.State = beeremote.Job_OFFLOADED
 			status.Message = err.Error()
+			// Update the database if the last recorded status doesn't accurately reflect offloaded.
+			// This handles scenarios where the database state might diverge from reality due to corruption,
+			// deletion, or forced cancellation and subsequent manual cleanup.
+			if lastJob == nil || lastJob.GetStatus().GetState() != beeremote.Job_OFFLOADED {
+				pathEntry.Value[job.GetId()] = job
+			}
+
 			return beeremote.JobResult_builder{
 				Job:          job.Get(),
 				WorkRequests: []*flex.WorkRequest{},
 				WorkResults:  []*beeremote.JobResult_WorkResult{},
-			}.Build(), err
+			}.Build(), nil
+		} else if errors.Is(err, rst.ErrJobAlreadyComplete) {
+			m.log.Debug("requested job is already complete", zap.Any("job", lastJob), zap.Any("err", err))
+			status := job.GetStatus()
+			status.State = beeremote.Job_COMPLETED
+			status.Message = err.Error()
+			// Update the database if the last recorded status doesn't accurately reflect completion.
+			// This handles scenarios where the database state might diverge from reality due to corruption,
+			// deletion, or forced cancellation and subsequent manual cleanup.
+			if lastJob == nil || lastJob.GetStatus().GetState() != beeremote.Job_COMPLETED {
+				pathEntry.Value[job.GetId()] = job
+			}
+			return beeremote.JobResult_builder{
+				Job:          job.Get(),
+				WorkRequests: []*flex.WorkRequest{},
+				WorkResults:  []*beeremote.JobResult_WorkResult{},
+			}.Build(), nil
 		} else if errors.Is(err, rst.ErrJobAlreadyExists) {
 			m.log.Debug("an active job already exists for the requested job, returning that job instead of creating a new one", zap.Any("job", lastJob), zap.Any("err", err))
 			return beeremote.JobResult_builder{
@@ -909,18 +932,19 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 			allSameState = false
 		}
 	}
+	status := job.GetStatus()
 
 	// From here on out we'll modify the job state, ensure the timestamp is also updated.
 	defer func() {
-		job.GetStatus().SetUpdated(timestamppb.Now())
+		status.SetUpdated(timestamppb.Now())
 	}()
 
 	// This might happen if WRs could complete on some nodes, but not on other nodes. This could be
 	// due to some worker nodes having an issue uploading their segments to the RST, or a user
 	// cancelling the job partway through while some WRs are complete and others are still running.
 	if !allSameState {
-		job.GetStatus().SetState(beeremote.Job_UNKNOWN)
-		job.GetStatus().SetMessage("all work requests have reached a terminal state, but not all work requests are in the same state (inspect individual work requests to determine possible next steps)")
+		status.SetState(beeremote.Job_UNKNOWN)
+		status.SetMessage("all work requests have reached a terminal state, but not all work requests are in the same state (inspect individual work requests to determine possible next steps)")
 		return nil
 	}
 
@@ -929,8 +953,8 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 		// We shouldn't return an error here. The caller (a worker node) can't do anything about
 		// this. Most likely a user updated the configuration and removed the RST so there is
 		// nothing we can do unless they were to add it back.
-		job.GetStatus().SetState(beeremote.Job_FAILED)
-		job.GetStatus().SetMessage(fmt.Sprintf("unable to complete job because the RST no longer exists: %d (add it back or manually cleanup any artifacts from this job)", job.Request.GetRemoteStorageTarget()))
+		status.SetState(beeremote.Job_FAILED)
+		status.SetMessage(fmt.Sprintf("unable to complete job because the RST no longer exists: %d (add it back or manually cleanup any artifacts from this job)", job.Request.GetRemoteStorageTarget()))
 		return nil
 	}
 
@@ -938,28 +962,30 @@ func (m *Manager) UpdateWork(workResult *flex.Work) error {
 	switch entryToUpdate.Status().GetState() {
 	case flex.Work_CANCELLED:
 		if err := job.Complete(m.ctx, rst, true); err != nil {
-			job.GetStatus().SetState(beeremote.Job_FAILED)
-			job.GetStatus().SetMessage("error cancelling job: " + err.Error())
+			status.SetState(beeremote.Job_FAILED)
+			status.SetMessage("error cancelling job: " + err.Error())
 		} else {
-			job.GetStatus().SetState(beeremote.Job_CANCELLED)
-			job.GetStatus().SetMessage("successfully cancelled job")
+			status.SetState(beeremote.Job_CANCELLED)
+			status.SetMessage("successfully cancelled job")
 		}
 	case flex.Work_COMPLETED:
 		if err := job.Complete(m.ctx, rst, false); err != nil {
-			job.GetStatus().SetState(beeremote.Job_FAILED)
-			job.GetStatus().SetMessage("error completing job: " + err.Error())
+			status.SetState(beeremote.Job_FAILED)
+			status.SetMessage("error completing job: " + err.Error())
+		} else if job.GetStatus().GetState() == beeremote.Job_OFFLOADED {
+			status.SetMessage("successfully offloaded")
 		} else {
-			job.GetStatus().SetState(beeremote.Job_COMPLETED)
-			job.GetStatus().SetMessage("successfully completed job")
+			status.SetState(beeremote.Job_COMPLETED)
+			status.SetMessage("successfully completed job")
 		}
 	case flex.Work_FAILED:
 		// Something that went wrong that requires user intervention. We don't know what so don't
 		// try to complete or abort the request as it may make it more difficult to recover.
-		job.GetStatus().SetState(beeremote.Job_FAILED)
-		job.GetStatus().SetMessage("job cannot continue without user intervention (see work results for details)")
+		status.SetState(beeremote.Job_FAILED)
+		status.SetMessage("job cannot continue without user intervention (see work results for details)")
 	default:
-		job.GetStatus().SetState(beeremote.Job_UNKNOWN)
-		job.GetStatus().SetMessage("all work requests have reached a terminal state, but the state is unknown (this is likely a bug and will cause unexpected behavior)")
+		status.SetState(beeremote.Job_UNKNOWN)
+		status.SetMessage("all work requests have reached a terminal state, but the state is unknown (this is likely a bug and will cause unexpected behavior)")
 		// We return an error here because this is an internal problem that shouldn't happen and
 		// hopefully a test will catch it. Most likely some new terminal states were added and this
 		// function needs to be updated.

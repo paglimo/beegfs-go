@@ -11,6 +11,7 @@ var (
 	ErrJobAlreadyHasExternalID = errors.New("cannot generate requests: job is already associated with an external ID (clean it up or delete before retrying)")
 	ErrPartialPartDownload     = errors.New("data written to disk does not match the actual amount of data in the part")
 	ErrJobAlreadyComplete      = errors.New("file already synced with RST")
+	ErrJobAlreadyOffloaded     = errors.New("file already offloaded to RST")
 	ErrJobAlreadyExists        = errors.New("no changes to entry detected since the last job")
 	ErrJobNotAllowed           = errors.New("submitting a new job is not allowed in this state")
 )

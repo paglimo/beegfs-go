@@ -330,12 +330,12 @@ func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *be
 	return &beeremote.JobRequest{
 		Path:                inMountPath,
 		RemoteStorageTarget: rstId,
+		StubLocal:           cfg.StubLocal,
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &flex.SyncJob{
 				RemotePath: cfg.RemotePath,
 				Operation:  operation,
 				Overwrite:  cfg.Overwrite,
-				StubLocal:  cfg.StubLocal,
 				Flatten:    cfg.Flatten,
 			}}}
 }

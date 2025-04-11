@@ -102,8 +102,8 @@ func (t *jobsTable) Row(result *beeremote.JobResult) {
 	if request.HasSync() {
 		syncJob := request.GetSync()
 		operation = syncJob.Operation.String()
-		if syncJob.Operation == flex.SyncJob_UPLOAD && syncJob.StubLocal {
-			operation = "MIGRATE"
+		if syncJob.Operation == flex.SyncJob_UPLOAD && job.Request.StubLocal {
+			operation = "OFFLOAD"
 		}
 	} else {
 		// Fallback and print the raw representation for unknown types:
@@ -272,6 +272,7 @@ var jobStateMap = map[beeremote.Job_State]jobStateEmoji{
 	beeremote.Job_FAILED:    {"❌", beeremote.Job_FAILED.String()},
 	beeremote.Job_CANCELLED: {"🚫", beeremote.Job_CANCELLED.String()},
 	beeremote.Job_COMPLETED: {"✅", beeremote.Job_COMPLETED.String()},
+	beeremote.Job_OFFLOADED: {"☁️", beeremote.Job_OFFLOADED.String()},
 }
 
 func convertWorkStateToEmoji(state flex.Work_State) string {
@@ -299,4 +300,5 @@ var workStateMap = map[flex.Work_State]workStateEmoji{
 	flex.Work_FAILED:    {"❌", flex.Work_FAILED.String()},
 	flex.Work_CANCELLED: {"🚫", flex.Work_CANCELLED.String()},
 	flex.Work_COMPLETED: {"✅", flex.Work_COMPLETED.String()},
+	// flex.Work_OFFLOADED: {"☁️", flex.Work_OFFLOADED.String()},
 }

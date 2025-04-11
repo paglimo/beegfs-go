@@ -62,10 +62,9 @@ func (j *Job) GetSegments() []*flex.WorkRequest_Segment {
 
 // InTerminalState() returns true the job cannot cannot be restarted, and there are no active work
 // requests that would conflict with a new job. Jobs in this state are safe to be deleted without
-// leaving orphaned requests on worker nodes. This should mirror the InTerminalState() method for
-// WorkResults.
+// leaving orphaned requests on worker nodes.
 func (j *Job) InTerminalState() bool {
-	return j.GetStatus().GetState() == beeremote.Job_COMPLETED || j.GetStatus().GetState() == beeremote.Job_CANCELLED
+	return j.GetStatus().GetState() == beeremote.Job_COMPLETED || j.GetStatus().GetState() == beeremote.Job_OFFLOADED || j.GetStatus().GetState() == beeremote.Job_CANCELLED
 }
 
 // InActiveState() returns true if the job is active and not in a failed or terminal state.
