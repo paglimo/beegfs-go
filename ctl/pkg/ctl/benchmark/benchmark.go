@@ -42,15 +42,24 @@ type StorageBenchConfig struct {
 }
 
 // The result of a storage bench action for a single storage node. Equivalent of
-// StorageBenchResponseInfo in the C++ codebase.
+// StorageBenchResponseInfo in the C++ codebase except TargetResults is a slice instead of a map so
+// it can be sorted elsewhere if needed.
 type StorageBenchResult struct {
-	Node      beegfs.EntityIdSet
-	ErrorCode beegfs.StorageBenchError
-	Status    beegfs.StorageBenchStatus
-	Action    beegfs.StorageBenchAction
-	Type      beegfs.StorageBenchType
-	// Map of targets to their results.
-	TargetResults map[beegfs.EntityIdSet]int64
+	Node          beegfs.EntityIdSet
+	ErrorCode     beegfs.StorageBenchError
+	Status        beegfs.StorageBenchStatus
+	Action        beegfs.StorageBenchAction
+	Type          beegfs.StorageBenchType
+	TargetResults []TargetResult
+}
+
+// TargetResult contains the benchmark results for a single target. It duplicates the node and type
+// fields from StorageBenchResult so results can be flattened, sorted, and printed independently.
+type TargetResult struct {
+	ID         beegfs.EntityIdSet
+	Node       beegfs.EntityIdSet
+	Throughput int64
+	Type       beegfs.StorageBenchType
 }
 
 // ExecuteStorageBenchAction is used to interact with the storage bench functionality of storage
@@ -102,13 +111,18 @@ func ExecuteStorageBenchAction(ctx context.Context, benchConfig *StorageBenchCon
 			return nil, fmt.Errorf("the number of targets (%d) and number of target results (%d) do not match for node %s (this is probably a bug on the storage node)", len(resp.TargetIDs), len(resp.TargetResults), node)
 		}
 
-		targetResults := make(map[beegfs.EntityIdSet]int64, len(resp.TargetIDs))
+		targetResults := make([]TargetResult, 0, len(resp.TargetIDs))
 		for i, id := range resp.TargetIDs {
 			target, err := mappings.TargetToEntityIdSet.Get(beegfs.LegacyId{NumId: beegfs.NumId(id), NodeType: beegfs.Storage})
 			if err != nil {
 				return nil, fmt.Errorf("unknown target found in results for node %s: %w", node, err)
 			}
-			targetResults[target] = resp.TargetResults[i]
+			targetResults = append(targetResults, TargetResult{
+				ID:         target,
+				Node:       node,
+				Throughput: resp.TargetResults[i],
+				Type:       resp.Type,
+			})
 		}
 
 		results = append(results, StorageBenchResult{

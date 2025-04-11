@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -330,8 +331,8 @@ func printResultsSummary(t table.Writer, results []benchmark.StorageBenchResult)
 	// than one test type in the results.
 	benchType := make(map[beegfs.StorageBenchType]beegfs.StorageBenchType, 0)
 	for _, result := range results {
-		for target, perfResult := range result.TargetResults {
-			perfResults.append(result.Node, target, perfResult)
+		for _, target := range result.TargetResults {
+			perfResults.append(result.Node, target.ID, target.Throughput)
 		}
 		benchType[result.Type] = result.Type
 	}
@@ -379,20 +380,26 @@ func printResultsByTarget(t table.Writer, results []benchmark.StorageBenchResult
 			Align:  text.AlignRight,
 		},
 	})
-	t.SortBy([]table.SortBy{
-		{Name: "target ID", Mode: table.Asc},
+
+	// Don't rely on t.SortBy as it sorts lexicographically by string content. We should sort
+	// numerically by target ID to match target sorting elsewhere in CTL.
+	allTargets := []benchmark.TargetResult{}
+	for _, result := range results {
+		allTargets = append(allTargets, result.TargetResults...)
+	}
+
+	sort.Slice(allTargets, func(i, j int) bool {
+		return allTargets[i].ID.LegacyId.NumId < allTargets[j].ID.LegacyId.NumId
 	})
 
-	for _, result := range results {
-		for target, throughput := range result.TargetResults {
-			t.AppendRow(table.Row{
-				result.Type,
-				normalizeStorageBenchResults(int(throughput)),
-				target.LegacyId,
-				target.Alias,
-				result.Node.Alias,
-			})
-		}
+	for _, target := range allTargets {
+		t.AppendRow(table.Row{
+			target.Type,
+			normalizeStorageBenchResults(int(target.Throughput)),
+			target.ID.LegacyId,
+			target.ID.Alias,
+			target.Node.Alias,
+		})
 	}
 	fmt.Println(t.Render())
 }
