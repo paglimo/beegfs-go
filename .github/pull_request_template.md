@@ -13,9 +13,7 @@ When creating a PR these are items to keep in mind that cannot be checked by Git
   - [ ] Do commits adhere to [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)?
   - [ ] Is the commit history squashed down reasonably?
 
-For more details refer to the [Go coding
-standards](https://github.com/ThinkParQ/beegfs-go/wiki/Getting-Started-with-Go#coding-standards) and
-the [pull request process](https://github.com/ThinkParQ/beegfs-go/wiki/Pull-Requests).
+For more details refer to the [Go coding standards](https://github.com/ThinkParQ/beegfs-go/wiki/Getting-Started-with-Go#coding-standards) and the [pull request process](https://github.com/ThinkParQ/beegfs-go/wiki/Pull-Requests).
 
 ### Related Issue(s)
 *Required when applicable.*
