@@ -120,15 +120,23 @@ func NewFromPath(path string) (Provider, error) {
 	for {
 		currentStat, err := os.Lstat(absPath)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrInitFSClient, err)
+			if os.IsNotExist(err) {
+				parentPath := filepath.Dir(absPath)
+				if parentPath == absPath {
+					return nil, fmt.Errorf("%s: %w", path, ErrInitFSClient)
+				}
+				absPath = parentPath
+				continue
+			}
+			return nil, fmt.Errorf("%w: %w", err, ErrInitFSClient)
 		}
 		parentPath := filepath.Dir(absPath)
 		if parentPath == absPath {
-			return nil, fmt.Errorf("%w: %s", ErrInitFSClient, path)
+			return nil, fmt.Errorf("%s: %w", path, ErrInitFSClient)
 		}
 		parentStat, err := os.Lstat(parentPath)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrInitFSClient, err)
+			return nil, fmt.Errorf("%w: %w", err, ErrInitFSClient)
 		}
 		if currentStat.Sys().(*syscall.Stat_t).Dev != parentStat.Sys().(*syscall.Stat_t).Dev {
 			mountPath = absPath
