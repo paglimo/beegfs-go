@@ -15,9 +15,15 @@ package rst
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
@@ -224,4 +230,103 @@ func generateSegments(fileSize int64, segCount int64, partsPerSegment int32) []*
 		segments = append(segments, segment)
 	}
 	return segments
+}
+
+type WalkResponse struct {
+	Path     string
+	Err      error
+	FatalErr bool
+}
+
+func WalkLocalDirectory(ctx context.Context, beegfs filesystem.Provider, pattern string, chanSize int) (<-chan *WalkResponse, error) {
+	walkChan := make(chan *WalkResponse, chanSize)
+	walkFunc := func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if d.IsDir() {
+				return nil
+			}
+
+			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
+			if err != nil {
+				// An error at this point is unlikely given previous steps also get relative paths.
+				// To be safe note this in the error that is returned and just return the absolute
+				// path instead. This shouldn't be a security issue since the user should have
+				// access to this path if they were able to start a job request for it.
+				inMountPath = path
+				walkChan <- &WalkResponse{
+					Path:     inMountPath,
+					Err:      fmt.Errorf("unable to determine relative path: %w", err),
+					FatalErr: true,
+				}
+				return nil
+			}
+			walkChan <- &WalkResponse{Path: inMountPath}
+		}
+		return nil
+	}
+
+	go func() {
+		defer close(walkChan)
+		beegfs.WalkDir(pattern, walkFunc)
+	}()
+	return walkChan, nil
+}
+
+// MapRemoteToLocalPath joins a base path with a remote path. If flatten is true, it replaces
+// directory separators in the remote path with underscores.
+func MapRemoteToLocalPath(path string, remotePath string, flatten bool) string {
+	if flatten {
+		remotePath = strings.Replace(remotePath, "/", "_", -1)
+	}
+
+	remoteDir := filepath.Dir(remotePath)
+	remoteBase := filepath.Base(remotePath)
+	combinedDir := filepath.Join(path, remoteDir)
+	combinedPath := filepath.Join(combinedDir, remoteBase)
+	return combinedPath
+}
+
+// StripGlobPattern extracts the longest leading substring from the given pattern that contains
+// no glob characters (e.g., '*', '?', or '['). This base prefix is used to efficiently list
+// objects in an S3 bucket, while the original glob pattern is later applied to filter the results.
+func StripGlobPattern(pattern string) string {
+	globCharacters := "*?["
+	position := 0
+	for {
+		index := strings.IndexAny(pattern[position:], globCharacters)
+		if index == -1 {
+			return pattern
+		}
+		candidate := position + index
+
+		// Check for escape characters
+		backslashCount := 0
+		for i := candidate - 1; i >= 0 && pattern[i] == '\\'; i-- {
+			backslashCount++
+		}
+		if backslashCount%2 == 0 {
+			return pattern[:candidate]
+		}
+
+		// Check whether the last character was escaped
+		position = candidate + 1
+		if position >= len(pattern) {
+			return pattern
+		}
+	}
+}
+
+func CreateOffloadedDataFile(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, store *beemsg.NodeStore, path string, remotePath string, target uint32, overwrite bool) error {
+	rstUrl := []byte(fmt.Sprintf("rst://%d:%s", target, remotePath))
+	if err := beegfs.CreateWriteClose(path, rstUrl, overwrite); err != nil {
+		return err
+	}
+
+	return entry.SetFileDataStateOffloaded(ctx, mappings, store, path)
 }

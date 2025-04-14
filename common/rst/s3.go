@@ -19,7 +19,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
@@ -93,7 +92,7 @@ func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.
 
 	sync := request.GetSync()
 	if sync.RemotePath == "" {
-		sync.SetRemotePath(request.Path)
+		sync.SetRemotePath(sanitizePrefix(request.Path))
 	}
 
 	switch sync.Operation {
@@ -144,15 +143,13 @@ func (r *S3Client) ExecuteJobBuilderRequest(ctx context.Context, workRequest *fl
 	var walkChan <-chan *WalkResponse
 	switch sync.Operation {
 	case flex.SyncJob_DOWNLOAD:
-
 		if sync.RemotePath == "" {
-			sync.SetRemotePath(workRequest.Path)
+			sync.SetRemotePath(sanitizePrefix(workRequest.Path))
 			workRequest.SetPath("/")
 		}
-
 		walkChan, err = r.walkPrefix(ctx, sync.RemotePath, walkChanSize)
 	case flex.SyncJob_UPLOAD:
-		walkChan, err = r.walkDirectory(ctx, workRequest.Path, walkChanSize)
+		walkChan, err = WalkLocalDirectory(ctx, r.mountPoint, workRequest.Path, walkChanSize)
 	default:
 		return ErrUnsupportedOpForRST
 	}
@@ -243,7 +240,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 				return nil, true, fmt.Errorf("upload successful but failed to create stub file: %w", err)
 			}
 
-			err = createOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
+			err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
 			if err != nil {
 				return nil, true, fmt.Errorf("file is already synced but failed to create stub file: %w", err)
 			}
@@ -349,7 +346,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 			}
 		}
 
-		err = createOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, overwrite)
+		err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, overwrite)
 		if err != nil {
 			return nil, true, err
 		}
@@ -414,7 +411,7 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 			switch sync.Operation {
 			case flex.SyncJob_DOWNLOAD:
 				remotePath = walkResp.Path
-				inMountPath = mapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
+				inMountPath = MapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
 				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
 					return err
 				}
@@ -507,7 +504,7 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
 		}
 
-		err = createOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
+		err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
 		if err != nil {
 			return fmt.Errorf("upload successful but failed to create stub file: %w", err)
 		}
@@ -768,22 +765,16 @@ func (r *S3Client) Download(ctx context.Context, path string, remotePath string,
 	return nil
 }
 
-type WalkResponse struct {
-	Path     string
-	Err      error
-	FatalErr bool
-}
-
 // walkPrefix lists objects in an S3 bucket that match the specified prefix, returning results via
 // the *WalkPrefixResponse channel.Results can also be filtered using file globbing in the pattern
 // which includes double start for directory recursion.
 func (r *S3Client) walkPrefix(ctx context.Context, prefix string, chanSize int) (<-chan *WalkResponse, error) {
-	prefix = strings.TrimLeft(prefix, "/") // valid s3 prefixes do not start with a '/' (e.g. myfolder/*/subdir?[a-z])
+	prefix = sanitizePrefix(prefix)
 	if _, err := filepath.Match(prefix, ""); err != nil {
 		return nil, fmt.Errorf("invalid prefix %s: %w", prefix, err)
 	}
 
-	prefixWithoutPattern := stripGlobPattern(prefix)
+	prefixWithoutPattern := StripGlobPattern(prefix)
 	usePattern := prefix != prefixWithoutPattern
 
 	walkChan := make(chan *WalkResponse, chanSize)
@@ -827,95 +818,7 @@ func (r *S3Client) walkPrefix(ctx context.Context, prefix string, chanSize int) 
 	return walkChan, nil
 }
 
-func (r *S3Client) walkDirectory(ctx context.Context, pattern string, chanSize int) (<-chan *WalkResponse, error) {
-	walkChan := make(chan *WalkResponse, chanSize)
-	walkFunc := func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if d.IsDir() {
-				return nil
-			}
-
-			inMountPath, err := r.mountPoint.GetRelativePathWithinMount(path)
-			if err != nil {
-				// An error at this point is unlikely given previous steps also get relative paths.
-				// To be safe note this in the error that is returned and just return the absolute
-				// path instead. This shouldn't be a security issue since the user should have
-				// access to this path if they were able to start a job request for it.
-				inMountPath = path
-				walkChan <- &WalkResponse{
-					Path:     inMountPath,
-					Err:      fmt.Errorf("unable to determine relative path: %w", err),
-					FatalErr: true,
-				}
-				return nil
-			}
-			walkChan <- &WalkResponse{Path: inMountPath}
-		}
-		return nil
-	}
-
-	go func() {
-		defer close(walkChan)
-		r.mountPoint.WalkDir(stripGlobPattern(pattern), walkFunc)
-	}()
-	return walkChan, nil
-}
-
-// MapRemoteToLocalPath joins a base path with a remote path. If flatten is true, it replaces
-// directory separators in the remote path with underscores.
-func mapRemoteToLocalPath(path string, remotePath string, flatten bool) string {
-	if flatten {
-		remotePath = strings.Replace(remotePath, "/", "_", -1)
-	}
-
-	remoteDir := filepath.Dir(remotePath)
-	remoteBase := filepath.Base(remotePath)
-	combinedDir := filepath.Join(path, remoteDir)
-	combinedPath := filepath.Join(combinedDir, remoteBase)
-	return combinedPath
-}
-
-// stripGlobPattern extracts the longest leading substring from the given pattern that contains
-// no glob characters (e.g., '*', '?', or '['). This base prefix is used to efficiently list
-// objects in an S3 bucket, while the original glob pattern is later applied to filter the results.
-func stripGlobPattern(pattern string) string {
-	globCharacters := "*?["
-	position := 0
-	for {
-		index := strings.IndexAny(pattern[position:], globCharacters)
-		if index == -1 {
-			return pattern
-		}
-		candidate := position + index
-
-		// Check for escape characters
-		backslashCount := 0
-		for i := candidate - 1; i >= 0 && pattern[i] == '\\'; i-- {
-			backslashCount++
-		}
-		if backslashCount%2 == 0 {
-			return pattern[:candidate]
-		}
-
-		// Check whether the last character was escaped
-		position = candidate + 1
-		if position >= len(pattern) {
-			return pattern
-		}
-	}
-}
-
-func createOffloadedDataFile(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, store *beemsg.NodeStore, path string, remotePath string, target uint32, overwrite bool) error {
-	rstUrl := []byte(fmt.Sprintf("rst://%d:%s", target, remotePath))
-	if err := beegfs.CreateWriteClose(path, rstUrl, overwrite); err != nil {
-		return err
-	}
-
-	return entry.SetFileDataStateOffloaded(ctx, mappings, store, path)
+func sanitizePrefix(prefix string) string {
+	// Valid s3 prefixes do not start with a '/' (e.g. myfolder/*/subdir?[a-z])
+	return strings.TrimLeft(prefix, "/")
 }
