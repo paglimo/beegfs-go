@@ -156,14 +156,16 @@ func (t *jobsTable) MinimalRow(path string, explanation string) {
 func (t *jobsTable) getWorkRequestsForCell(workRequests []*flex.WorkRequest) string {
 	strBuilder := strings.Builder{}
 	for _, wr := range workRequests {
-		strBuilder.WriteString(fmt.Sprintf("===== request id: %s =====\n* external id: \n%s\n* offset start: %d\n* offset stop: %d\n* part start: %d\n* part stop: %d\n",
-			wr.RequestId,
-			wrapTextAtWidth(wr.ExternalId, t.wrappingWidth),
-			wr.Segment.OffsetStart,
-			wr.Segment.OffsetStop,
-			wr.Segment.PartsStart,
-			wr.Segment.PartsStop,
-		))
+		if wr.Segment != nil {
+			strBuilder.WriteString(fmt.Sprintf("===== request id: %s =====\n* external id: \n%s\n* offset start: %d\n* offset stop: %d\n* part start: %d\n* part stop: %d\n",
+				wr.RequestId,
+				wrapTextAtWidth(wr.ExternalId, t.wrappingWidth),
+				wr.Segment.OffsetStart,
+				wr.Segment.OffsetStop,
+				wr.Segment.PartsStart,
+				wr.Segment.PartsStop,
+			))
+		}
 	}
 	return strBuilder.String()
 }
