@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc"
@@ -78,6 +82,43 @@ func (c *grpcProvider) submitJob(ctx context.Context, jobRequest *beeremote.JobR
 		}
 		return err
 	}
+
+	return nil
+}
+
+func (c *grpcProvider) updateGlobalFlags(ctx context.Context) error {
+	cfg, err := c.client.GetGlobalFlags(ctx, &beeremote.GetGlobalFlagsRequest{})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.
+			// Note this is just a hint to the user, other error conditions may have the same
+			// message so we don't adjust behavior (i.e., treat it as fatal).
+			if strings.Contains(st.Message(), "error reading server preface: EOF") {
+				return fmt.Errorf("%w (hint: check TLS is configured correctly on the client and server)", err)
+			}
+		}
+		return err
+	}
+
+	globalFlagSet := pflag.FlagSet{}
+	globalFlagSet.String(config.ManagementAddrKey, cfg.MgmtdAddress, "")
+	globalFlagSet.String(config.BeeGFSMountPointKey, cfg.Mount, "")
+	globalFlagSet.String(config.BeeRemoteAddrKey, cfg.RemoteAddress, "")
+	globalFlagSet.Bool(config.TlsDisableKey, cfg.MgmtdTlsDisable, "")
+	globalFlagSet.String(config.TlsCertFile, cfg.MgmtdTlsCertFile, "")
+	globalFlagSet.Bool(config.TlsDisableVerificationKey, cfg.MgmtdTlsDisableVerification, "")
+	globalFlagSet.Bool(config.AuthDisableKey, cfg.AuthDisable, "")
+	globalFlagSet.String(config.AuthFileKey, cfg.AuthFile, "")
+	globalFlagSet.Int(config.NumWorkersKey, int(cfg.NumWorkers), "")
+	globalFlagSet.Duration(config.ConnTimeoutKey, time.Duration(cfg.ConnTimeoutMs)*time.Millisecond, "")
+	globalFlagSet.Int8(config.LogLevelKey, int8(cfg.LogLevel), "")
+	viper.SetEnvPrefix("beegfs")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
+	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
+		viper.BindEnv(flag.Name)
+		viper.BindPFlag(flag.Name, flag)
+	})
 
 	return nil
 }

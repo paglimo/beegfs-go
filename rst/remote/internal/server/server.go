@@ -8,9 +8,12 @@ import (
 	"path"
 	"reflect"
 	"sync"
+	"time"
 
+	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/kvstore"
 	"github.com/thinkparq/beegfs-go/common/rst"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/job"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"go.uber.org/zap"
@@ -215,4 +218,23 @@ func (s *BeeRemoteServer) UpdateWork(ctx context.Context, request *beeremote.Upd
 	s.wg.Add(1)
 	defer s.wg.Done()
 	return &beeremote.UpdateWorkResponse{}, s.jobMgr.UpdateWork(request.GetWork())
+}
+
+func (s *BeeRemoteServer) GetGlobalFlags(ctx context.Context, request *beeremote.GetGlobalFlagsRequest) (*beeremote.GetGlobalFlagsResponse, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	return &beeremote.GetGlobalFlagsResponse{
+		Mount:                       viper.GetString(config.BeeGFSMountPointKey),
+		RemoteAddress:               viper.GetString(config.BeeRemoteAddrKey),
+		MgmtdAddress:                viper.GetString(config.ManagementAddrKey),
+		MgmtdTlsCertFile:            viper.GetString(config.TlsCertFile),
+		MgmtdTlsDisableVerification: viper.GetBool(config.TlsDisableVerificationKey),
+		MgmtdTlsDisable:             viper.GetBool(config.TlsDisableKey),
+		AuthFile:                    viper.GetString(config.AuthFileKey),
+		AuthDisable:                 viper.GetBool(config.AuthDisableKey),
+		NumWorkers:                  int32(viper.GetInt(config.NumWorkersKey)),
+		ConnTimeoutMs:               int32(viper.GetDuration(config.ConnTimeoutKey) / time.Millisecond),
+		LogLevel:                    viper.GetInt32(config.LogLevelKey),
+	}, nil
 }

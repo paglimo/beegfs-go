@@ -209,6 +209,10 @@ func (m *Manager) UpdateConfig(rstConfigs []*flex.RemoteStorageTarget, beeRemote
 		return err
 	}
 
+	// All job builder requests will need to have environmental variables to communicate with
+	// the CTL library and these can be retrieved from remote at this time.
+	m.beeRemoteClient.UpdateGlobalFlags(m.mgrCtx)
+
 	m.readyMu.Lock()
 	defer m.readyMu.Unlock()
 	m.ready = true

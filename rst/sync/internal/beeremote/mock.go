@@ -54,3 +54,7 @@ func (c *MockProvider) submitJob(ctx context.Context, jobRequest *beeremote.JobR
 	}
 	return nil
 }
+
+func (c *MockProvider) updateGlobalFlags(ctx context.Context) error {
+	return nil
+}

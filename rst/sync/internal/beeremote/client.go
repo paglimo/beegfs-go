@@ -35,6 +35,7 @@ type Provider interface {
 	disconnect() error
 	updateWork(ctx context.Context, workResult *flex.Work) error
 	submitJob(ctx context.Context, jobRequest *beeremote.JobRequest) error
+	updateGlobalFlags(ctx context.Context) error
 }
 
 // New returns an initialized BeeRemote client. The dynamic portion of the initialCfg can be set to
@@ -169,4 +170,13 @@ func (c *Client) Disconnect() error {
 		return nil // nothing to do
 	}
 	return c.Provider.disconnect()
+}
+
+func (c *Client) UpdateGlobalFlags(ctx context.Context) error {
+	c.readyMu.Lock()
+	defer c.readyMu.Unlock()
+	if err := c.updateGlobalFlags(ctx); err != nil {
+		return fmt.Errorf("%w: %w", err, ErrUnableToUpdateGlobalFlags)
+	}
+	return nil
 }

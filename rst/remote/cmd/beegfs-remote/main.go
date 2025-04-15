@@ -132,6 +132,7 @@ Using environment variables:
 		}()
 	}
 
+	// These global flags are required to for sync to utilize the ctl library.
 	globalFlagSet := pflag.FlagSet{}
 	globalFlagSet.String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, "")
 	globalFlagSet.String(config.BeeGFSMountPointKey, "auto", "")
@@ -142,7 +143,7 @@ Using environment variables:
 	globalFlagSet.Bool(config.AuthDisableKey, initialCfg.Management.AuthDisable, "")
 	globalFlagSet.String(config.AuthFileKey, initialCfg.Management.AuthFile, "")
 	globalFlagSet.Int(config.NumWorkersKey, runtime.GOMAXPROCS(0), "")
-	globalFlagSet.Duration(config.ConnTimeoutKey, time.Millisecond*500, "")
+	globalFlagSet.Duration(config.ConnTimeoutKey, 500*time.Millisecond, "")
 	globalFlagSet.Int8(config.LogLevelKey, initialCfg.Log.Level, "")
 	viper.SetEnvPrefix("beegfs")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
