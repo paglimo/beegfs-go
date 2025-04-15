@@ -13,10 +13,14 @@
 package rst
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -327,6 +331,49 @@ func CreateOffloadedDataFile(ctx context.Context, beegfs filesystem.Provider, ma
 	if err := beegfs.CreateWriteClose(path, rstUrl, overwrite); err != nil {
 		return err
 	}
-
 	return entry.SetFileDataStateOffloaded(ctx, mappings, store, path)
+}
+
+func GetOffloadedUrlParts(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, store *beemsg.NodeStore, path string) (uint32, string, error) {
+	if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, path); err != nil {
+		return 0, "", err
+	} else if !isStub {
+		return 0, "", nil
+	}
+
+	// Amazon s3 allows object key names to be up to 1024 bytes in length. Note that this is a
+	// byte limit, so if your key contains multi-byte UTF-8 characters, the number of characters
+	// may be fewer than 1024. The extra 0 bytes on the right will be trimmed.
+	reader, _, err := beegfs.ReadFilePart(path, 0, 1024)
+	if err != nil {
+		return 0, "", errors.New("stub file was not readable")
+	}
+
+	rstUrl, err := io.ReadAll(reader)
+	if err != nil {
+		return 0, "", errors.New("stub file was not readable")
+	}
+	rstUrl = bytes.TrimRight(rstUrl, "\x00")
+	urlRstId, urlKey, err := parseRstUrl(rstUrl)
+	if err != nil {
+		return 0, "", errors.New("stub file is malformed")
+	}
+	return urlRstId, urlKey, nil
+}
+
+func parseRstUrl(url []byte) (uint32, string, error) {
+	urlString := string(url)
+	re := regexp.MustCompile(`^rst://([0-9]+):(.+)$`)
+	matches := re.FindStringSubmatch(urlString)
+	if len(matches) != 3 {
+		return 0, "", fmt.Errorf("input does not match expected format: rst://<number>:<s3-key>")
+	}
+
+	num, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to parse number: %w", err)
+	}
+	s3Key := matches[2]
+
+	return uint32(num), s3Key, nil
 }

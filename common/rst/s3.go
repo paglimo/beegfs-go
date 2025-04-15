@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
@@ -209,39 +210,39 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 	request := job.GetRequest()
 	sync := request.GetSync()
 
-	// The most likely reason for an stat error is the path wasn't found because the request is for
-	// a file in BeeGFS that doesn't exist or was removed after the request was submitted. Less
-	// likely there was some transient network/other issue preventing communication to BeeGFS that
-	// could be retried (generally the client should retry most issues anyway). Until there is a
-	// reason to add more complex error handling just treat all stat errors as fatal.
-	stat, err := r.mountPoint.Lstat(request.Path)
+	mappings := &util.Mappings{}
+	store := &beemsg.NodeStore{}
+	lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, request.Path, sync.RemotePath, request.StubLocal)
 	if err != nil {
 		return nil, true, err
 	}
-	fileSize := stat.Size()
-	mtime := stat.ModTime()
-	job.SetStartMtime(timestamppb.New(mtime))
+	job.SetStartMtime(lockedInfo.Mtime)
 
-	objectFileSize, objectMtime, err := r.GetObjectMetadata(ctx, sync.RemotePath, false)
-	if err != nil {
-		return nil, true, fmt.Errorf("error retrieving remote object's metadata: %w", err)
+	filemode := fs.FileMode(lockedInfo.Mode)
+	if filemode.Type()&fs.ModeSymlink != 0 {
+		// TODO: https://github.com/ThinkParQ/bee-remote/issues/25
+		// Support symbolic links.
+		return nil, true, fmt.Errorf("unable to upload symlink: %w", rst.ErrFileTypeUnsupported)
+	}
+	if !filemode.IsRegular() {
+		return nil, true, fmt.Errorf("%w", rst.ErrFileTypeUnsupported)
 	}
 
-	// Check whether the file already is synced
-	if fileSize == objectFileSize && mtime.Equal(objectMtime) {
+	alreadySynced := lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
+	if alreadySynced {
 		if request.StubLocal {
-			// File is already synced so just create a stub to finish the migration
-			store, err := config.NodeStore(ctx)
+
+			// TODO: Get rid of theses
+			store, err = config.NodeStore(ctx)
 			if err != nil {
-				return nil, true, fmt.Errorf("upload successful but failed to create stub file: %w", err)
+				return nil, true, err
 			}
-			mappings, err := util.GetMappings(ctx)
+			mappings, err = util.GetMappings(ctx)
 			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-				return nil, true, fmt.Errorf("upload successful but failed to create stub file: %w", err)
+				return nil, true, err
 			}
 
-			err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true)
-			if err != nil {
+			if err := CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true); err != nil {
 				return nil, true, fmt.Errorf("file is already synced but failed to create stub file: %w", err)
 			}
 			return nil, true, ErrJobAlreadyOffloaded
@@ -253,48 +254,27 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 		return nil, true, ErrJobAlreadyExists
 	}
 
-	if stat.Mode().Type()&fs.ModeSymlink != 0 {
-		// TODO: https://github.com/ThinkParQ/bee-remote/issues/25
-		// Support symbolic links.
-		return nil, true, fmt.Errorf("unable to upload symlink: %w", rst.ErrFileTypeUnsupported)
-	}
-	if !stat.Mode().IsRegular() {
-		return nil, true, fmt.Errorf("%w", rst.ErrFileTypeUnsupported)
-	}
-
-	store, err := config.NodeStore(ctx)
-	if err != nil {
-		return nil, true, err
-	}
-	mappings, err := util.GetMappings(ctx)
-	if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-		return nil, true, fmt.Errorf("unable to proceed without entity mappings: %w", err)
-	}
-
-	if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
-		return nil, true, fmt.Errorf("unable to determine stub file status: %w", err)
-	} else if isStub {
+	isStub := lockedInfo.StubUrlRstId > 0
+	if isStub {
 		if request.StubLocal {
-			err = entry.VerifyOffloadedContent(r.mountPoint, request.Path, sync.RemotePath, request.RemoteStorageTarget)
-			if err != nil {
-				return nil, true, fmt.Errorf("failed to complete migration! File is already a stub: %w", err)
-			} else {
+			if request.RemoteStorageTarget == lockedInfo.StubUrlRstId && sync.RemotePath == lockedInfo.StubUrlPath {
 				return nil, true, ErrJobAlreadyOffloaded
 			}
+			return nil, true, fmt.Errorf("failed to complete migration! File is already a stub")
 		}
 		return nil, true, fmt.Errorf("unable to upload stub file: %w", rst.ErrFileTypeUnsupported)
 	}
 
-	segCount, partsPerSegment := r.recommendedSegments(fileSize)
+	segCount, partsPerSegment := r.recommendedSegments(lockedInfo.Size)
 	if segCount > 1 {
-		externalID, err := r.CreateUpload(ctx, sync.RemotePath, mtime)
+		externalID, err := r.CreateUpload(ctx, sync.RemotePath, lockedInfo.Mtime.AsTime())
 		if err != nil {
 			return nil, true, fmt.Errorf("error creating multipart upload: %w", err)
 		}
 		job.SetExternalId(externalID)
 	}
 
-	workRequests := RecreateWorkRequests(job, generateSegments(fileSize, segCount, partsPerSegment))
+	workRequests := RecreateWorkRequests(job, generateSegments(lockedInfo.Size, segCount, partsPerSegment))
 	return workRequests, true, nil
 }
 
@@ -302,45 +282,24 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 	request := job.GetRequest()
 	sync := request.GetSync()
 
-	objectFileSize, objectMtime, err := r.GetObjectMetadata(ctx, sync.RemotePath, true)
+	mappings := &util.Mappings{}
+	store := &beemsg.NodeStore{}
+	lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, request.Path, sync.RemotePath, request.StubLocal)
 	if err != nil {
 		return nil, true, err
 	}
-	job.SetStartMtime(timestamppb.New(objectMtime))
-
-	fileExists := false
-	stat, err := r.mountPoint.Lstat(request.Path)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, true, err
-		}
-	} else {
-		fileExists = true
-	}
+	job.SetStartMtime(lockedInfo.RemoteMtime)
 
 	overwrite := sync.Overwrite
 	if request.StubLocal {
-		store, err := config.NodeStore(ctx)
-		if err != nil {
-			return nil, true, err
-		}
-		mappings, err := util.GetMappings(ctx)
-		if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-			return nil, true, fmt.Errorf("unable to proceed without entity mappings: %w", err)
-		}
-		if fileExists {
-			if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
-				return nil, true, fmt.Errorf("unable to determine stub status: %w", err)
-			} else if isStub {
-				err = entry.VerifyOffloadedContent(r.mountPoint, request.Path, sync.RemotePath, request.RemoteStorageTarget)
-				if err != nil {
-					if !overwrite {
-						return nil, true, fmt.Errorf("unable to create stub file: %w", err)
-					}
-				} else {
+		if lockedInfo.Exists {
+			isStub := lockedInfo.StubUrlRstId > 0
+			if isStub {
+				if request.RemoteStorageTarget == lockedInfo.StubUrlRstId && sync.RemotePath == lockedInfo.StubUrlPath {
 					return nil, true, ErrJobAlreadyOffloaded
+				} else if !overwrite {
+					return nil, true, fmt.Errorf("unable to create stub file: %w", err)
 				}
-
 			} else if !overwrite {
 				return nil, true, fmt.Errorf("unable to create stub file: %w", fs.ErrExist)
 			}
@@ -353,42 +312,39 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 		return nil, true, ErrJobAlreadyOffloaded
 	}
 
-	if fileExists {
-		store, err := config.NodeStore(ctx)
-		if err != nil {
-			return nil, true, err
-		}
-		mappings, err := util.GetMappings(ctx)
-		if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-			return nil, true, fmt.Errorf("unable to proceed without entity mappings: %w", err)
-		}
+	if lockedInfo.Exists {
+		isStub := lockedInfo.StubUrlRstId > 0
+		alreadySynced := lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
+		if isStub {
 
-		if isStub, err := entry.IsFileDataStateOffloaded(ctx, mappings, store, request.Path); err != nil {
-			return nil, true, fmt.Errorf("unable to determine stub status: %w", err)
-		} else if isStub {
+			// TODO: Get rid of theses
+			store, err = config.NodeStore(ctx)
+			if err != nil {
+				return nil, true, err
+			}
+			mappings, err = util.GetMappings(ctx)
+			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
+				return nil, true, err
+			}
+
 			if err := entry.ClearFileDataState(ctx, mappings, store, request.Path); err != nil {
 				return nil, true, fmt.Errorf("unable to clear stub file flag: %w", err)
 			}
 			overwrite = true
-		} else {
-			fileSize := stat.Size()
-			mtime := stat.ModTime()
-			if fileSize == objectFileSize && mtime.Equal(objectMtime) {
-				return nil, true, ErrJobAlreadyComplete
-			}
-			if activeJobAlreadyExists(request, lastJob) {
-				return nil, true, ErrJobAlreadyExists
-			}
+		} else if alreadySynced {
+			return nil, true, ErrJobAlreadyComplete
+		} else if activeJobAlreadyExists(request, lastJob) {
+			return nil, true, ErrJobAlreadyExists
 		}
 	}
 
-	segCount, partsPerSegment := r.recommendedSegments(objectFileSize)
-	err = r.mountPoint.CreatePreallocatedFile(request.Path, objectFileSize, overwrite)
+	segCount, partsPerSegment := r.recommendedSegments(lockedInfo.RemoteSize)
+	err = r.mountPoint.CreatePreallocatedFile(request.Path, lockedInfo.RemoteSize, overwrite)
 	if err != nil {
 		return nil, false, err
 	}
 
-	workRequests := RecreateWorkRequests(job, generateSegments(objectFileSize, segCount, partsPerSegment))
+	workRequests := RecreateWorkRequests(job, generateSegments(lockedInfo.RemoteSize, segCount, partsPerSegment))
 	return workRequests, true, nil
 }
 
@@ -396,6 +352,16 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 	sync := request.GetSync()
 	inMountPath := request.Path
 	remotePath := sync.RemotePath
+
+	store, err := config.NodeStore(ctx)
+	if err != nil {
+		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
+	}
+	mappings, err := util.GetMappings(ctx)
+	if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
+		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -410,20 +376,26 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 
 			switch sync.Operation {
 			case flex.SyncJob_DOWNLOAD:
-				remotePath = walkResp.Path
+				remotePath = sanitizePrefix(walkResp.Path)
 				inMountPath = MapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
 				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
 					return err
 				}
-
-				// TODO: Set exclusive read-write lock on inMountPath
-				//  - This will not be possible for files that don't exist but that should matter since the lock can be added in syncJob download generate
-
 			case flex.SyncJob_UPLOAD:
 				inMountPath = walkResp.Path
+				remotePath = sanitizePrefix(inMountPath)
+			}
 
-				// TODO: Set read-only lock on inMountPath
+			lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, inMountPath, remotePath, request.StubLocal)
+			if err != nil {
+				return err
+			}
 
+			if request.StubLocal && !lockedInfo.Exists {
+				err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, inMountPath, remotePath, request.RemoteStorageTarget, false)
+				if err != nil {
+					return fmt.Errorf("unable to create stub file: %w", err)
+				}
 			}
 
 			jobRequest := &beeremote.JobRequest{
@@ -435,6 +407,7 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 						RemotePath: remotePath,
 						Operation:  sync.Operation,
 						Overwrite:  sync.Overwrite,
+						LockedInfo: lockedInfo,
 					},
 				},
 			}
@@ -539,6 +512,91 @@ func (r *S3Client) completeSyncWorkRequests_Download(ctx context.Context, job *b
 		}
 	}
 	return nil
+}
+
+func (r *S3Client) getLockedInfo(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, sync *flex.SyncJob, path string, remotePath string, offload bool) (*flex.SyncJob_SyncJobLockedInfo, error) {
+	lockedInfo := sync.GetLockedInfo()
+	if lockedInfo == nil {
+		lockedInfo = &flex.SyncJob_SyncJobLockedInfo{}
+	}
+
+	if !lockedInfo.Locked {
+		var err error
+		if store == nil || len(store.GetNodes()) == 0 {
+			store, err = config.NodeStore(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if mappings == nil || mappings.NodeToTargets.Len() == 0 {
+			mappings, err = util.GetMappings(ctx)
+			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
+				return nil, err
+			}
+		}
+
+		operation := sync.GetOperation()
+
+		switch operation {
+		case flex.SyncJob_DOWNLOAD:
+			// TODO: Get file read-write lock
+		case flex.SyncJob_UPLOAD:
+			// TODO: Get file read-only lock
+		default:
+			return nil, ErrUnsupportedOpForRST
+		}
+		lockedInfo.SetLocked(true)
+
+		// The most likely reason for an stat error is the path wasn't found because the request is for
+		// a file in BeeGFS that doesn't exist or was removed after the request was submitted. Less
+		// likely there was some transient network/other issue preventing communication to BeeGFS that
+		// could be retried (generally the client should retry most issues anyway). Until there is a
+		// reason to add more complex error handling just treat all stat errors as fatal.
+		stat, err := r.mountPoint.Lstat(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+			if operation == flex.SyncJob_UPLOAD {
+				return nil, err
+			}
+		} else {
+			lockedInfo.Exists = true
+			lockedInfo.Size = stat.Size()
+			lockedInfo.Mtime = timestamppb.New(stat.ModTime())
+			lockedInfo.Mode = uint32(stat.Mode())
+		}
+
+		remoteSize, remoteMtime, err := r.GetObjectMetadata(ctx, remotePath, operation == flex.SyncJob_DOWNLOAD)
+		if err != nil {
+			return nil, fmt.Errorf("error retrieving remote object's metadata: %w", err)
+		}
+		lockedInfo.RemoteSize = remoteSize
+		lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
+
+		if lockedInfo.Exists && !fs.FileMode(lockedInfo.Mode).IsDir() {
+			if lockedInfo.StubUrlRstId, lockedInfo.StubUrlPath, err = GetOffloadedUrlParts(ctx, r.mountPoint, mappings, store, path); err != nil {
+				return nil, fmt.Errorf("unable to get rst url parts: %w", err)
+			}
+
+			// File exists but the offload state is not the end goal so we're going to need to
+			// change the fileDataState; hence, we'll need entry and ownerNode. This allows use to
+			// only the beegfs request to change the fileDatastate without retrieving the mappings.
+			isStub := lockedInfo.StubUrlRstId > 0
+			if offload != isStub {
+
+				// TODO: COMPLETE when we're able to use it.
+
+				// entry, ownerNode, err := entry.GetEntryAndOwnerFromPath(ctx, mappings, path)
+				_, _, err := entry.GetEntryAndOwnerFromPath(ctx, mappings, path)
+				if err != nil {
+					return nil, fmt.Errorf("unable to retrieve entry info: %w", err)
+				}
+			}
+		}
+	}
+
+	return lockedInfo, nil
 }
 
 func (r *S3Client) recommendedSegments(fileSize int64) (int64, int32) {
