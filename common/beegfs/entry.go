@@ -2,6 +2,7 @@ package beegfs
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -95,50 +96,149 @@ func (f *EntryFeatureFlags) SetBuddyMirrored() {
 	*f |= entryFeatureFlagBuddyMirrored
 }
 
-// FileDataState represents the possible states for file data tiering.
-// Equivalent to FileDataState enum in C++.
-type FileDataState uint8
+// FileState represents the combined AccessState (lower 5 bits) and HsmState (upper 3 bits).
+type FileState uint8
 
+// AccessState represents the access control settings in the lower 5 bits of FileState
+type AccessState uint8
+
+// Constants for AccessState
 const (
-	// FileDataStateNone indicates no data state is set.
-	FileDataStateNone FileDataState = 0x00
-	// FileDataStateLocal indicates data is stored within BeeGFS (default).
-	FileDataStateLocal FileDataState = 0x01
-	// FileDataStateLocked indicates data is locked and cannot be accessed.
-	FileDataStateLocked FileDataState = 0x02
-	// FileDataStateOffloaded indicates data is stored in external storage
-	// e.g. S3, tape (i.e. file on metadata server is a stub).
-	FileDataStateOffloaded FileDataState = 0x03
+	// No access restrictions (default access mode)
+	AccessStateUnlocked AccessState = 0x00
+	// Block read operations (file is "write-only")
+	AccessStateReadLock AccessState = 0x01
+	// Block write operations (file is "read-only")
+	AccessStateWriteLock AccessState = 0x02
+	// Reserved for future use
+	AccessStateReserved3 AccessState = 0x04
+	// Reserved for future use
+	AccessStateReserved4 AccessState = 0x08
 )
 
-func (state FileDataState) String() string {
+// HsmState represents an HSM-defined state (upper 3 bits of FileState)
+type HsmState uint8
+
+// Masks for extracting parts of the state
+const (
+	// Mask for extracting access state (lower 5 bits)
+	AccessStateMask FileState = 0x1F
+	// Mask for extracting HSM state (upper 3 bits)
+	HsmStateMask FileState = 0xE0
+	// Number of bits to shift for HSM state
+	HsmStateShift = 5
+)
+
+// NewFileState combines AccessState and HsmState into a single byte
+// Lower 5 bits represent access state, upper 3 bits represent HSM state
+func NewFileState(accessState AccessState, hsmState HsmState) FileState {
+	return (FileState(accessState) & AccessStateMask) |
+		(FileState(hsmState<<HsmStateShift) & HsmStateMask)
+}
+
+// GetAccessState returns the access state part of the file state.
+func (fs FileState) GetAccessState() AccessState {
+	return AccessState(fs & AccessStateMask)
+}
+
+// GetHsmState returns the HSM state part of the file state.
+func (fs FileState) GetHsmState() HsmState {
+	return HsmState((fs & HsmStateMask) >> HsmStateShift) // Shift right to get the original value
+}
+
+// Helper methods for checking access restrictions
+func (fs FileState) IsUnlocked() bool {
+	return fs.GetAccessState() == AccessStateUnlocked
+}
+
+func (fs FileState) IsReadLocked() bool {
+	return (fs.GetAccessState() & AccessStateReadLock) != 0
+}
+
+func (fs FileState) IsWriteLocked() bool {
+	return (fs.GetAccessState() & AccessStateWriteLock) != 0
+}
+
+func (fs FileState) IsReadWriteLocked() bool {
+	return fs.IsReadLocked() && fs.IsWriteLocked()
+}
+
+// GetRawValue returns the raw byte value of the file state
+func (fs FileState) GetRawValue() uint8 {
+	return uint8(fs)
+}
+
+// String returns a human-readable representation of the file state.
+func (state FileState) String() string {
+	accessStr := accessStateToString(state.GetAccessState())
+	hsmStr := fmt.Sprintf("%d", state.GetHsmState())
+	return fmt.Sprintf("%s : %s", accessStr, hsmStr)
+}
+
+// Helper function to convert access state to a string.
+func accessStateToString(state AccessState) string {
 	switch state {
-	case FileDataStateNone:
-		return "None"
-	case FileDataStateLocal:
-		return "Local"
-	case FileDataStateLocked:
-		return "Locked"
-	case FileDataStateOffloaded:
-		return "Offloaded"
+	case AccessStateUnlocked:
+		return "Unlocked"
+	case AccessStateReadLock:
+		return "Locked (read)" // Indicates READ operations are blocked (write-only)
+	case AccessStateWriteLock:
+		return "Locked (write)" // Indicates WRITE operations are blocked (read-only)
+	case AccessStateReadLock | AccessStateWriteLock:
+		return "Locked (read+write)" // All access blocked
 	default:
-		// For unknown values, just return the numeric representation.
-		return fmt.Sprintf("unknown(%d)", state)
+		// For combinations with reserved bits
+		return fmt.Sprintf("Unknown(%d)", state)
 	}
 }
 
-// Helper function to parse a string into a FileDataState.
-func ParseFileDataState(s string) (FileDataState, error) {
-	switch strings.ToLower(s) {
-	case "none":
-		return FileDataStateNone, nil
-	case "local":
-		return FileDataStateLocal, nil
-	case "locked":
-		return FileDataStateLocked, nil
-	case "offloaded":
-		return FileDataStateOffloaded, nil
-	default:
-		return 0, fmt.Errorf("invalid file data state: %s (valid values: local, locked, offloaded,none)", s)
+// ParseFileState parses a string representation into a FileState.
+func ParseFileState(s string) (FileState, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid file state format: %s (expected format: access:state)", s)
 	}
+
+	accessState, err := parseAccessState(parts[0])
+	if err != nil {
+		return 0, err
+	}
+
+	hsmState, err := parseHsmState(parts[1])
+	if err != nil {
+		return 0, err
+	}
+
+	return NewFileState(accessState, hsmState), nil
+}
+
+// Helper function to parse access state from a string.
+func parseAccessState(s string) (AccessState, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "unlocked", "none":
+		return AccessStateUnlocked, nil
+	case "locked (read)", "read-lock":
+		return AccessStateReadLock, nil
+	case "locked (write)", "write-lock":
+		return AccessStateWriteLock, nil
+	case "locked (read+write)", "read-write-lock":
+		return AccessStateReadLock | AccessStateWriteLock, nil
+	default:
+		return 0, fmt.Errorf("invalid access state: %s (valid values: unlocked, locked (read), locked (write), locked (read+write))", s)
+	}
+}
+
+// Helper function to parse HSM state from a string.
+func parseHsmState(s string) (HsmState, error) {
+	s = strings.TrimSpace(s)
+
+	// Parse as a number (0-7)
+	if val, err := strconv.ParseUint(s, 10, 8); err == nil {
+		if val > 7 {
+			return 0, fmt.Errorf("invalid HSM state value: %d (must be 0-7)", val)
+		}
+		return HsmState(val), nil
+	}
+
+	return 0, fmt.Errorf("invalid HSM state: %s (must be a numeric value between 0-7)", s)
 }

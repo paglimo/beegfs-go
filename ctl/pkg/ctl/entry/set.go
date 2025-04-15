@@ -31,7 +31,8 @@ type SetEntryCfg struct {
 	StripePattern      *beegfs.StripePatternType
 	RemoteTargets      []uint32
 	RemoteCooldownSecs *uint16
-	FileDataState      *beegfs.FileDataState
+	AccessState        *beegfs.AccessState
+	HsmState           *beegfs.HsmState
 }
 
 // Validates the effective UID has permissions to make the requested updates.
@@ -63,8 +64,11 @@ func (config *SetEntryCfg) setAndValidateEUID() error {
 		if config.RemoteCooldownSecs != nil {
 			return fmt.Errorf("only root can configure the remote cooldown")
 		}
-		if config.FileDataState != nil {
-			return fmt.Errorf("only root can configure file data state")
+		if config.AccessState != nil {
+			return fmt.Errorf("only root can configure access state")
+		}
+		if config.HsmState != nil {
+			return fmt.Errorf("only root can configure HSM state")
 		}
 	}
 	return nil
@@ -117,8 +121,8 @@ func setEntry(ctx context.Context, mappings *util.Mappings, cfg SetEntryCfg, pat
 		return SetEntryResult{}, err
 	}
 
-	// Handle file data state updates separately from other updates.
-	if cfg.FileDataState != nil {
+	// Handle file state updates separately from other updates.
+	if cfg.AccessState != nil || cfg.HsmState != nil {
 		// Return error if the entry is NOT a regular file.
 		if entry.Entry.Type != beegfs.EntryRegularFile {
 			return SetEntryResult{
@@ -127,7 +131,7 @@ func setEntry(ctx context.Context, mappings *util.Mappings, cfg SetEntryCfg, pat
 				Updates: SetEntryCfg{},
 			}, nil
 		}
-		return handleFileDataStateUpdate(ctx, store, entry, cfg, path)
+		return handleFileStateUpdate(ctx, store, entry, cfg, path)
 	}
 
 	if entry.Entry.Type == beegfs.EntryDirectory {
@@ -270,14 +274,45 @@ func handleFile(ctx context.Context, store *beemsg.NodeStore, entry *GetEntryCom
 	}, nil
 }
 
-func handleFileDataStateUpdate(ctx context.Context, store *beemsg.NodeStore, entry *GetEntryCombinedInfo, cfg SetEntryCfg, searchPath string) (SetEntryResult, error) {
-	request := &msg.SetFileDataStateRequest{
+func handleFileStateUpdate(ctx context.Context, store *beemsg.NodeStore, entry *GetEntryCombinedInfo, cfg SetEntryCfg, searchPath string) (SetEntryResult, error) {
+	// Get current file state from entry
+	currentFileState := entry.Entry.FileState
+
+	// Start with the current state
+	newFileState := currentFileState
+
+	// Apply access state update if specified by user
+	if cfg.AccessState != nil {
+		newFileState = beegfs.NewFileState(
+			*cfg.AccessState,               // New access state from user
+			currentFileState.GetHsmState(), // Keep existing HSM state
+		)
+	}
+
+	// Apply HSM state update if specified by user
+	if cfg.HsmState != nil {
+		newFileState = beegfs.NewFileState(
+			newFileState.GetAccessState(), // Current or newly updated access state
+			*cfg.HsmState,                 // New HSM state from user
+		)
+	}
+
+	// return early if the file state is unchanged
+	if newFileState == currentFileState {
+		return SetEntryResult{
+			Path:    searchPath,
+			Status:  beegfs.OpsErr_SUCCESS,
+			Updates: SetEntryCfg{},
+		}, nil
+	}
+
+	request := &msg.SetFileStateRequest{
 		EntryInfo: *entry.Entry.origEntryInfoMsg,
-		DataState: *cfg.FileDataState,
+		FileState: newFileState,
 	}
 
 	// send the request and handle the response
-	var resp = &msg.SetFileDataStateResponse{}
+	var resp = &msg.SetFileStateResponse{}
 	err := store.RequestTCP(ctx, entry.Entry.MetaOwnerNode.Uid, request, resp)
 	if err != nil {
 		return SetEntryResult{}, err
@@ -291,7 +326,8 @@ func handleFileDataStateUpdate(ctx context.Context, store *beemsg.NodeStore, ent
 		Path:   searchPath,
 		Status: resp.Result,
 		Updates: SetEntryCfg{
-			FileDataState: cfg.FileDataState,
+			AccessState: cfg.AccessState,
+			HsmState:    cfg.HsmState,
 		},
 	}, nil
 }

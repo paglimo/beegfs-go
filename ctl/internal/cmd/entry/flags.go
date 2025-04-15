@@ -194,38 +194,107 @@ func (f *rstCooldownFlag) Set(value string) error {
 	return nil
 }
 
-type fileDataStateFlag struct {
-	p **beegfs.FileDataState
+type accessStateFlag struct {
+	p **beegfs.AccessState
 }
 
-func newFileDataStateFlag(p **beegfs.FileDataState) *fileDataStateFlag {
-	return &fileDataStateFlag{p: p}
+func newAccessStateFlag(p **beegfs.AccessState) *accessStateFlag {
+	return &accessStateFlag{p: p}
 }
 
-func (f *fileDataStateFlag) String() string {
+func (f *accessStateFlag) String() string {
 	if *f.p == nil {
 		return "unchanged"
 	}
 
-	return (**f.p).String()
+	// Format the access state in CLI format
+	accessState := **f.p
+	switch accessState {
+	case beegfs.AccessStateUnlocked:
+		return "unlocked"
+	case beegfs.AccessStateReadLock:
+		return "read-lock"
+	case beegfs.AccessStateWriteLock:
+		return "write-lock"
+	case beegfs.AccessStateReadLock | beegfs.AccessStateWriteLock:
+		return "read-write-lock"
+	default:
+		return fmt.Sprintf("Unknown(%d)", accessState)
+	}
 }
 
-func (f *fileDataStateFlag) Type() string {
-	return "<local|locked|offloaded|none>"
+func (f *accessStateFlag) Type() string {
+	return "<unlocked|read-lock|write-lock|read-write-lock|none>"
 }
 
-func (f *fileDataStateFlag) Set(value string) error {
-	// Allocate the state if it doesn't exist.
+func (f *accessStateFlag) Set(value string) error {
+	// Create a new AccessState if it doesn't exist
 	if *f.p == nil {
-		*f.p = new(beegfs.FileDataState)
+		*f.p = new(beegfs.AccessState)
 	}
 
-	state, err := beegfs.ParseFileDataState(value)
+	// Parse the access state
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "unlocked", "none":
+		**f.p = beegfs.AccessStateUnlocked
+	case "read-lock":
+		**f.p = beegfs.AccessStateReadLock
+	case "write-lock":
+		**f.p = beegfs.AccessStateWriteLock
+	case "read-write-lock":
+		**f.p = beegfs.AccessStateReadLock | beegfs.AccessStateWriteLock
+	default:
+		return fmt.Errorf("invalid access state value: %s (valid values: unlocked, read-lock, write-lock, read-write-lock, none)", value)
+	}
+
+	return nil
+}
+
+type hsmStateFlag struct {
+	p **beegfs.HsmState
+}
+
+func newHsmStateFlag(p **beegfs.HsmState) *hsmStateFlag {
+	return &hsmStateFlag{p: p}
+}
+
+func (f *hsmStateFlag) String() string {
+	if *f.p == nil {
+		return "unchanged"
+	}
+
+	// Format the HSM state
+	return fmt.Sprintf("%d", **f.p)
+}
+
+func (f *hsmStateFlag) Type() string {
+	return "<0-7|none>"
+}
+
+func (f *hsmStateFlag) Set(value string) error {
+	// Create a new HsmState if it doesn't exist
+	if *f.p == nil {
+		*f.p = new(beegfs.HsmState)
+	}
+
+	// Handle special "none" value
+	if strings.ToLower(strings.TrimSpace(value)) == "none" {
+		**f.p = 0
+		return nil
+	}
+
+	// Parse the HSM state
+	val, err := strconv.ParseUint(value, 10, 8)
 	if err != nil {
-		return fmt.Errorf("invalid file data state: %w", err)
+		return fmt.Errorf("invalid HSM state: %s (must be a numeric value between 0-7 or 'none')", value)
 	}
 
-	**f.p = state
+	if val > 7 {
+		return fmt.Errorf("invalid HSM state value: %d (must be 0-7)", val)
+	}
+
+	// Set the new HSM state
+	**f.p = beegfs.HsmState(val)
 	return nil
 }
 
