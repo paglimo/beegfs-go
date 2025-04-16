@@ -332,7 +332,7 @@ func getEntryAndOwnerFromPathViaRPC(ctx context.Context, mappings *util.Mappings
 		if err != nil {
 			return msg.EntryInfo{}, beegfs.Node{}, err
 		} else if resp.Result != 0 {
-			return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("unexpected search result for '%s': %s", searchPath, resp.Result)
+			return msg.EntryInfo{}, beegfs.Node{}, fmt.Errorf("unexpected search result for '%s': %w", searchPath, resp.Result)
 		}
 
 		// If the directory is buddy mirrored, the owner ID will be a buddy group ID. We have to map
