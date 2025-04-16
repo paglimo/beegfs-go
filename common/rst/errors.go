@@ -14,4 +14,10 @@ var (
 	ErrJobAlreadyOffloaded     = errors.New("file already offloaded to RST")
 	ErrJobAlreadyExists        = errors.New("no changes to entry detected since the last job")
 	ErrJobNotAllowed           = errors.New("submitting a new job is not allowed in this state")
+
+	ErrFileHasNoRSTs                = errors.New("entry does not have any remote storage target IDs configured")
+	ErrFileOpenForWriting           = errors.New("entry is opened for writing on one or more clients")
+	ErrFileOpenForReading           = errors.New("entry is opened for reading on one or more clients")
+	ErrFileOpenForReadingAndWriting = errors.New("entry is opened for reading and writing on one or more clients")
+	ErrFileTypeUnsupported          = errors.New("entry type is not supported")
 )

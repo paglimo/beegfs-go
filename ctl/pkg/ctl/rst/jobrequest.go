@@ -214,13 +214,16 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 
 	var rstIds []uint32
 	jobBuilder := false
-	if !pathInfo.Exists || pathInfo.IsDir {
+	if !pathInfo.Exists {
 		jobBuilder = true
 		if !validRstId(cfg.RSTID) {
 			sendError(fmt.Errorf("unable to send job requests! Invalid RST identifier"))
 		}
 		rstIds = []uint32{cfg.RSTID}
 	} else {
+		if pathInfo.IsDir {
+			jobBuilder = true
+		}
 		entry, err := getEntry(ctx, mappings, pathInfo.Path)
 		if err != nil {
 			sendError(err)
@@ -331,6 +334,7 @@ func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *be
 		Path:                inMountPath,
 		RemoteStorageTarget: rstId,
 		StubLocal:           cfg.StubLocal,
+		Force:               cfg.Force,
 		Type: &beeremote.JobRequest_Sync{
 			Sync: &flex.SyncJob{
 				RemotePath: cfg.RemotePath,

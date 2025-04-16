@@ -377,3 +377,20 @@ func parseRstUrl(url []byte) (uint32, string, error) {
 
 	return uint32(num), s3Key, nil
 }
+
+func CheckEntry(entry entry.Entry, ignoreReaders bool, ignoreWriters bool) error {
+	var err error
+	if !ignoreWriters && entry.NumSessionsWrite > 0 {
+		err = ErrFileOpenForWriting
+	}
+	if !ignoreReaders && entry.NumSessionsRead > 0 {
+		// Not using errors.Join because it adds a newline when printing each error which looks
+		// awkward in the CTL output.
+		if err != nil {
+			err = ErrFileOpenForReadingAndWriting
+		} else {
+			err = ErrFileOpenForReading
+		}
+	}
+	return err
+}

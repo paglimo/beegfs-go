@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 
@@ -386,31 +387,36 @@ func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *fl
 				remotePath = sanitizePrefix(inMountPath)
 			}
 
+			// TODO: If getLockedInfo needs to get the entry then it could be passed back as a pointer to avoid duplicate checks
+			//  - Subsequent commands that need entry should just check for nil first...
 			lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, inMountPath, remotePath, request.StubLocal)
 			if err != nil {
 				return err
 			}
 
-			if request.StubLocal && !lockedInfo.Exists {
+			if request.StubLocal && !lockedInfo.Exists && sync.Operation == flex.SyncJob_DOWNLOAD {
 				err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, inMountPath, remotePath, request.RemoteStorageTarget, false)
 				if err != nil {
 					return fmt.Errorf("unable to create stub file: %w", err)
 				}
+				lockedInfo.StubUrlRstId = request.RemoteStorageTarget
+				lockedInfo.StubUrlPath = remotePath
 			}
 
 			jobRequest := &beeremote.JobRequest{
 				Path:                inMountPath,
 				RemoteStorageTarget: request.RemoteStorageTarget,
 				StubLocal:           request.StubLocal,
+				// TODO: this should be reflective of the original request
+				// Force:               request.Force,
+				Force: false,
 				Type: &beeremote.JobRequest_Sync{
 					Sync: &flex.SyncJob{
 						RemotePath: remotePath,
 						Operation:  sync.Operation,
 						Overwrite:  sync.Overwrite,
 						LockedInfo: lockedInfo,
-					},
-				},
-			}
+					}}}
 			jobSubmissionChan <- jobRequest
 		}
 	}
@@ -514,7 +520,16 @@ func (r *S3Client) completeSyncWorkRequests_Download(ctx context.Context, job *b
 	return nil
 }
 
-func (r *S3Client) getLockedInfo(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, sync *flex.SyncJob, path string, remotePath string, offload bool) (*flex.SyncJob_SyncJobLockedInfo, error) {
+func (r *S3Client) getLockedInfo(
+	ctx context.Context,
+	mappings *util.Mappings,
+	store *beemsg.NodeStore,
+	sync *flex.SyncJob,
+	path string,
+	remotePath string,
+	offload bool,
+) (*flex.SyncJob_SyncJobLockedInfo, error) {
+
 	lockedInfo := sync.GetLockedInfo()
 	if lockedInfo == nil {
 		lockedInfo = &flex.SyncJob_SyncJobLockedInfo{}
@@ -535,13 +550,32 @@ func (r *S3Client) getLockedInfo(ctx context.Context, mappings *util.Mappings, s
 			}
 		}
 
-		operation := sync.GetOperation()
+		// TODO: Remove if the read-write and read-only methods can do these checks
+		entry, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, path)
+		if err != nil {
+			if !errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
+				return nil, err
+			}
+		} else {
+			// TODO: need to add request.Force...
+			// ignoreReaders := request.Force || sync.Operation == flex.SyncJob_UPLOAD
+			// ignoreWriters := request.Force
+			ignoreReaders := false || sync.Operation == flex.SyncJob_UPLOAD
+			ignoreWriters := false
+			err := CheckEntry(entry.Entry, ignoreReaders, ignoreWriters)
+			if err != nil {
+				return nil, err
+			}
+		}
 
+		operation := sync.GetOperation()
 		switch operation {
 		case flex.SyncJob_DOWNLOAD:
 			// TODO: Get file read-write lock
+			//   Should read-write lock check for open files? If so, remove the GetEntry()/CheckEntry above
 		case flex.SyncJob_UPLOAD:
 			// TODO: Get file read-only lock
+			//  Should read-only lock check for files open with write privilege? If so, remove the GetEntry()/CheckEntry above
 		default:
 			return nil, ErrUnsupportedOpForRST
 		}
@@ -577,21 +611,6 @@ func (r *S3Client) getLockedInfo(ctx context.Context, mappings *util.Mappings, s
 		if lockedInfo.Exists && !fs.FileMode(lockedInfo.Mode).IsDir() {
 			if lockedInfo.StubUrlRstId, lockedInfo.StubUrlPath, err = GetOffloadedUrlParts(ctx, r.mountPoint, mappings, store, path); err != nil {
 				return nil, fmt.Errorf("unable to get rst url parts: %w", err)
-			}
-
-			// File exists but the offload state is not the end goal so we're going to need to
-			// change the fileDataState; hence, we'll need entry and ownerNode. This allows use to
-			// only the beegfs request to change the fileDatastate without retrieving the mappings.
-			isStub := lockedInfo.StubUrlRstId > 0
-			if offload != isStub {
-
-				// TODO: COMPLETE when we're able to use it.
-
-				// entry, ownerNode, err := entry.GetEntryAndOwnerFromPath(ctx, mappings, path)
-				_, _, err := entry.GetEntryAndOwnerFromPath(ctx, mappings, path)
-				if err != nil {
-					return nil, fmt.Errorf("unable to retrieve entry info: %w", err)
-				}
 			}
 		}
 	}
