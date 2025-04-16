@@ -302,5 +302,4 @@ var workStateMap = map[flex.Work_State]workStateEmoji{
 	flex.Work_FAILED:    {"❌", flex.Work_FAILED.String()},
 	flex.Work_CANCELLED: {"🚫", flex.Work_CANCELLED.String()},
 	flex.Work_COMPLETED: {"✅", flex.Work_COMPLETED.String()},
-	// flex.Work_OFFLOADED: {"☁️", flex.Work_OFFLOADED.String()},
 }

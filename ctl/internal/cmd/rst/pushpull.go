@@ -101,6 +101,7 @@ func runPushOrPullCmd(cmd *cobra.Command, frontendCfg pushPullCfg, backendCfg rs
 	errStartingSync := 0
 	syncStarted := 0
 	syncCompleted := 0
+	syncOffloaded := 0
 	syncInProgress := 0
 	syncNotAllowed := 0
 
@@ -143,6 +144,8 @@ writeResponses:
 				syncStarted++
 			case beeremote.SubmitJobResponse_ALREADY_COMPLETE:
 				syncCompleted++
+			case beeremote.SubmitJobResponse_ALREADY_OFFLOADED:
+				syncOffloaded++
 			case beeremote.SubmitJobResponse_EXISTING:
 				syncInProgress++
 			case beeremote.SubmitJobResponse_NOT_ALLOWED:
@@ -167,11 +170,11 @@ writeResponses:
 
 	var result string
 	if viper.GetBool(config.DisableEmojisKey) {
-		result = fmt.Sprintf("%d already synced | %d already syncing | %d scheduled sync | %d previous sync failure | %d error starting sync | %d no remote target (ignored) | %d not supported (ignored)\n",
-			syncCompleted, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
+		result = fmt.Sprintf("%d already synced | %d already offloaded | %d already syncing | %d scheduled sync | %d previous sync failure | %d error starting sync | %d no remote target (ignored) | %d not supported (ignored)\n",
+			syncCompleted, syncOffloaded, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
 	} else {
-		result = fmt.Sprintf("✅ %d already synced | 🔄 %d already syncing | ⏳ %d scheduled for sync | ❌ %d previous sync failure | \u26A0\ufe0f\u200C %d error starting sync | ⛔ %d no remote target (ignored) | 🚫 %d not supported (ignored)\n",
-			syncCompleted, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
+		result = fmt.Sprintf("✅ %d already synced | ☁️ %d already offloaded | 🔄 %d already syncing | ⏳ %d scheduled for sync | ❌ %d previous sync failure | \u26A0\ufe0f\u200C %d error starting sync | ⛔ %d no remote target (ignored) | 🚫 %d not supported (ignored)\n",
+			syncCompleted, syncOffloaded, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
 	}
 
 	if errStartingSync != 0 || syncNotAllowed != 0 {

@@ -77,7 +77,6 @@ func (r *S3Client) GetConfig() *flex.RemoteStorageTarget {
 	return proto.Clone(r.config).(*flex.RemoteStorageTarget)
 }
 
-// GenerateWorkRequest prepares work requests
 func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) ([]*flex.WorkRequest, bool, error) {
 	request := job.GetRequest()
 	if !request.HasSync() {
@@ -106,8 +105,6 @@ func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.
 	return nil, false, ErrUnsupportedOpForRST
 }
 
-// ExecuteWorkRequestPart attempts to carry out the specified part of the provided requests. The
-// part is updated directly with the results.
 func (r *S3Client) ExecuteWorkRequestPart(ctx context.Context, workRequest *flex.WorkRequest, part *flex.Work_Part) error {
 	if !workRequest.HasSync() {
 		return ErrReqAndRSTTypeMismatch
@@ -130,8 +127,6 @@ func (r *S3Client) ExecuteWorkRequestPart(ctx context.Context, workRequest *flex
 
 }
 
-// ExecuteJobBuilderRequest walks either the local directory or remote prefix and sends job requests
-// for each file or object.
 func (r *S3Client) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
 	defer close(jobSubmissionChan)
 	if !workRequest.HasSync() {
@@ -162,7 +157,6 @@ func (r *S3Client) ExecuteJobBuilderRequest(ctx context.Context, workRequest *fl
 	return r.executeSyncJobBuilderRequest(ctx, workRequest, walkChan, jobSubmissionChan)
 }
 
-// CompleteWorkRequests completes the job request once all the job's work requests are complete.
 func (r *S3Client) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
 	request := job.GetRequest()
 	if !request.HasSync() {

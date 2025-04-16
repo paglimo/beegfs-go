@@ -108,6 +108,8 @@ func (s *BeeRemoteServer) SubmitJob(ctx context.Context, request *beeremote.Subm
 	if err != nil {
 		if errors.Is(err, rst.ErrJobAlreadyComplete) {
 			status = beeremote.SubmitJobResponse_ALREADY_COMPLETE
+		} else if errors.Is(err, rst.ErrJobAlreadyOffloaded) {
+			status = beeremote.SubmitJobResponse_ALREADY_OFFLOADED
 		} else if errors.Is(err, rst.ErrJobAlreadyExists) {
 			status = beeremote.SubmitJobResponse_EXISTING
 		} else if errors.Is(err, rst.ErrJobNotAllowed) {

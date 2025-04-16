@@ -481,7 +481,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 				Job:          job.Get(),
 				WorkRequests: []*flex.WorkRequest{},
 				WorkResults:  []*beeremote.JobResult_WorkResult{},
-			}.Build(), nil
+			}.Build(), err
 		} else if errors.Is(err, rst.ErrJobAlreadyComplete) {
 			m.log.Debug("requested job is already complete", zap.Any("job", lastJob), zap.Any("err", err))
 			status := job.GetStatus()
@@ -497,7 +497,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 				Job:          job.Get(),
 				WorkRequests: []*flex.WorkRequest{},
 				WorkResults:  []*beeremote.JobResult_WorkResult{},
-			}.Build(), nil
+			}.Build(), err
 		} else if errors.Is(err, rst.ErrJobAlreadyExists) {
 			m.log.Debug("an active job already exists for the requested job, returning that job instead of creating a new one", zap.Any("job", lastJob), zap.Any("err", err))
 			return beeremote.JobResult_builder{
