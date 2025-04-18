@@ -3,6 +3,7 @@ package rst
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/thinkparq/protobuf/go/beeremote"
@@ -47,9 +48,8 @@ type MockClient struct {
 
 var _ Provider = &MockClient{}
 
-func (rst *MockClient) GetConfig() *flex.RemoteStorageTarget {
-	args := rst.Called()
-	return args.Get(0).(*flex.RemoteStorageTarget)
+func (r *MockClient) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+	return nil
 }
 
 func (rst *MockClient) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error) {
@@ -70,6 +70,10 @@ func (rst *MockClient) GenerateWorkRequests(ctx context.Context, lastJob *beerem
 	return args.Get(0).([]*flex.WorkRequest), true, nil
 }
 
+func (r *MockClient) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
+	return true, nil
+}
+
 func (rst *MockClient) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
 
 	if request.GetMock() != nil {
@@ -88,17 +92,13 @@ func (rst *MockClient) ExecuteWorkRequestPart(ctx context.Context, request *flex
 	return err
 }
 
-func (rst *MockClient) ExecuteJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+func (r *MockClient) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
+	return true, nil
+}
 
-	if request.GetMock() != nil {
-		if request.GetMock().ShouldFail {
-			return fmt.Errorf("test requested an error")
-		}
-		return nil
-	}
-
-	args := rst.Called(ctx, request)
-	return args.Error(0)
+// ExecuteJobBuilderRequest is not implemented and should never be called.
+func (r *MockClient) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+	return ErrUnsupportedOpForRST
 }
 
 func (rst *MockClient) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
@@ -112,4 +112,21 @@ func (rst *MockClient) CompleteWorkRequests(ctx context.Context, job *beeremote.
 
 	args := rst.Called(job, workResults, abort)
 	return args.Error(0)
+}
+
+func (rst *MockClient) GetConfig() *flex.RemoteStorageTarget {
+	args := rst.Called()
+	return args.Get(0).(*flex.RemoteStorageTarget)
+}
+
+func (r *MockClient) GetWalk(ctx context.Context, path string, chanSize int) (<-chan *WalkResponse, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (r *MockClient) SanitizeRemotePath(remotePath string) string {
+	return remotePath
+}
+
+func (r *MockClient) GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error) {
+	return 0, time.Time{}, nil
 }

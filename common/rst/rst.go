@@ -19,18 +19,23 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // SupportedRSTTypes is used with SetRSTTypeHook in the config package to allows configuring with
@@ -49,47 +54,53 @@ var SupportedRSTTypes = map[string]func() (any, any){
 	// Mock could be included here if it ever made sense to allow configuration using a file.
 }
 
+// TODO: Re-evaluated these comments
+
 type Provider interface {
+	// GenerateJobRequest prepares a Provider specific job request.
+	GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest
 	// GenerateWorkRequests performs any one-time operations that must happen at the start of a job.
-	// To optimize performance it should perform all tasks required to interact with BeeGFS or the
-	// remote Provider at the start of a job.
+	// Any tasks that interact with BeeGFS or the RST is strongly discouraged since this task will
+	// executed on the remote node which is primarily responsible with scheduling work requests on
+	// the worker nodes.
 	//
-	// For providers that support idempotent operations, it optionally accepts a lastJob that should
-	// be compared with the current state of the file the request is for, and determines if the new
-	// job is required. If the current job is not needed it should return ErrOperationNotNeeded. Not
-	// all possible operations for a particular Provider need to be idempotent.
+	// For providers that support idempotent operations, GenerateWorkRequests should return ErrJobX error
+	// to indicate whether
 	//
 	// It determines if the job can be split into one or more work requests that each work on some
 	// segment of the file (which is in turn comprised of one or more parts). This determination
 	// should be made based on the file size, availableWorkers, and best practices for the Provider.
-	//
-	// It determines if an external ID is needed and generates one and sets it directly on the job.
-	// If applicable to the operation it also sets the StartMtime on the job based on a stat of the
-	// local file in BeeGFS. It generates and returns a slice of work requests based on the request
-	// type, operation, file size, and available workers (specify 0 if the number of workers is
-	// unknown). If anything goes wrong it returns a boolean indicating if a retry is possible, and
-	// an error. Errors can be retried if the error was likely transient, such as a network issue,
-	// otherwise retry is be false if generating requests is not possible, such as the request type
-	// is invalid for this RST.
-	//
-	// canRetry indicates whether the RST provider's GenerateWorkRequests() call left the job in a
-	// valid state and no further cleanup is needed. If true, the job can be safely retried. If
-	// false, the job should not be retried; the user must be forced to resolve the issue and cancel
-	// the job before attempting any subsequent retries.
 	GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error)
+	// ExecuteJobBuilderRequest is specifically designed for providers that generate subsequent work
+	// requests.
+	ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error
+	// PrepareExecuteWorkRequests preforms any preliminary tasks required for each part of the work
+	// request to be processed.
+	//
+	// Any errors that occur will set the job status to beeremote.Job_FAILED or beeremote.ERROR if
+	// canRetry is to true. Setting canRetry is particularly useful in situations where a
+	// preliminary tasks is asynchronous as in Amazon Glacier's retrieval operation.
+	PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error)
 	// ExecuteWorkRequestPart accepts a request and which part of the request it should carry out.
 	// It blocks until the request is complete, but the caller can cancel the provided context to
 	// return early. It determines and executes the requested operation (if supported) then directly
 	// updates the part with the results and marks it as completed. If the context is cancelled it
 	// does not return an error, but rather updates any fields in the part that make sense to allow
 	// the request to be resumed later (if supported), but will not mark the part as completed.
+	//
+	// Any errors that occur here will results in the job status will be beeremote.Job_FAILED or
+	// beeremote.ERROR if canRetry is to true.
 	ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error
-
-	// ExecuteJobBuilderRequest accepts a request that points to any path and will asynchronously
-	// send job requests to jobSubmissionChan based on the path. Note that ExecuteJobBuilderRequest
-	// is responsible for closing jobSubmissionChan.
-	ExecuteJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error
-
+	// ConcludeExecuteWorkRequests preforms any tasks that are required to complete or cleanup the
+	// work requests.
+	//
+	// It is responsible for verifying the operation completed successfully, for example checking
+	// data integrity by verifying checksums and modification timestamps to ensure a stable version
+	// of the file exists in BeeGFS and/or the remote Provider.
+	//
+	// Any errors that occur here will results in the job status will be beeremote.Job_FAILED or
+	// beeremote.ERROR if canRetry is to true.
+	ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error)
 	// CompleteWorkRequests is used to perform any tasks needed to complete or abort the specified
 	// job on the RST.  To optimize performance it should perform all tasks required to interact
 	// with BeeGFS or the remote Provider at the end of a job.
@@ -98,12 +109,22 @@ type Provider interface {
 	// executing the previously generated WorkRequests. If applicable to the operation it should set
 	// the StopMtime directly on the job based on a stat of the local file in BeeGFS.
 	//
-	// It is also responsible for verifying the operation completed successfully, for example
-	// checking data integrity by verifying checksums and modification timestamps to ensure a stable
-	// version of the file exists in BeeGFS and/or the remote Provider.
+	// CompleteWorkRequests should evaluate the workResults status and update the job status.
 	CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error
+
 	// Returns a deep copy of the Remote Storage Target's config.
 	GetConfig() *flex.RemoteStorageTarget
+
+	// Walk returns a *WalkResponse channel for each file in the path. Path must be able to
+	// represent the remote directory or prefix as well as a single file or object.
+	GetWalk(ctx context.Context, path string, chanSize int) (<-chan *WalkResponse, error)
+	// SanitizeRemotePath must ensure the remote path is structure properly for the remote resource.
+	SanitizeRemotePath(remotePath string) string
+	// GetRemoteInfo must return the remote file or object's size and the files last
+	// modification time. Note that the mtime must be the same as the local file's sync mtime not
+	// the mtime generated by the remote file system. KeyMustExist flag should be set, as with
+	// download operations, must exist.
+	GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error)
 }
 
 // New initializes a provider client based on the provided config. It accepts a context that can be
@@ -146,39 +167,23 @@ func New(ctx context.Context, config *flex.RemoteStorageTarget, mountPoint files
 // request IDs.
 func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segment) (requests []*flex.WorkRequest) {
 	request := job.GetRequest()
-	addJobType := func(wr *flex.WorkRequest) {
-		switch request.WhichType() {
-		case beeremote.JobRequest_Sync_case:
-			wr.Type = &flex.WorkRequest_Sync{
-				Sync: proto.Clone(request.GetSync()).(*flex.SyncJob),
-			}
-
-		case beeremote.JobRequest_Mock_case:
-			wr.Type = &flex.WorkRequest_Mock{
-				Mock: proto.Clone(request.GetMock()).(*flex.MockJob),
-			}
-		}
-	}
 
 	// Ensure when adding new fields that all reference types are cloned to ensure WRs are
 	// initialized properly and don't share references with anything else. Otherwise this can lead
 	// to weird bugs where at best we panic due to a segfault, and at worst a change to one object
 	// unexpectedly updates that field on all other objects.
 	workRequests := make([]*flex.WorkRequest, 0)
-
 	if segments == nil {
-		// Since no segments were provided, return a job builder request.
 		jobBuilderWorkRequest := &flex.WorkRequest{
 			JobId:               job.GetId(),
 			RequestId:           "0",
 			ExternalId:          job.GetExternalId(),
 			Path:                request.GetPath(),
 			Segment:             nil,
-			RemoteStorageTarget: request.GetRemoteStorageTarget(),
+			RemoteStorageTarget: 0,
 			JobBuilder:          true,
-			StubLocal:           job.Request.StubLocal,
+			Type:                &flex.WorkRequest_Builder{Builder: proto.Clone(request.GetBuilder()).(*flex.BuilderJob)},
 		}
-		addJobType(jobBuilderWorkRequest)
 		return []*flex.WorkRequest{jobBuilderWorkRequest}
 	}
 
@@ -196,7 +201,17 @@ func RecreateWorkRequests(job *beeremote.Job, segments []*flex.WorkRequest_Segme
 			RemoteStorageTarget: request.GetRemoteStorageTarget(),
 			StubLocal:           job.Request.StubLocal,
 		}
-		addJobType(wr)
+
+		switch request.WhichType() {
+		case beeremote.JobRequest_Sync_case:
+			wr.Type = &flex.WorkRequest_Sync{
+				Sync: proto.Clone(request.GetSync()).(*flex.SyncJob),
+			}
+		case beeremote.JobRequest_Mock_case:
+			wr.Type = &flex.WorkRequest_Mock{
+				Mock: proto.Clone(request.GetMock()).(*flex.MockJob),
+			}
+		}
 		workRequests = append(workRequests, wr)
 	}
 	return workRequests
@@ -282,7 +297,217 @@ func WalkLocalDirectory(ctx context.Context, beegfs filesystem.Provider, pattern
 	return walkChan, nil
 }
 
-// MapRemoteToLocalPath joins a base path with a remote path. If flatten is true, it replaces
+func WalkFileList(ctx context.Context, beegfs filesystem.Provider, paths []string, chanSize int) (<-chan *WalkResponse, error) {
+	walkChan := make(chan *WalkResponse, chanSize)
+	go func() {
+		defer close(walkChan)
+		for _, path := range paths {
+			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
+			if err != nil {
+				walkChan <- &WalkResponse{Path: path, Err: err, FatalErr: true}
+			}
+			walkChan <- &WalkResponse{Path: inMountPath}
+		}
+	}()
+	return walkChan, nil
+}
+
+// BuildJobRequest returns a list of job requests. If client is not specified then the rstMap will
+// be used to determine the client based on any inMountPath related rstId. Store and mappings can be
+// nil for convenience but should be avoided if BuildJobRequest is called multiple times.
+//
+// If the inMountPath is to be offloaded and it does not exist then one will be created.
+func BuildJobRequest(ctx context.Context,
+	client Provider,
+	rstMap map[uint32]Provider,
+	mountPoint filesystem.Provider,
+	store *beemsg.NodeStore,
+	mappings *util.Mappings,
+	inMountPath string,
+	remotePath string,
+	cfg *flex.JobRequestCfg,
+) ([]*beeremote.JobRequest, error) {
+	lockedInfo, rstIds, err := GetLockedInfo(ctx, mountPoint, store, mappings, cfg, inMountPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if client != nil {
+		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		if err != nil {
+			return nil, err
+		}
+		return []*beeremote.JobRequest{request}, nil
+	}
+
+	if len(rstIds) == 0 {
+		return nil, ErrFileHasNoRSTs
+	} else if cfg.Download && len(rstIds) > 1 {
+		return nil, ErrFileAmbiguousRST
+	}
+
+	var jobRequests []*beeremote.JobRequest
+	for _, rstId := range rstIds {
+		client, ok := rstMap[rstId]
+		if !ok {
+			return nil, ErrConfigRSTTypeIsUnknown
+		}
+
+		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		if err != nil {
+			return nil, err
+		}
+		jobRequests = append(jobRequests, request)
+	}
+	return jobRequests, nil
+}
+
+// Returns whether the file exists.
+func IsFileExist(lockedInfo *flex.JobLockedInfo) bool {
+	return lockedInfo.Exists
+}
+
+// Returns whether the file is already synced with remote storage target
+func IsFileAlreadySynced(lockedInfo *flex.JobLockedInfo) bool {
+	return lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
+}
+
+// Returns whether the file is offloaded.
+func IsFileOffloaded(lockedInfo *flex.JobLockedInfo) bool {
+	return lockedInfo.StubUrlRstId > 0
+}
+
+// Returns whether the offloaded file's rst url is matches the provided rst id and remote path.
+func IsFileOffloadedUrlCorrect(rstId uint32, remotePath string, lockedInfo *flex.JobLockedInfo) bool {
+	return rstId == lockedInfo.StubUrlRstId && remotePath == lockedInfo.StubUrlPath
+}
+
+func getJobRequest(ctx context.Context,
+	client Provider,
+	mountPoint filesystem.Provider,
+	store *beemsg.NodeStore,
+	mappings *util.Mappings,
+	inMountPath string,
+	remotePath string,
+	cfg *flex.JobRequestCfg,
+	lockedInfo *flex.JobLockedInfo,
+) (*beeremote.JobRequest, error) {
+	rstId := client.GetConfig().Id
+	sanitizedRemotePath := client.SanitizeRemotePath(remotePath)
+	remoteSize, remoteMtime, err := client.GetRemoteInfo(ctx, sanitizedRemotePath, cfg.Download)
+	if err != nil {
+		return nil, err
+	}
+	lockedInfo.RemoteSize = remoteSize
+	lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
+
+	if !lockedInfo.Exists && cfg.Download && cfg.StubLocal {
+		err = CreateOffloadedDataFile(ctx, mountPoint, mappings, store, inMountPath, sanitizedRemotePath, rstId, false)
+		if err != nil {
+			return nil, ErrOffloadFileCreate
+		}
+		lockedInfo.StubUrlRstId = rstId
+		lockedInfo.StubUrlPath = sanitizedRemotePath
+	}
+
+	return client.GenerateJobRequest(inMountPath, &flex.JobRequestCfg{
+		RemoteStorageTarget: rstId,
+		Path:                inMountPath,
+		RemotePath:          remotePath,
+		Download:            cfg.Download,
+		StubLocal:           cfg.StubLocal,
+		Overwrite:           cfg.Overwrite,
+		Flatten:             cfg.Flatten,
+		Force:               cfg.Force,
+		LockedInfo:          lockedInfo,
+	}), nil
+}
+
+func GetLockedInfo(ctx context.Context,
+	mountPoint filesystem.Provider,
+	store *beemsg.NodeStore,
+	mappings *util.Mappings,
+	cfg *flex.JobRequestCfg,
+	inMountPath string,
+) (*flex.JobLockedInfo, []uint32, error) {
+
+	var err error
+	if store == nil || len(store.GetNodes()) == 0 {
+		store, err = config.NodeStore(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if mappings == nil || mappings.NodeToTargets.Len() == 0 {
+		mappings, err = util.GetMappings(ctx)
+		if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
+			return nil, nil, err
+		}
+	}
+
+	entryInfo, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, inMountPath)
+	if err != nil {
+		if !errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
+			return nil, nil, err
+		}
+	} else {
+
+		// TODO: Remove if the read-write and read-only methods can do these checks
+
+		// TODO: Could these check force a requeuing until the open files are closed?
+
+		ignoreReaders := cfg.Force || !cfg.Download // Why would files open with read-only privileges ever be a problem?
+		ignoreWriters := cfg.Force                  // Why should we permit transferring a file open with write privileges?
+		err := CheckEntry(entryInfo.Entry, ignoreReaders, ignoreWriters)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	var rstIds []uint32
+	if isValidRstId(cfg.RemoteStorageTarget) {
+		rstIds = []uint32{cfg.RemoteStorageTarget}
+	} else {
+		rstIds = entryInfo.Entry.Remote.RSTIDs
+	}
+
+	if cfg.Download {
+		// TODO: Get file read-write lock
+		//   Should read-write lock check for open files? If so, remove the GetEntry()/CheckEntry above
+	} else {
+		// TODO: Get file read-only lock
+		//  Should read-only lock check for files open with write privilege? If so, remove the GetEntry()/CheckEntry above
+	}
+	lockedInfo := &flex.JobLockedInfo{Locked: true}
+
+	stat, err := mountPoint.Lstat(inMountPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			// TODO: Release Lock?
+			return nil, nil, err
+		}
+		if !cfg.Download {
+			// TODO: Release Lock?
+			return nil, nil, err
+		}
+	} else {
+		lockedInfo.Exists = true
+		lockedInfo.Size = stat.Size()
+		lockedInfo.Mtime = timestamppb.New(stat.ModTime())
+		lockedInfo.Mode = uint32(stat.Mode())
+	}
+
+	if lockedInfo.Exists && !fs.FileMode(lockedInfo.Mode).IsDir() {
+		if lockedInfo.StubUrlRstId, lockedInfo.StubUrlPath, err = GetOffloadedUrlParts(ctx, mountPoint, mappings, store, inMountPath); err != nil {
+			// TODO: Release Lock?
+			return nil, nil, fmt.Errorf("unable to get rst url parts: %w", err)
+		}
+	}
+
+	return lockedInfo, rstIds, nil
+}
+
+// MapRemoteToLocalPath joins a base path with the remote path. If flatten is true, it replaces
 // directory separators in the remote path with underscores.
 func MapRemoteToLocalPath(path string, remotePath string, flatten bool) string {
 	if flatten {

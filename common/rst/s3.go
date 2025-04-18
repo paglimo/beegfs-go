@@ -19,14 +19,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
-
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
+
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/protobuf/proto"
@@ -73,11 +72,30 @@ func newS3(ctx context.Context, rstConfig *flex.RemoteStorageTarget, mountPoint 
 	return r, nil
 }
 
-func (r *S3Client) GetConfig() *flex.RemoteStorageTarget {
-	return proto.Clone(r.config).(*flex.RemoteStorageTarget)
+func (r *S3Client) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+	operation := flex.SyncJob_UPLOAD
+	if cfg.Download {
+		operation = flex.SyncJob_DOWNLOAD
+	}
+
+	return &beeremote.JobRequest{
+		Path:                inMountPath,
+		RemoteStorageTarget: cfg.RemoteStorageTarget,
+		StubLocal:           cfg.StubLocal,
+		Force:               cfg.Force,
+		Type: &beeremote.JobRequest_Sync{
+			Sync: &flex.SyncJob{
+				Operation:  operation,
+				Overwrite:  cfg.Overwrite,
+				RemotePath: cfg.RemotePath,
+				Flatten:    cfg.Flatten,
+				LockedInfo: cfg.LockedInfo,
+			},
+		},
+	}
 }
 
-func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) ([]*flex.WorkRequest, bool, error) {
+func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error) {
 	request := job.GetRequest()
 	if !request.HasSync() {
 		return nil, false, ErrReqAndRSTTypeMismatch
@@ -86,14 +104,13 @@ func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.
 		return nil, false, ErrJobAlreadyHasExternalID
 	}
 
-	if request.JobBuilder {
-		workRequests := RecreateWorkRequests(job, nil)
-		return workRequests, true, nil
-	}
-
 	sync := request.GetSync()
 	if sync.RemotePath == "" {
-		sync.SetRemotePath(sanitizePrefix(request.Path))
+		if lastJob != nil {
+			sync.SetRemotePath(lastJob.Request.GetSync().RemotePath)
+		} else {
+			sync.SetRemotePath(r.SanitizeRemotePath(request.Path))
+		}
 	}
 
 	switch sync.Operation {
@@ -105,18 +122,27 @@ func (r *S3Client) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.
 	return nil, false, ErrUnsupportedOpForRST
 }
 
-func (r *S3Client) ExecuteWorkRequestPart(ctx context.Context, workRequest *flex.WorkRequest, part *flex.Work_Part) error {
-	if !workRequest.HasSync() {
+// ExecuteJobBuilderRequest is not implemented and should never be called.
+func (r *S3Client) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+	return ErrUnsupportedOpForRST
+}
+
+func (r *S3Client) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
+	return true, nil
+}
+
+func (r *S3Client) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
+	if !request.HasSync() {
 		return ErrReqAndRSTTypeMismatch
 	}
-	sync := workRequest.GetSync()
+	sync := request.GetSync()
 
 	var err error
 	switch sync.Operation {
 	case flex.SyncJob_UPLOAD:
-		err = r.Upload(ctx, workRequest.Path, sync.RemotePath, workRequest.ExternalId, part)
+		err = r.upload(ctx, request.Path, sync.RemotePath, request.ExternalId, part)
 	case flex.SyncJob_DOWNLOAD:
-		err = r.Download(ctx, workRequest.Path, sync.RemotePath, part)
+		err = r.download(ctx, request.Path, sync.RemotePath, part)
 	}
 	if err != nil {
 		return err
@@ -124,46 +150,16 @@ func (r *S3Client) ExecuteWorkRequestPart(ctx context.Context, workRequest *flex
 
 	part.Completed = true
 	return nil
-
 }
 
-func (r *S3Client) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
-	defer close(jobSubmissionChan)
-	if !workRequest.HasSync() {
-		return ErrReqAndRSTTypeMismatch
-	}
-
-	sync := workRequest.GetSync()
-	walkChanSize := len(jobSubmissionChan)
-
-	var err error
-	var walkChan <-chan *WalkResponse
-	switch sync.Operation {
-	case flex.SyncJob_DOWNLOAD:
-		if sync.RemotePath == "" {
-			sync.SetRemotePath(sanitizePrefix(workRequest.Path))
-			workRequest.SetPath("/")
-		}
-		walkChan, err = r.walkPrefix(ctx, sync.RemotePath, walkChanSize)
-	case flex.SyncJob_UPLOAD:
-		walkChan, err = WalkLocalDirectory(ctx, r.mountPoint, workRequest.Path, walkChanSize)
-	default:
-		return ErrUnsupportedOpForRST
-	}
-	if err != nil {
-		return err
-	}
-
-	return r.executeSyncJobBuilderRequest(ctx, workRequest, walkChan, jobSubmissionChan)
+func (r *S3Client) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
+	return true, nil
 }
 
 func (r *S3Client) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
 	request := job.GetRequest()
 	if !request.HasSync() {
 		return ErrReqAndRSTTypeMismatch
-	}
-	if request.JobBuilder {
-		return nil
 	}
 
 	syncJob := request.GetSync()
@@ -177,40 +173,81 @@ func (r *S3Client) CompleteWorkRequests(ctx context.Context, job *beeremote.Job,
 	}
 }
 
-// TODO: Investigate whether there's a way to offload this tasks back to
-// activeJobAlreadyExists is intended to be used with GenerateWorkRequests to determine whether
-// there is an active job that would be completed by this job.
-func activeJobAlreadyExists(request *beeremote.JobRequest, lastJob *beeremote.Job) bool {
-	if lastJob == nil {
-		return false
+func (r *S3Client) GetConfig() *flex.RemoteStorageTarget {
+	return proto.Clone(r.config).(*flex.RemoteStorageTarget)
+}
+
+// walkPrefix lists objects in an S3 bucket that match the specified prefix, returning results via
+// the *WalkPrefixResponse channel.Results can also be filtered using file globbing in the pattern
+// which includes double start for directory recursion.
+func (r *S3Client) GetWalk(ctx context.Context, prefix string, chanSize int) (<-chan *WalkResponse, error) {
+	prefix = r.SanitizeRemotePath(prefix)
+	if _, err := filepath.Match(prefix, ""); err != nil {
+		return nil, fmt.Errorf("invalid prefix %s: %w", prefix, err)
 	}
 
-	lastRequest := lastJob.GetRequest()
-	if request.HasSync() && lastRequest.HasSync() {
-		if request.GetSync().Operation != lastRequest.GetSync().Operation {
-			return false
+	prefixWithoutPattern := StripGlobPattern(prefix)
+	usePattern := prefix != prefixWithoutPattern
+
+	walkChan := make(chan *WalkResponse, chanSize)
+	go func() {
+		defer close(walkChan)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			var err error
+			var output *s3.ListObjectsV2Output
+			input := &s3.ListObjectsV2Input{
+				Bucket: aws.String(r.config.GetS3().Bucket),
+				Prefix: aws.String(prefixWithoutPattern),
+			}
+
+			objectPaginator := s3.NewListObjectsV2Paginator(r.client, input)
+			for objectPaginator.HasMorePages() {
+				output, err = objectPaginator.NextPage(ctx)
+				if err != nil {
+					var noBucket *types.NoSuchBucket
+					if errors.As(err, &noBucket) {
+						err := fmt.Errorf("s3 bucket %s does not exist: %s", r.config.GetS3().Bucket, noBucket.Error())
+						walkChan <- &WalkResponse{Err: err, FatalErr: true}
+					}
+					return
+				}
+
+				for _, content := range output.Contents {
+					if usePattern {
+						if match, _ := filepath.Match(prefix, *content.Key); !match {
+							continue
+						}
+					}
+					walkChan <- &WalkResponse{Path: *content.Key}
+				}
+			}
 		}
-	} else {
-		return false
-	}
+	}()
 
-	state := lastJob.Status.State
-	if state == beeremote.Job_OFFLOADED || state == beeremote.Job_COMPLETED || state == beeremote.Job_CANCELLED || state == beeremote.Job_FAILED {
-		return false
-	}
-	return true
+	return walkChan, nil
+}
+
+func (r *S3Client) GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error) {
+	return r.getObjectMetadata(ctx, remotePath, keyMustExist)
+}
+
+func (r *S3Client) SanitizeRemotePath(remotePath string) string {
+	// Valid s3 prefixes do not start with a '/' (e.g. myfolder/*/subdir?[a-z])
+	return strings.TrimLeft(remotePath, "/")
 }
 
 func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) ([]*flex.WorkRequest, bool, error) {
 	request := job.GetRequest()
 	sync := request.GetSync()
 
-	mappings := &util.Mappings{}
-	store := &beemsg.NodeStore{}
-	lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, request.Path, sync.RemotePath, request.StubLocal)
+	err := r.setLockedInfo(ctx, nil, nil, job)
 	if err != nil {
 		return nil, true, err
 	}
+	lockedInfo := sync.LockedInfo
 	job.SetStartMtime(lockedInfo.Mtime)
 
 	filemode := fs.FileMode(lockedInfo.Mode)
@@ -223,20 +260,18 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 		return nil, true, fmt.Errorf("%w", rst.ErrFileTypeUnsupported)
 	}
 
-	alreadySynced := lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
-	if alreadySynced {
+	if IsFileAlreadySynced(lockedInfo) {
 		if request.StubLocal {
 
 			// TODO: Get rid of theses
-			store, err = config.NodeStore(ctx)
+			store, err := config.NodeStore(ctx)
 			if err != nil {
 				return nil, true, err
 			}
-			mappings, err = util.GetMappings(ctx)
+			mappings, err := util.GetMappings(ctx)
 			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
 				return nil, true, err
 			}
-
 			if err := CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, true); err != nil {
 				return nil, true, fmt.Errorf("file is already synced but failed to create stub file: %w", err)
 			}
@@ -262,7 +297,7 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, lastJo
 
 	segCount, partsPerSegment := r.recommendedSegments(lockedInfo.Size)
 	if segCount > 1 {
-		externalID, err := r.CreateUpload(ctx, sync.RemotePath, lockedInfo.Mtime.AsTime())
+		externalID, err := r.createUpload(ctx, sync.RemotePath, lockedInfo.Mtime.AsTime())
 		if err != nil {
 			return nil, true, fmt.Errorf("error creating multipart upload: %w", err)
 		}
@@ -277,56 +312,62 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 	request := job.GetRequest()
 	sync := request.GetSync()
 
-	mappings := &util.Mappings{}
-	store := &beemsg.NodeStore{}
-	lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, request.Path, sync.RemotePath, request.StubLocal)
+	err := r.setLockedInfo(ctx, nil, nil, job)
 	if err != nil {
 		return nil, true, err
 	}
+	lockedInfo := sync.LockedInfo
 	job.SetStartMtime(lockedInfo.RemoteMtime)
 
 	overwrite := sync.Overwrite
 	if request.StubLocal {
-		if lockedInfo.Exists {
-			isStub := lockedInfo.StubUrlRstId > 0
-			if isStub {
-				if request.RemoteStorageTarget == lockedInfo.StubUrlRstId && sync.RemotePath == lockedInfo.StubUrlPath {
+		if IsFileExist(lockedInfo) {
+			if IsFileOffloaded(lockedInfo) {
+				if IsFileOffloadedUrlCorrect(request.RemoteStorageTarget, sync.RemotePath, lockedInfo) {
 					return nil, true, ErrJobAlreadyOffloaded
 				} else if !overwrite {
-					return nil, true, fmt.Errorf("unable to create stub file: %w", err)
+					return nil, true, fmt.Errorf("unable to create stub file: %w", ErrOffloadFileUrlMismatch)
 				}
 			} else if !overwrite {
 				return nil, true, fmt.Errorf("unable to create stub file: %w", fs.ErrExist)
 			}
 		}
 
+		// TODO: These should be performed on the worker node
+		store, err := config.NodeStore(ctx)
+		if err != nil {
+			return nil, true, err
+		}
+		mappings, err := util.GetMappings(ctx)
+		if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
+			return nil, true, err
+		}
 		err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, request.Path, sync.RemotePath, request.RemoteStorageTarget, overwrite)
 		if err != nil {
 			return nil, true, err
 		}
+
 		return nil, true, ErrJobAlreadyOffloaded
 	}
 
-	if lockedInfo.Exists {
-		isStub := lockedInfo.StubUrlRstId > 0
-		alreadySynced := lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
-		if isStub {
+	if IsFileExist(lockedInfo) {
+		if IsFileOffloaded(lockedInfo) {
 
-			// TODO: Get rid of theses
-			store, err = config.NodeStore(ctx)
+			// TODO: These should be performed on the worker node
+			store, err := config.NodeStore(ctx)
 			if err != nil {
 				return nil, true, err
 			}
-			mappings, err = util.GetMappings(ctx)
+			mappings, err := util.GetMappings(ctx)
 			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
 				return nil, true, err
 			}
-
 			if err := entry.ClearFileDataState(ctx, mappings, store, request.Path); err != nil {
 				return nil, true, fmt.Errorf("unable to clear stub file flag: %w", err)
 			}
+
 			overwrite = true
-		} else if alreadySynced {
+		} else if IsFileAlreadySynced(lockedInfo) {
 			return nil, true, ErrJobAlreadyComplete
 		} else if activeJobAlreadyExists(request, lastJob) {
 			return nil, true, ErrJobAlreadyExists
@@ -334,6 +375,8 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 	}
 
 	segCount, partsPerSegment := r.recommendedSegments(lockedInfo.RemoteSize)
+
+	// TODO: These should be performed on the worker node
 	err = r.mountPoint.CreatePreallocatedFile(request.Path, lockedInfo.RemoteSize, overwrite)
 	if err != nil {
 		return nil, false, err
@@ -341,79 +384,6 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 
 	workRequests := RecreateWorkRequests(job, generateSegments(lockedInfo.RemoteSize, segCount, partsPerSegment))
 	return workRequests, true, nil
-}
-
-func (r *S3Client) executeSyncJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, walkChan <-chan *WalkResponse, jobSubmissionChan chan<- *beeremote.JobRequest) error {
-	sync := request.GetSync()
-	inMountPath := request.Path
-	remotePath := sync.RemotePath
-
-	store, err := config.NodeStore(ctx)
-	if err != nil {
-		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
-	}
-	mappings, err := util.GetMappings(ctx)
-	if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case walkResp, ok := <-walkChan:
-			if !ok {
-				return nil
-			}
-			if walkResp.FatalErr {
-				return walkResp.Err
-			}
-
-			switch sync.Operation {
-			case flex.SyncJob_DOWNLOAD:
-				remotePath = sanitizePrefix(walkResp.Path)
-				inMountPath = MapRemoteToLocalPath(request.Path, remotePath, sync.Flatten)
-				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
-					return err
-				}
-			case flex.SyncJob_UPLOAD:
-				inMountPath = walkResp.Path
-				remotePath = sanitizePrefix(inMountPath)
-			}
-
-			// TODO: If getLockedInfo needs to get the entry then it could be passed back as a pointer to avoid duplicate checks
-			//  - Subsequent commands that need entry should just check for nil first...
-			lockedInfo, err := r.getLockedInfo(ctx, mappings, store, sync, inMountPath, remotePath, request.StubLocal)
-			if err != nil {
-				return err
-			}
-
-			if request.StubLocal && !lockedInfo.Exists && sync.Operation == flex.SyncJob_DOWNLOAD {
-				err = CreateOffloadedDataFile(ctx, r.mountPoint, mappings, store, inMountPath, remotePath, request.RemoteStorageTarget, false)
-				if err != nil {
-					return fmt.Errorf("unable to create stub file: %w", err)
-				}
-				lockedInfo.StubUrlRstId = request.RemoteStorageTarget
-				lockedInfo.StubUrlPath = remotePath
-			}
-
-			jobRequest := &beeremote.JobRequest{
-				Path:                inMountPath,
-				RemoteStorageTarget: request.RemoteStorageTarget,
-				StubLocal:           request.StubLocal,
-				// TODO: this should be reflective of the original request
-				// Force:               request.Force,
-				Force: false,
-				Type: &beeremote.JobRequest_Sync{
-					Sync: &flex.SyncJob{
-						RemotePath: remotePath,
-						Operation:  sync.Operation,
-						Overwrite:  sync.Overwrite,
-						LockedInfo: lockedInfo,
-					}}}
-			jobSubmissionChan <- jobRequest
-		}
-	}
 }
 
 func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
@@ -436,7 +406,7 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 		if abort {
 			// When aborting there is no reason to check the mtime below and it may not have
 			// been set correctly anyway given the error check is skipped above.
-			return r.AbortUpload(ctx, job.ExternalId, request.Path)
+			return r.abortUpload(ctx, job.ExternalId, request.Path)
 		} else {
 			// TODO: https://github.com/thinkparq/gobee/issues/29
 			// There could be lots of parts. Look for ways to optimize this. Like if we could
@@ -451,7 +421,7 @@ func (r *S3Client) completeSyncWorkRequests_Upload(ctx context.Context, job *bee
 			}
 			// If there was an error finishing the upload we should return that and not worry
 			// about checking if the file was modified.
-			if err := r.FinishUpload(ctx, job.ExternalId, request.Path, partsToFinish); err != nil {
+			if err := r.finishUpload(ctx, job.ExternalId, request.Path, partsToFinish); err != nil {
 				return err
 			}
 		}
@@ -490,7 +460,7 @@ func (r *S3Client) completeSyncWorkRequests_Download(ctx context.Context, job *b
 	request := job.GetRequest()
 	syncJob := request.GetSync()
 
-	_, mtime, err := r.GetObjectMetadata(ctx, syncJob.RemotePath, true)
+	_, mtime, err := r.getObjectMetadata(ctx, syncJob.RemotePath, true)
 	if err != nil {
 		return err
 	}
@@ -514,141 +484,43 @@ func (r *S3Client) completeSyncWorkRequests_Download(ctx context.Context, job *b
 	return nil
 }
 
-func (r *S3Client) getLockedInfo(
-	ctx context.Context,
-	mappings *util.Mappings,
-	store *beemsg.NodeStore,
-	sync *flex.SyncJob,
-	path string,
-	remotePath string,
-	offload bool,
-) (*flex.SyncJob_SyncJobLockedInfo, error) {
-
-	lockedInfo := sync.GetLockedInfo()
-	if lockedInfo == nil {
-		lockedInfo = &flex.SyncJob_SyncJobLockedInfo{}
+func (r *S3Client) setLockedInfo(ctx context.Context, mappings *util.Mappings, store *beemsg.NodeStore, job *beeremote.Job) error {
+	request := job.GetRequest()
+	sync := request.GetSync()
+	if sync.LockedInfo != nil && sync.LockedInfo.Locked {
+		return nil
 	}
 
-	if !lockedInfo.Locked {
-		var err error
-		if store == nil || len(store.GetNodes()) == 0 {
-			store, err = config.NodeStore(ctx)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if mappings == nil || mappings.NodeToTargets.Len() == 0 {
-			mappings, err = util.GetMappings(ctx)
-			if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-				return nil, err
-			}
-		}
-
-		// TODO: Remove if the read-write and read-only methods can do these checks
-		entry, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, path)
-		if err != nil {
-			if !errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
-				return nil, err
-			}
-		} else {
-			// TODO: need to add request.Force...
-			// ignoreReaders := request.Force || sync.Operation == flex.SyncJob_UPLOAD
-			// ignoreWriters := request.Force
-			ignoreReaders := false || sync.Operation == flex.SyncJob_UPLOAD
-			ignoreWriters := false
-			err := CheckEntry(entry.Entry, ignoreReaders, ignoreWriters)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		operation := sync.GetOperation()
-		switch operation {
-		case flex.SyncJob_DOWNLOAD:
-			// TODO: Get file read-write lock
-			//   Should read-write lock check for open files? If so, remove the GetEntry()/CheckEntry above
-		case flex.SyncJob_UPLOAD:
-			// TODO: Get file read-only lock
-			//  Should read-only lock check for files open with write privilege? If so, remove the GetEntry()/CheckEntry above
-		default:
-			return nil, ErrUnsupportedOpForRST
-		}
-		lockedInfo.SetLocked(true)
-
-		// The most likely reason for an stat error is the path wasn't found because the request is for
-		// a file in BeeGFS that doesn't exist or was removed after the request was submitted. Less
-		// likely there was some transient network/other issue preventing communication to BeeGFS that
-		// could be retried (generally the client should retry most issues anyway). Until there is a
-		// reason to add more complex error handling just treat all stat errors as fatal.
-		stat, err := r.mountPoint.Lstat(path)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-			if operation == flex.SyncJob_UPLOAD {
-				return nil, err
-			}
-		} else {
-			lockedInfo.Exists = true
-			lockedInfo.Size = stat.Size()
-			lockedInfo.Mtime = timestamppb.New(stat.ModTime())
-			lockedInfo.Mode = uint32(stat.Mode())
-		}
-
-		remoteSize, remoteMtime, err := r.GetObjectMetadata(ctx, remotePath, operation == flex.SyncJob_DOWNLOAD)
-		if err != nil {
-			return nil, fmt.Errorf("error retrieving remote object's metadata: %w", err)
-		}
-		lockedInfo.RemoteSize = remoteSize
-		lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
-
-		if lockedInfo.Exists && !fs.FileMode(lockedInfo.Mode).IsDir() {
-			if lockedInfo.StubUrlRstId, lockedInfo.StubUrlPath, err = GetOffloadedUrlParts(ctx, r.mountPoint, mappings, store, path); err != nil {
-				return nil, fmt.Errorf("unable to get rst url parts: %w", err)
-			}
-		}
+	cfg := &flex.JobRequestCfg{
+		RemoteStorageTarget: r.config.Id,
+		Path:                request.Path,
+		RemotePath:          sync.RemotePath,
+		Download:            sync.Operation == flex.SyncJob_DOWNLOAD,
+		StubLocal:           request.StubLocal,
+		Overwrite:           sync.Overwrite,
+		Flatten:             sync.Flatten,
+		Force:               request.Force,
 	}
 
-	return lockedInfo, nil
-}
-
-func (r *S3Client) recommendedSegments(fileSize int64) (int64, int32) {
-
-	if fileSize <= r.config.Policies.FastStartMaxSize || r.config.Policies.FastStartMaxSize == 0 {
-		return 1, 1
-	} else if fileSize/4 < 5242880 {
-		// Each part must be at least 5MB except for the last part which can be any size.
-		// Regardless of the FastStartMaxSize ensure we don't try to use a multipart upload when it is not valid.
-		// https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
-		return 1, 1
-	}
-	// TODO: https://github.com/thinkparq/gobee/issues/7
-	// Arbitrary selection for now. We should be smarter and take into
-	// consideration file size and number of workers for this RST type.
-	return 4, 1
-}
-
-func (r *S3Client) ObjectExists(ctx context.Context, key string) (bool, error) {
-	headObjectInput := &s3.HeadObjectInput{
-		Bucket: aws.String(r.config.GetS3().Bucket),
-		Key:    aws.String(key),
-	}
-
-	_, err := r.client.HeadObject(ctx, headObjectInput)
+	lockedInfo, _, err := GetLockedInfo(ctx, r.mountPoint, store, mappings, cfg, request.Path)
 	if err != nil {
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) {
-			if apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "NoSuchKey" {
-				return false, nil
-			}
-		}
-		return false, err
+		return err
 	}
-	return true, nil
+
+	sanitizedRemotePath := r.SanitizeRemotePath(sync.RemotePath)
+	remoteSize, remoteMtime, err := r.GetRemoteInfo(ctx, sanitizedRemotePath, cfg.Download)
+	if err != nil {
+		return err
+	}
+	lockedInfo.RemoteSize = remoteSize
+	lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
+
+	sync.SetLockedInfo(lockedInfo)
+	return nil
 }
 
-// GetObjectMetadata returns the object's size in bytes, modification time if it exists.
-func (r *S3Client) GetObjectMetadata(ctx context.Context, key string, keyMustExist bool) (int64, time.Time, error) {
+// getObjectMetadata returns the object's size in bytes, modification time if it exists.
+func (r *S3Client) getObjectMetadata(ctx context.Context, key string, keyMustExist bool) (int64, time.Time, error) {
 
 	headObjectInput := &s3.HeadObjectInput{
 		Bucket: aws.String(r.config.GetS3().Bucket),
@@ -679,7 +551,7 @@ func (r *S3Client) GetObjectMetadata(ctx context.Context, key string, keyMustExi
 	return *resp.ContentLength, mtime, nil
 }
 
-func (r *S3Client) CreateUpload(ctx context.Context, path string, mtime time.Time) (uploadID string, err error) {
+func (r *S3Client) createUpload(ctx context.Context, path string, mtime time.Time) (uploadID string, err error) {
 
 	createMultipartUploadInput := &s3.CreateMultipartUploadInput{
 		Bucket:   aws.String(r.config.GetS3().Bucket),
@@ -694,7 +566,7 @@ func (r *S3Client) CreateUpload(ctx context.Context, path string, mtime time.Tim
 	return *result.UploadId, nil
 }
 
-func (r *S3Client) AbortUpload(ctx context.Context, uploadID string, path string) error {
+func (r *S3Client) abortUpload(ctx context.Context, uploadID string, path string) error {
 	abortMultipartUploadInput := &s3.AbortMultipartUploadInput{
 		UploadId: aws.String(uploadID),
 		Bucket:   aws.String(r.config.GetS3().Bucket),
@@ -705,8 +577,8 @@ func (r *S3Client) AbortUpload(ctx context.Context, uploadID string, path string
 	return err
 }
 
-// FinishUpload will automatically sort parts by number if they are not already in order.
-func (r *S3Client) FinishUpload(ctx context.Context, uploadID string, path string, parts []*flex.Work_Part) error {
+// finishUpload will automatically sort parts by number if they are not already in order.
+func (r *S3Client) finishUpload(ctx context.Context, uploadID string, path string, parts []*flex.Work_Part) error {
 
 	completedParts := make([]types.CompletedPart, len(parts))
 	for i, part := range parts {
@@ -734,14 +606,14 @@ func (r *S3Client) FinishUpload(ctx context.Context, uploadID string, path strin
 	return err
 }
 
-// Upload attempts to upload the specified part of the provided file path. If an upload ID is
+// upload attempts to upload the specified part of the provided file path. If an upload ID is
 // provided it will treat the provided part as one part in a larger multi-part upload. If the upload
 // ID is empty then it will not perform a multi-part upload and just do PutObject, but this also
 // requires the provided part number to be "1". When not performing a multi-part upload it still
 // honors the provided offset start/stop range and does not check to verify this range covers the
 // entirety of the specified file. If the upload is successful the part will be updated directly
 // with the results (such as the etag), otherwise an error will be returned.
-func (r *S3Client) Upload(ctx context.Context, path string, remotePath string, uploadID string, part *flex.Work_Part) error {
+func (r *S3Client) upload(ctx context.Context, path string, remotePath string, uploadID string, part *flex.Work_Part) error {
 
 	filePart, sha256sum, err := r.mountPoint.ReadFilePart(path, part.OffsetStart, part.OffsetStop)
 
@@ -803,7 +675,7 @@ func (r *S3Client) Upload(ctx context.Context, path string, remotePath string, u
 	return nil
 }
 
-func (r *S3Client) Download(ctx context.Context, path string, remotePath string, part *flex.Work_Part) error {
+func (r *S3Client) download(ctx context.Context, path string, remotePath string, part *flex.Work_Part) error {
 	if part.OffsetStart == part.OffsetStop {
 		// There are no bytes to write to the file. Most likely this is an empty file.
 		return nil
@@ -836,60 +708,50 @@ func (r *S3Client) Download(ctx context.Context, path string, remotePath string,
 	return nil
 }
 
-// walkPrefix lists objects in an S3 bucket that match the specified prefix, returning results via
-// the *WalkPrefixResponse channel.Results can also be filtered using file globbing in the pattern
-// which includes double start for directory recursion.
-func (r *S3Client) walkPrefix(ctx context.Context, prefix string, chanSize int) (<-chan *WalkResponse, error) {
-	prefix = sanitizePrefix(prefix)
-	if _, err := filepath.Match(prefix, ""); err != nil {
-		return nil, fmt.Errorf("invalid prefix %s: %w", prefix, err)
+func (r *S3Client) recommendedSegments(fileSize int64) (int64, int32) {
+
+	if fileSize <= r.config.Policies.FastStartMaxSize || r.config.Policies.FastStartMaxSize == 0 {
+		return 1, 1
+	} else if fileSize/4 < 5242880 {
+		// Each part must be at least 5MB except for the last part which can be any size.
+		// Regardless of the FastStartMaxSize ensure we don't try to use a multipart upload when it is not valid.
+		// https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
+		return 1, 1
 	}
-
-	prefixWithoutPattern := StripGlobPattern(prefix)
-	usePattern := prefix != prefixWithoutPattern
-
-	walkChan := make(chan *WalkResponse, chanSize)
-	go func() {
-		defer close(walkChan)
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			var err error
-			var output *s3.ListObjectsV2Output
-			input := &s3.ListObjectsV2Input{
-				Bucket: aws.String(r.config.GetS3().Bucket),
-				Prefix: aws.String(prefixWithoutPattern),
-			}
-
-			objectPaginator := s3.NewListObjectsV2Paginator(r.client, input)
-			for objectPaginator.HasMorePages() {
-				output, err = objectPaginator.NextPage(ctx)
-				if err != nil {
-					var noBucket *types.NoSuchBucket
-					if errors.As(err, &noBucket) {
-						err := fmt.Errorf("s3 bucket %s does not exist: %s", r.config.GetS3().Bucket, noBucket.Error())
-						walkChan <- &WalkResponse{Err: err, FatalErr: true}
-					}
-					return
-				}
-
-				for _, content := range output.Contents {
-					if usePattern {
-						if match, _ := filepath.Match(prefix, *content.Key); !match {
-							continue
-						}
-					}
-					walkChan <- &WalkResponse{Path: *content.Key}
-				}
-			}
-		}
-	}()
-
-	return walkChan, nil
+	// TODO: https://github.com/thinkparq/gobee/issues/7
+	// Arbitrary selection for now. We should be smarter and take into
+	// consideration file size and number of workers for this RST type.
+	return 4, 1
 }
 
-func sanitizePrefix(prefix string) string {
-	// Valid s3 prefixes do not start with a '/' (e.g. myfolder/*/subdir?[a-z])
-	return strings.TrimLeft(prefix, "/")
+// activeJobAlreadyExists is intended to be used with GenerateWorkRequests to determine whether
+// there is an active job that would be completed by this job.
+func activeJobAlreadyExists(request *beeremote.JobRequest, lastJob *beeremote.Job) bool {
+
+	// TODO: THIS NEEDS TO BE TESTED
+
+	return false
+
+	// TODO:
+
+	// if lastJob == nil {
+	// 	return false
+	// }
+
+	// // We shouldn't care about the operation. We don't want active upload and download operations.
+
+	// // lastRequest := lastJob.GetRequest()
+	// // if request.HasSync() && lastRequest.HasSync() {
+	// // 	if request.GetSync().Operation != lastRequest.GetSync().Operation {
+	// // 		return false
+	// // 	}
+	// // } else {
+	// // 	return false
+	// // }
+
+	// state := lastJob.Status.State
+	// if state == beeremote.Job_OFFLOADED || state == beeremote.Job_COMPLETED || state == beeremote.Job_CANCELLED || state == beeremote.Job_FAILED { // Shouldn't be able to get here if beeremote.Job_FAILED
+	// 	return false
+	// }
+	// return true
 }

@@ -389,7 +389,7 @@ func (m *Manager) SubmitJobRequest(jr *beeremote.JobRequest) (*beeremote.JobResu
 		terminalJobsByRST := make(map[uint32][]*Job, 0)
 
 		for _, existingJob := range pathEntry.Value {
-			if existingJob.Request.GetRemoteStorageTarget() == job.Request.GetRemoteStorageTarget() && existingJob.Request.GetJobBuilder() == job.Request.GetJobBuilder() && !existingJob.InTerminalState() {
+			if existingJob.Request.GetRemoteStorageTarget() == job.Request.GetRemoteStorageTarget() && !existingJob.InTerminalState() {
 				// We found an active job for this RST. We shouldn't try to start a new job but we also shouldn't clean up the active job.
 				conflictingJob = existingJob
 			} else if existingJob.InTerminalState() {

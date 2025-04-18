@@ -177,6 +177,8 @@ func New(jobRequest *beeremote.JobRequest) (*Job, error) {
 	}
 
 	switch jobRequest.WhichType() {
+	case beeremote.JobRequest_Builder_case:
+		return newJob, nil
 	case beeremote.JobRequest_Sync_case:
 		return newJob, nil
 	case beeremote.JobRequest_Mock_case:

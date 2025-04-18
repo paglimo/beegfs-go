@@ -105,6 +105,8 @@ func (t *jobsTable) Row(result *beeremote.JobResult) {
 		if syncJob.Operation == flex.SyncJob_UPLOAD && job.Request.StubLocal {
 			operation = "OFFLOAD"
 		}
+	} else if request.HasBuilder() {
+		operation = "JOB BUILDER"
 	} else {
 		// Fallback and print the raw representation for unknown types:
 		operation = fmt.Sprintf("%v", request.GetType())

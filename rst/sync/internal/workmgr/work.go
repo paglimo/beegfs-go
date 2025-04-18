@@ -284,7 +284,6 @@ func (w *worker) processWork(work workAssignment) {
 		// on jobSubmissionChan
 		jobSubmissionChan := make(chan *beeremote.JobRequest, 2048)
 		go client.ExecuteJobBuilderRequest(work.ctx, request.WorkRequest, jobSubmissionChan)
-
 	processJobs:
 		for {
 			select {

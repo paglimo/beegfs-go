@@ -2,9 +2,7 @@ package rst
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -87,7 +85,7 @@ type jobRequestWithError struct {
 // walking a directory or connecting to BeeRemote) then the response will have FatalError=true and
 // all outstanding goroutines will be immediately cancelled. In all cases the channel is closed once
 // there are no more responses to receive.
-func SubmitJobRequest(ctx context.Context, cfg JobRequestCfg, chanSize int) (<-chan *JobResponse, context.CancelFunc, error) {
+func SubmitJobRequest(ctx context.Context, cfg *flex.JobRequestCfg, chanSize int) (<-chan *JobResponse, context.CancelFunc, error) {
 	mappings, err := util.GetMappings(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
@@ -102,7 +100,7 @@ func SubmitJobRequest(ctx context.Context, cfg JobRequestCfg, chanSize int) (<-c
 	requestChan := make(chan *jobRequestWithError, chanSize)
 	go func() {
 		defer close(requestChan)
-		sendJobRequest(ctx, beegfs, mappings, &cfg, requestChan)
+		sendJobRequest(ctx, beegfs, mappings, cfg, requestChan)
 	}()
 
 	respChan, err := submitJobRequests(ctx, cancel, requestChan, false)
@@ -115,7 +113,7 @@ func SubmitJobRequest(ctx context.Context, cfg JobRequestCfg, chanSize int) (<-c
 // StreamSubmitJobRequests asynchronously streams job requests from the caller while returning
 // responses over the response channel unless ignoreResponses==true. It will immediately return an
 // error if anything went wrong during setup. It is the responsibility of the caller to close the
-// *JobRequestCfg channel.
+// *flex.JobRequestCfg channel.
 //
 // If a fatal error occurs that is likely to prevent scheduling any future requests (such as
 // connecting to BeeRemote) then the response will have FatalError=true and the stream will be
@@ -127,14 +125,14 @@ func SubmitJobRequest(ctx context.Context, cfg JobRequestCfg, chanSize int) (<-c
 //	}
 //	jobRequestCfgChan <- (...)
 //	close(jobRequestCfgChan)
-func StreamSubmitJobRequests(ctx context.Context, beegfs filesystem.Provider, chanSize int, ignoreResponses bool) (chan<- *JobRequestCfg, <-chan *JobResponse, error) {
+func StreamSubmitJobRequests(ctx context.Context, beegfs filesystem.Provider, chanSize int, ignoreResponses bool) (chan<- *flex.JobRequestCfg, <-chan *JobResponse, error) {
 	mappings, err := util.GetMappings(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	cfgChan := make(chan *JobRequestCfg, chanSize)
+	cfgChan := make(chan *flex.JobRequestCfg, chanSize)
 	requestChan := make(chan *jobRequestWithError, chanSize)
 	go func() {
 		defer close(requestChan)
@@ -196,12 +194,12 @@ func submitJobRequests(ctx context.Context, cancel context.CancelFunc, requestCh
 	return respChan, nil
 }
 
-func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, cfg *JobRequestCfg, requestChan chan<- *jobRequestWithError) {
+func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, cfg *flex.JobRequestCfg, requestChan chan<- *jobRequestWithError) {
 	var err error
 	var pathInfo mountPathInfo
 	sendError := func(err error) {
 		requestChan <- &jobRequestWithError{
-			Request: &beeremote.JobRequest{Path: pathInfo.Path, RemoteStorageTarget: cfg.RSTID},
+			Request: &beeremote.JobRequest{Path: pathInfo.Path, RemoteStorageTarget: cfg.RemoteStorageTarget},
 			Err:     err,
 		}
 	}
@@ -211,19 +209,19 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 		sendError(err)
 		return
 	}
+	cfg.Path = pathInfo.Path
 
 	var rstIds []uint32
 	jobBuilder := false
 	if !pathInfo.Exists {
 		jobBuilder = true
-		if !validRstId(cfg.RSTID) {
+		if !validRstId(cfg.RemoteStorageTarget) {
 			sendError(fmt.Errorf("unable to send job requests! Invalid RST identifier"))
 		}
-		rstIds = []uint32{cfg.RSTID}
+		rstIds = []uint32{cfg.RemoteStorageTarget}
+	} else if pathInfo.IsDir {
+		jobBuilder = true
 	} else {
-		if pathInfo.IsDir {
-			jobBuilder = true
-		}
 		entry, err := getEntry(ctx, mappings, pathInfo.Path)
 		if err != nil {
 			sendError(err)
@@ -236,11 +234,17 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 			sendError(err)
 		}
 
-		if validRstId(cfg.RSTID) {
-			rstIds = []uint32{cfg.RSTID}
+		if validRstId(cfg.RemoteStorageTarget) {
+			rstIds = []uint32{cfg.RemoteStorageTarget}
 		} else if rstIds, err = getEntryRSTs(entry.Entry); err != nil {
 			sendError(err)
 		}
+	}
+
+	if jobBuilder {
+		jobRequest := getJobBuilderRequest(pathInfo.Path, 0, cfg)
+		requestChan <- &jobRequestWithError{Request: jobRequest}
+		return
 	}
 
 	var jobRequest *beeremote.JobRequest
@@ -253,8 +257,6 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 			sendError(ErrFileTypeUnsupported)
 			continue
 		}
-
-		jobRequest.JobBuilder = jobBuilder
 		requestChan <- &jobRequestWithError{Request: jobRequest}
 	}
 }
@@ -322,7 +324,21 @@ func submitJobRequestWorker(ctx context.Context, cancel context.CancelFunc, remo
 	}
 }
 
-func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *beeremote.JobRequest {
+func getJobBuilderRequest(inMountPath string, rstId uint32, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+	return &beeremote.JobRequest{
+		Path:                inMountPath,
+		RemoteStorageTarget: rstId,
+		StubLocal:           cfg.StubLocal,
+		Force:               cfg.Force,
+		Type: &beeremote.JobRequest_Builder{
+			Builder: &flex.BuilderJob{
+				Cfg: cfg,
+			},
+		},
+	}
+}
+
+func getSyncJobRequest(inMountPath string, rstId uint32, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	var operation flex.SyncJob_Operation
 	if cfg.Download {
 		operation = flex.SyncJob_DOWNLOAD
@@ -341,6 +357,7 @@ func getSyncJobRequest(inMountPath string, rstId uint32, cfg *JobRequestCfg) *be
 				Operation:  operation,
 				Overwrite:  cfg.Overwrite,
 				Flatten:    cfg.Flatten,
+				LockedInfo: cfg.LockedInfo,
 			}}}
 }
 
@@ -350,19 +367,23 @@ type mountPathInfo struct {
 	IsDir  bool
 }
 
-func getMountPathInfo(beegfs filesystem.Provider, path string) (mountPathInfo, error) {
+func getMountPathInfo(beegfsProvider filesystem.Provider, path string) (mountPathInfo, error) {
 	result := mountPathInfo{Path: path}
-	pathInMount, err := beegfs.GetRelativePathWithinMount(path)
+	pathInMount, err := beegfsProvider.GetRelativePathWithinMount(path)
 	if err != nil {
 		return result, err
 	}
 	result.Path = pathInMount
 
-	info, err := beegfs.Lstat(pathInMount)
+	info, err := beegfsProvider.Lstat(pathInMount)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return result, err
-		}
+		// ANY ERROR WILL BE TREATED AS THE FILE DOES NOT EXIST
+		// TODO: this is error is not correct
+		//	- Error: lstat /mnt/beegfs/test/1: not a directory: unable to initialize file system client from the specified path
+		//  - `not a directory` is beegfs.OpsErr_NOTADIR but is not being recognized as the error
+		// if !errors.Is(err, os.ErrNotExist) {
+		// 	return result, err
+		// }
 		return result, nil
 	}
 	result.Exists = true

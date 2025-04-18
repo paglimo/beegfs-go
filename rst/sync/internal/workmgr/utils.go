@@ -103,10 +103,9 @@ func newWorkFromRequest(workRequest *workRequest) *work {
 
 	return &work{
 		Work: flex.Work_builder{
-			Path:       workRequest.Path,
-			JobId:      workRequest.JobId,
-			RequestId:  workRequest.RequestId,
-			JobBuilder: workRequest.JobBuilder,
+			Path:      workRequest.Path,
+			JobId:     workRequest.JobId,
+			RequestId: workRequest.RequestId,
 			Status: flex.Work_Status_builder{
 				State:   flex.Work_SCHEDULED,
 				Message: "worker node accepted work request",

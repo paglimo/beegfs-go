@@ -120,15 +120,12 @@ func NewFromPath(path string) (Provider, error) {
 	for {
 		currentStat, err := os.Lstat(absPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				parentPath := filepath.Dir(absPath)
-				if parentPath == absPath {
-					return nil, fmt.Errorf("%s: %w", path, ErrInitFSClient)
-				}
-				absPath = parentPath
-				continue
+			parentPath := filepath.Dir(absPath)
+			if parentPath == absPath {
+				return nil, fmt.Errorf("%s: %w", path, ErrInitFSClient)
 			}
-			return nil, fmt.Errorf("%w: %w", err, ErrInitFSClient)
+			absPath = parentPath
+			continue
 		}
 		parentPath := filepath.Dir(absPath)
 		if parentPath == absPath {
