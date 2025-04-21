@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
-	"time"
 
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/protobuf/go/beeremote"
@@ -24,20 +22,20 @@ type grpcProvider struct {
 
 var _ Provider = &grpcProvider{}
 
-func (c *grpcProvider) init(config Config) error {
+func (c *grpcProvider) init(cfg Config) error {
 	var cert []byte
 	var err error
-	if !config.TlsDisable && config.TlsCertFile != "" {
-		cert, err = os.ReadFile(config.TlsCertFile)
+	if !cfg.TlsDisable && cfg.TlsCertFile != "" {
+		cert, err = os.ReadFile(cfg.TlsCertFile)
 		if err != nil {
 			return fmt.Errorf("reading certificate file failed: %w", err)
 		}
 	}
 	conn, err := beegrpc.NewClientConn(
-		config.dynamic.GetAddress(),
+		cfg.dynamic.GetAddress(),
 		beegrpc.WithTLSCaCert(cert),
-		beegrpc.WithTLSDisableVerification(config.TLSDisableVerification),
-		beegrpc.WithTLSDisable(config.TlsDisable),
+		beegrpc.WithTLSDisableVerification(cfg.TLSDisableVerification),
+		beegrpc.WithTLSDisable(cfg.TlsDisable),
 	)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrUnableToConnect, err)
@@ -45,6 +43,22 @@ func (c *grpcProvider) init(config Config) error {
 
 	c.conn = conn
 	c.client = beeremote.NewBeeRemoteClient(c.conn)
+
+	config.SetCtlGlobalFlags(
+		config.GlobalConfig{
+			Mount:                       cfg.dynamic.Mount,
+			MgmtdAddress:                cfg.dynamic.MgmtdAddress,
+			MgmtdTLSCertFile:            cfg.dynamic.MgmtdTlsCertFile,
+			MgmtdTLSDisableVerification: cfg.dynamic.MgmtdTlsDisableVerification,
+			MgmtdTLSDisable:             cfg.dynamic.MgmtdTlsDisable,
+			AuthFile:                    cfg.dynamic.AuthFile,
+			AuthDisable:                 cfg.dynamic.AuthDisable,
+			RemoteAddress:               cfg.dynamic.Address,
+			LogLevel:                    3,
+			NumWorkers:                  runtime.GOMAXPROCS(0),
+			ConnTimeoutMs:               500,
+		},
+	)
 	return nil
 }
 
@@ -82,43 +96,6 @@ func (c *grpcProvider) submitJob(ctx context.Context, jobRequest *beeremote.JobR
 		}
 		return err
 	}
-
-	return nil
-}
-
-func (c *grpcProvider) updateGlobalFlags(ctx context.Context) error {
-	cfg, err := c.client.GetGlobalFlags(ctx, &beeremote.GetGlobalFlagsRequest{})
-	if err != nil {
-		if st, ok := status.FromError(err); ok {
-			// TLS misconfiguration can cause a confusing error message so we handle it explicitly.
-			// Note this is just a hint to the user, other error conditions may have the same
-			// message so we don't adjust behavior (i.e., treat it as fatal).
-			if strings.Contains(st.Message(), "error reading server preface: EOF") {
-				return fmt.Errorf("%w (hint: check TLS is configured correctly on the client and server)", err)
-			}
-		}
-		return err
-	}
-
-	globalFlagSet := pflag.FlagSet{}
-	globalFlagSet.String(config.ManagementAddrKey, cfg.MgmtdAddress, "")
-	globalFlagSet.String(config.BeeGFSMountPointKey, cfg.Mount, "")
-	globalFlagSet.String(config.BeeRemoteAddrKey, cfg.RemoteAddress, "")
-	globalFlagSet.Bool(config.TlsDisableKey, cfg.MgmtdTlsDisable, "")
-	globalFlagSet.String(config.TlsCertFile, cfg.MgmtdTlsCertFile, "")
-	globalFlagSet.Bool(config.TlsDisableVerificationKey, cfg.MgmtdTlsDisableVerification, "")
-	globalFlagSet.Bool(config.AuthDisableKey, cfg.AuthDisable, "")
-	globalFlagSet.String(config.AuthFileKey, cfg.AuthFile, "")
-	globalFlagSet.Int(config.NumWorkersKey, int(cfg.NumWorkers), "")
-	globalFlagSet.Duration(config.ConnTimeoutKey, time.Duration(cfg.ConnTimeoutMs)*time.Millisecond, "")
-	globalFlagSet.Int8(config.LogLevelKey, int8(cfg.LogLevel), "")
-	viper.SetEnvPrefix("beegfs")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
-	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
-		viper.BindEnv(flag.Name)
-		viper.BindPFlag(flag.Name, flag)
-	})
 
 	return nil
 }

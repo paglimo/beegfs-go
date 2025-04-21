@@ -172,10 +172,10 @@ writeResponses:
 
 	var result string
 	if viper.GetBool(config.DisableEmojisKey) {
-		result = fmt.Sprintf("%d already synced | %d already offloaded | %d already syncing | %d scheduled sync | %d previous sync failure | %d error starting sync | %d no remote target (ignored) | %d not supported (ignored)\n",
+		result = fmt.Sprintf("%d synced | %d offloaded | %d syncing | %d scheduled | %d previous sync failure | %d error starting sync | %d no remote target (ignored) | %d not supported (ignored)\n",
 			syncCompleted, syncOffloaded, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
 	} else {
-		result = fmt.Sprintf("✅ %d already synced | ☁️ %d already offloaded | 🔄 %d already syncing | ⏳ %d scheduled for sync | ❌ %d previous sync failure | \u26A0\ufe0f\u200C %d error starting sync | ⛔ %d no remote target (ignored) | 🚫 %d not supported (ignored)\n",
+		result = fmt.Sprintf("✅ %d synced | ☁️ %d offloaded | 🔄 %d syncing | ⏳ %d scheduled | ❌ %d previous sync failure | \u26A0\ufe0f\u200C %d error starting sync | ⛔ %d no remote target (ignored) | 🚫 %d not supported (ignored)\n",
 			syncCompleted, syncOffloaded, syncInProgress, syncStarted, syncNotAllowed, errStartingSync, noRSTSpecified, fileNotSupported)
 	}
 

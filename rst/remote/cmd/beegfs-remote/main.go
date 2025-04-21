@@ -9,12 +9,9 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
@@ -132,26 +129,21 @@ Using environment variables:
 		}()
 	}
 
-	// These global flags are required to for sync to utilize the ctl library.
-	globalFlagSet := pflag.FlagSet{}
-	globalFlagSet.String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, "")
-	globalFlagSet.String(config.BeeGFSMountPointKey, "auto", "")
-	globalFlagSet.String(config.BeeRemoteAddrKey, initialCfg.Server.Address, "")
-	globalFlagSet.Bool(config.TlsDisableKey, initialCfg.Management.TLSDisable, "")
-	globalFlagSet.String(config.TlsCertFile, initialCfg.Management.TLSCertFile, "")
-	globalFlagSet.Bool(config.TlsDisableVerificationKey, initialCfg.Management.TLSDisableVerification, "")
-	globalFlagSet.Bool(config.AuthDisableKey, initialCfg.Management.AuthDisable, "")
-	globalFlagSet.String(config.AuthFileKey, initialCfg.Management.AuthFile, "")
-	globalFlagSet.Int(config.NumWorkersKey, runtime.GOMAXPROCS(0), "")
-	globalFlagSet.Duration(config.ConnTimeoutKey, 500*time.Millisecond, "")
-	globalFlagSet.Int8(config.LogLevelKey, initialCfg.Log.Level, "")
-	viper.SetEnvPrefix("beegfs")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
-	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
-		viper.BindEnv(flag.Name)
-		viper.BindPFlag(flag.Name, flag)
-	})
+	config.SetCtlGlobalFlags(
+		config.GlobalConfig{
+			Mount:                       initialCfg.MountPoint,
+			MgmtdAddress:                initialCfg.Management.Address,
+			MgmtdTLSCertFile:            initialCfg.Management.TLSCertFile,
+			MgmtdTLSDisableVerification: initialCfg.Management.TLSDisableVerification,
+			MgmtdTLSDisable:             initialCfg.Management.TLSDisable,
+			AuthFile:                    initialCfg.Management.AuthFile,
+			AuthDisable:                 initialCfg.Management.AuthDisable,
+			RemoteAddress:               initialCfg.Server.Address,
+			LogLevel:                    initialCfg.Log.Level,
+			NumWorkers:                  runtime.GOMAXPROCS(0),
+			ConnTimeoutMs:               500,
+		},
+	)
 
 	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
@@ -228,10 +220,19 @@ Using environment variables:
 		}
 	}
 
-	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, flex.BeeRemoteNode_builder{
-		Id:      nodeID,
-		Address: initialCfg.Server.Address,
-	}.Build(), mountPoint)
+	beeRemoteNode := flex.BeeRemoteNode_builder{
+		Id:                          nodeID,
+		Address:                     initialCfg.Server.Address,
+		Mount:                       mountPoint.GetMountPath(),
+		MgmtdAddress:                initialCfg.Management.Address,
+		MgmtdTlsCertFile:            initialCfg.Management.TLSCertFile,
+		MgmtdTlsDisableVerification: initialCfg.Management.TLSDisableVerification,
+		MgmtdTlsDisable:             initialCfg.Management.TLSDisable,
+		AuthFile:                    initialCfg.Management.AuthFile,
+		AuthDisable:                 initialCfg.Management.AuthDisable,
+	}.Build()
+
+	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, beeRemoteNode, mountPoint)
 	if err != nil {
 		logger.Fatal("unable to initialize worker manager", zap.Error(err))
 	}

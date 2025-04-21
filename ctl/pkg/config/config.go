@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
@@ -443,4 +447,49 @@ func GetLogger() (*logger.Logger, error) {
 		}
 	}
 	return globalLogger, nil
+}
+
+type GlobalConfig struct {
+	Mount                       string
+	MgmtdAddress                string
+	MgmtdTLSCertFile            string
+	MgmtdTLSDisableVerification bool
+	MgmtdTLSDisable             bool
+	AuthFile                    string
+	AuthDisable                 bool
+	RemoteAddress               string
+	LogLevel                    int8
+	NumWorkers                  int
+	ConnTimeoutMs               int
+}
+
+// SetCtlGlobalFlags configures the environment variables required for ctl.
+func SetCtlGlobalFlags(cfg GlobalConfig) {
+	if cfg.NumWorkers < 1 {
+		cfg.NumWorkers = runtime.GOMAXPROCS(0)
+	}
+	if cfg.ConnTimeoutMs < 500 {
+		cfg.ConnTimeoutMs = 500
+	}
+
+	globalFlagSet := pflag.FlagSet{}
+	globalFlagSet.String(BeeGFSMountPointKey, cfg.Mount, "")
+	globalFlagSet.String(ManagementAddrKey, cfg.MgmtdAddress, "")
+	globalFlagSet.String(TlsCertFile, cfg.MgmtdTLSCertFile, "")
+	globalFlagSet.Bool(TlsDisableKey, cfg.MgmtdTLSDisable, "")
+	globalFlagSet.Bool(TlsDisableVerificationKey, cfg.MgmtdTLSDisableVerification, "")
+	globalFlagSet.String(AuthFileKey, cfg.AuthFile, "")
+	globalFlagSet.Bool(AuthDisableKey, cfg.AuthDisable, "")
+	globalFlagSet.String(BeeRemoteAddrKey, cfg.RemoteAddress, "")
+	globalFlagSet.Int(NumWorkersKey, cfg.NumWorkers, "")
+	globalFlagSet.Duration(ConnTimeoutKey, time.Duration(cfg.ConnTimeoutMs)*time.Millisecond, "")
+	globalFlagSet.Int8(LogLevelKey, cfg.LogLevel, "")
+
+	viper.SetEnvPrefix("beegfs")
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	os.Setenv("BEEGFS_BINARY_NAME", "beegfs")
+	globalFlagSet.VisitAll(func(flag *pflag.Flag) {
+		viper.BindEnv(flag.Name)
+		viper.BindPFlag(flag.Name, flag)
+	})
 }
