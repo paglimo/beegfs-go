@@ -258,6 +258,13 @@ type WalkResponse struct {
 }
 
 func WalkLocalDirectory(ctx context.Context, beegfs filesystem.Provider, pattern string, chanSize int) (<-chan *WalkResponse, error) {
+	if _, err := beegfs.Lstat(pattern); err != nil {
+		if walkChan, globErr := WalkGlob(ctx, beegfs, pattern, chanSize); globErr == nil {
+			return walkChan, nil
+		}
+		return nil, fmt.Errorf("unable to walk local directory: %w", err)
+	}
+
 	walkChan := make(chan *WalkResponse, chanSize)
 	walkFunc := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -297,7 +304,17 @@ func WalkLocalDirectory(ctx context.Context, beegfs filesystem.Provider, pattern
 	return walkChan, nil
 }
 
-func WalkFileList(ctx context.Context, beegfs filesystem.Provider, paths []string, chanSize int) (<-chan *WalkResponse, error) {
+func WalkGlob(ctx context.Context, beegfs filesystem.Provider, glob string, chanSize int) (<-chan *WalkResponse, error) {
+	if _, err := filepath.Glob(glob); err != nil {
+		return nil, err
+	}
+
+	absPath := filepath.Join(beegfs.GetMountPath(), glob)
+	paths, err := filepath.Glob(absPath)
+	if err != nil {
+		return nil, err
+	}
+
 	walkChan := make(chan *WalkResponse, chanSize)
 	go func() {
 		defer close(walkChan)
@@ -326,40 +343,40 @@ func BuildJobRequest(ctx context.Context,
 	inMountPath string,
 	remotePath string,
 	cfg *flex.JobRequestCfg,
-) ([]*beeremote.JobRequest, error) {
+) (requests []*beeremote.JobRequest, err error, fatal bool) {
 	lockedInfo, rstIds, err := GetLockedInfo(ctx, mountPoint, store, mappings, cfg, inMountPath)
 	if err != nil {
-		return nil, err
+		return nil, err, true
 	}
 
 	if client != nil {
 		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
 		if err != nil {
-			return nil, err
+			return nil, err, false
 		}
-		return []*beeremote.JobRequest{request}, nil
+		return []*beeremote.JobRequest{request}, nil, false
 	}
 
 	if len(rstIds) == 0 {
-		return nil, ErrFileHasNoRSTs
+		return nil, ErrFileHasNoRSTs, false
 	} else if cfg.Download && len(rstIds) > 1 {
-		return nil, ErrFileAmbiguousRST
+		return nil, ErrFileAmbiguousRST, false
 	}
 
 	var jobRequests []*beeremote.JobRequest
 	for _, rstId := range rstIds {
 		client, ok := rstMap[rstId]
 		if !ok {
-			return nil, ErrConfigRSTTypeIsUnknown
+			return nil, ErrConfigRSTTypeIsUnknown, false
 		}
 
 		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
 		if err != nil {
-			return nil, err
+			return nil, err, false
 		}
 		jobRequests = append(jobRequests, request)
 	}
-	return jobRequests, nil
+	return jobRequests, nil, false
 }
 
 // Returns whether the file exists.
@@ -502,23 +519,13 @@ func GetLockedInfo(ctx context.Context,
 			// TODO: Release Lock?
 			return nil, nil, fmt.Errorf("unable to get rst url parts: %w", err)
 		}
-	}
 
+		if isValidRstId(lockedInfo.StubUrlRstId) {
+			rstIds = []uint32{lockedInfo.StubUrlRstId}
+		}
+
+	}
 	return lockedInfo, rstIds, nil
-}
-
-// MapRemoteToLocalPath joins a base path with the remote path. If flatten is true, it replaces
-// directory separators in the remote path with underscores.
-func MapRemoteToLocalPath(path string, remotePath string, flatten bool) string {
-	if flatten {
-		remotePath = strings.Replace(remotePath, "/", "_", -1)
-	}
-
-	remoteDir := filepath.Dir(remotePath)
-	remoteBase := filepath.Base(remotePath)
-	combinedDir := filepath.Join(path, remoteDir)
-	combinedPath := filepath.Join(combinedDir, remoteBase)
-	return combinedPath
 }
 
 // StripGlobPattern extracts the longest leading substring from the given pattern that contains

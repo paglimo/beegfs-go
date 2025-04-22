@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thinkparq/beegfs-go/common/filesystem"
@@ -33,21 +34,22 @@ func NewJobBuilderClient(ctx context.Context, rstMap map[uint32]Provider, mountP
 }
 
 // GenerateJobRequest is not implemented and should never be called.
-func (r *JobBuilderClient) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+func (c *JobBuilderClient) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	return nil
 }
 
 // GenerateWorkRequests for JobBuilderClient should simply pass a single
-func (r *JobBuilderClient) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error) {
+func (c *JobBuilderClient) GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error) {
 	workRequests := RecreateWorkRequests(job, nil)
 	return workRequests, true, nil
 }
 
-func (r *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
+func (c *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error {
 	defer close(jobSubmissionChan)
 
 	builder := workRequest.GetBuilder()
 	cfg := builder.GetCfg()
+
 	walkChanSize := len(jobSubmissionChan)
 	var walkChan <-chan *WalkResponse
 	var client Provider
@@ -55,60 +57,62 @@ func (r *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workReq
 	var err error
 	if cfg.Download {
 		if !isValidRstId(cfg.RemoteStorageTarget) {
-
-			// TODO: Walk local path to see if the files exist.
-			//  - If the file exists, get for rst ids and, if there's only one, use it.
-
-			return fmt.Errorf("download without Cfg.RemoteStorageTarget is not implemented")
+			// Since there's no specified remote target then walk the local path. Jobs will be
+			// created for each file with a single rstId. Files with zero rstIds will be ignored and
+			// those with multiple rstIds will fail since the source is ambiguous.
+			normalizedRemotePath := normalizePath(cfg.RemotePath)
+			baseRemotePath := getBaseRemoteDir(normalizedRemotePath)
+			relPath, _ := filepath.Rel(baseRemotePath, normalizedRemotePath)
+			inMountPath := filepath.Join(workRequest.Path, relPath)
+			if walkChan, err = WalkLocalDirectory(ctx, c.mountPoint, inMountPath, walkChanSize); err != nil {
+				return err
+			}
+		} else {
+			if client, ok = c.rstMap[cfg.RemoteStorageTarget]; !ok {
+				return fmt.Errorf("failed to determine rst client")
+			}
+			if walkChan, err = client.GetWalk(ctx, client.SanitizeRemotePath(cfg.RemotePath), walkChanSize); err != nil {
+				return err
+			}
 		}
-
-		if client, ok = r.rstMap[cfg.RemoteStorageTarget]; !ok {
-			return fmt.Errorf("failed to determine rst client")
-		}
-
-		if walkChan, err = client.GetWalk(ctx, cfg.RemotePath, walkChanSize); err != nil {
-			return err
-		}
-	} else {
-		if walkChan, err = WalkLocalDirectory(ctx, r.mountPoint, workRequest.Path, walkChanSize); err != nil {
-			return err
-		}
+	} else if walkChan, err = WalkLocalDirectory(ctx, c.mountPoint, workRequest.Path, walkChanSize); err != nil {
+		return err
 	}
 
-	return r.executeJobBuilderRequest(ctx, workRequest, walkChan, jobSubmissionChan)
+	return c.executeJobBuilderRequest(ctx, workRequest, walkChan, jobSubmissionChan)
 }
 
 // PrepareExecuteWorkRequests is not implemented and should never be called.
-func (r *JobBuilderClient) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
+func (c *JobBuilderClient) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
 	return true, ErrUnsupportedOpForRST
 }
 
 // ExecuteWorkRequestPart is not implemented and should never be called.
-func (r *JobBuilderClient) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
+func (c *JobBuilderClient) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
 	return ErrUnsupportedOpForRST
 }
 
 // ConcludeExecuteWorkRequests is not implemented and should never be called.
-func (r *JobBuilderClient) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
+func (c *JobBuilderClient) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
 	return true, ErrUnsupportedOpForRST
 }
 
-func (r *JobBuilderClient) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
+func (c *JobBuilderClient) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
 	return nil
 }
 
 // GetConfig is not implemented and should never be called.
-func (r *JobBuilderClient) GetConfig() *flex.RemoteStorageTarget {
+func (c *JobBuilderClient) GetConfig() *flex.RemoteStorageTarget {
 	return nil
 }
 
 // GetWalk is not implemented and should never be called.
-func (r *JobBuilderClient) GetWalk(ctx context.Context, path string, chanSize int) (<-chan *WalkResponse, error) {
+func (c *JobBuilderClient) GetWalk(ctx context.Context, path string, chanSize int) (<-chan *WalkResponse, error) {
 	return nil, ErrUnsupportedOpForRST
 }
 
 // SanitizeRemotePath should never be called.
-func (r *JobBuilderClient) SanitizeRemotePath(remotePath string) string {
+func (c *JobBuilderClient) SanitizeRemotePath(remotePath string) string {
 	return remotePath
 }
 
@@ -130,6 +134,12 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
 	}
 
+	var baseRemotePath string
+	if cfg.Download {
+		baseRemotePath = normalizePath(getBaseRemoteDir(cfg.RemotePath))
+	}
+
+	errCount := 0
 	var inMountPath string
 	var remotePath string
 	for {
@@ -138,6 +148,9 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 			return ctx.Err()
 		case walkResp, ok := <-walkChan:
 			if !ok {
+				if errCount > 0 {
+					return fmt.Errorf("failed to create %d job request(s)", errCount)
+				}
 				return nil
 			}
 			if walkResp.FatalErr {
@@ -145,12 +158,17 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 			}
 
 			if cfg.Download {
-				remotePath = walkResp.Path
 				if cfg.RemotePath == "" {
-					inMountPath = MapRemoteToLocalPath("/", remotePath, cfg.Flatten)
-				} else {
-					inMountPath = MapRemoteToLocalPath(request.Path, remotePath, cfg.Flatten)
+					return fmt.Errorf("unable to determine in-mount path! This is probably a bug")
 				}
+
+				remotePath = walkResp.Path
+				relPath, _ := filepath.Rel(baseRemotePath, normalizePath(remotePath))
+				if cfg.Flatten {
+					relPath = strings.Replace(relPath, "/", "_", -1)
+				}
+
+				inMountPath = filepath.Join(cfg.Path, relPath)
 				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
 					return err
 				}
@@ -165,15 +183,36 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 			client = r.rstMap[cfg.RemoteStorageTarget]
 		}
 
-		jobRequests, err := BuildJobRequest(ctx, client, r.rstMap, r.mountPoint, store, mappings, inMountPath, remotePath, cfg)
+		jobRequests, err, fatal := BuildJobRequest(ctx, client, r.rstMap, r.mountPoint, store, mappings, inMountPath, remotePath, cfg)
 		if err != nil {
-			continue // TODO: What should we do here? Create a failed job request so the status or job list can represent the failure? Yes
+			if fatal {
+				return fmt.Errorf("fatal error occurred while building job requests: %w", err)
+			}
+			errCount++
+			continue
 		}
 
 		for _, jobRequest := range jobRequests {
 			jobSubmissionChan <- jobRequest
 		}
 	}
+}
+
+// normalizePath simply ensures that there is a single lead forward-slash. This is expected for all
+// in-mount BeeGFS paths. When mapping between local and remote paths it's important to be
+// consistent.
+func normalizePath(path string) string {
+	return "/" + strings.TrimLeft(path, "/")
+}
+
+// BaseRemoteDir returns the directory part of remotePath before any globbing pattern.
+func getBaseRemoteDir(remotePath string) string {
+	base := StripGlobPattern(remotePath)
+	if base != remotePath && !strings.HasSuffix(base, "/") {
+		base = filepath.Dir(base)
+	}
+
+	return base
 }
 
 func isValidRstId(rstId uint32) bool {

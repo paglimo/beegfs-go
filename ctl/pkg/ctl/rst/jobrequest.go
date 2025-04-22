@@ -3,6 +3,7 @@ package rst
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -219,7 +220,7 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 			sendError(fmt.Errorf("unable to send job requests! Invalid RST identifier"))
 		}
 		rstIds = []uint32{cfg.RemoteStorageTarget}
-	} else if pathInfo.IsDir {
+	} else if pathInfo.IsDir || pathInfo.IsGlob {
 		jobBuilder = true
 	} else {
 		entry, err := getEntry(ctx, mappings, pathInfo.Path)
@@ -365,6 +366,7 @@ type mountPathInfo struct {
 	Path   string
 	Exists bool
 	IsDir  bool
+	IsGlob bool
 }
 
 func getMountPathInfo(beegfsProvider filesystem.Provider, path string) (mountPathInfo, error) {
@@ -377,13 +379,9 @@ func getMountPathInfo(beegfsProvider filesystem.Provider, path string) (mountPat
 
 	info, err := beegfsProvider.Lstat(pathInMount)
 	if err != nil {
-		// ANY ERROR WILL BE TREATED AS THE FILE DOES NOT EXIST
-		// TODO: this is error is not correct
-		//	- Error: lstat /mnt/beegfs/test/1: not a directory: unable to initialize file system client from the specified path
-		//  - `not a directory` is beegfs.OpsErr_NOTADIR but is not being recognized as the error
-		// if !errors.Is(err, os.ErrNotExist) {
-		// 	return result, err
-		// }
+		if _, err := filepath.Glob(path); err != nil {
+			result.IsGlob = true
+		}
 		return result, nil
 	}
 	result.Exists = true

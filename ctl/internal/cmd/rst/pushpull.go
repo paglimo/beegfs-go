@@ -35,8 +35,11 @@ If a fatal error occurs and the command exits early before trying to upload all 
 
 WARNING: Files are always uploaded and existing files overwritten unless the remote target has file/object versioning enabled.`,
 		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return fmt.Errorf("missing <path> argument. Usage: %s", cmd.Use)
+			if len(args) == 0 {
+				return fmt.Errorf("missing <path> argument")
+			}
+			if len(args) > 1 {
+				return fmt.Errorf("invalid number of arguments. Be sure to quote file glob pattern")
 			}
 			return nil
 		},
@@ -64,10 +67,7 @@ func newPullCmd() *cobra.Command {
 		Short: "Download a file to BeeGFS from a Remote Storage Target",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return fmt.Errorf("missing <path> argument. Usage: %s", cmd.Use)
-			}
-			if backendCfg.RemoteStorageTarget == 0 {
-				return fmt.Errorf("invalid remote target (must be greater than zero)")
+				return fmt.Errorf("missing <path> argument")
 			}
 			return nil
 		},
@@ -77,9 +77,9 @@ func newPullCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Uint32VarP(&backendCfg.RemoteStorageTarget, "remote-target", "r", 0, "The ID of the Remote Storage Target where the file should be pulled from.")
-	cmd.MarkFlagRequired("remote-target")
 	cmd.Flags().BoolVar(&backendCfg.Overwrite, "overwrite", false, "Overwrite existing files in BeeGFS. Note this only overwrites the file's contents, metadata including any configured RSTs will remain.")
 	cmd.Flags().StringVarP(&backendCfg.RemotePath, "remote-path", "p", "", "The name/path of the object/file in the remote target you wish to download. If absent, the in-mount path will be used.")
+	cmd.MarkFlagRequired("remote-path")
 	cmd.Flags().BoolVarP(&backendCfg.StubLocal, "stub-local", "s", false, "Create stub files for the remote objects or files.")
 	cmd.Flags().BoolVar(&backendCfg.Flatten, "flatten", false, "Flatten the remote directory structure. The directory delimiter will be replaced with an underscore. Only applicable to BuilderJob requests.")
 	cmd.Flags().BoolVar(&backendCfg.Force, "force", false, "Force pulling file(s) from the remote target even if the file is already in sync or another client currently has them open for reading or writing (note other clients may see errors, the job may later fail, or the downloaded file may not be the latest version).")

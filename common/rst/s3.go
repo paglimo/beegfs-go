@@ -352,8 +352,6 @@ func (r *S3Client) generateSyncJobWorkRequest_Download(ctx context.Context, last
 
 	if IsFileExist(lockedInfo) {
 		if IsFileOffloaded(lockedInfo) {
-
-			// TODO: These should be performed on the worker node
 			store, err := config.NodeStore(ctx)
 			if err != nil {
 				return nil, true, err

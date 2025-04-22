@@ -108,7 +108,9 @@ func NewFromMountPoint(path string) (Provider, error) {
 }
 
 // NewFromPath() automatically initializes a file system provider from the provided path. This works
-// by walking the path to find its mount point then using that path with NewFromMountPoint().
+// by walking the path to find its mount point then using that path with NewFromMountPoint(). The
+// path will be traversed regardless of the existence of the files or directories until a mounted
+// file system is determined.
 func NewFromPath(path string) (Provider, error) {
 
 	mountPath := ""
