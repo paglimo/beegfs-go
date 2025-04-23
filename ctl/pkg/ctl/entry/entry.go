@@ -58,9 +58,9 @@ type Entry struct {
 	// multiple times, it is still treated as a single session for that client.
 	NumSessionsWrite uint32
 	// FileState is only applicable for regular files. It stores access flags in the lower 5 bits and
-	// HSM state in the upper 3 bits. The access flags determine if the file is accessible for read/write
+	// data state in the upper 3 bits. The access flags determine if the file is accessible for read/write
 	// operations or if access is restricted. The data state value is arbitrary and meaningful only to the
-	// HSM application.
+	// data management application (or users).
 	FileState beegfs.FileState
 	// Only populated if GetEntryConfig.Verbose.
 	Verbose Verbose

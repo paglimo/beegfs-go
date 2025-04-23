@@ -194,87 +194,87 @@ func (f *rstCooldownFlag) Set(value string) error {
 	return nil
 }
 
-type accessStateFlag struct {
-	p **beegfs.AccessState
+type accessControlFlag struct {
+	p **beegfs.AccessFlags
 }
 
-func newAccessStateFlag(p **beegfs.AccessState) *accessStateFlag {
-	return &accessStateFlag{p: p}
+func newAccessControlFlag(p **beegfs.AccessFlags) *accessControlFlag {
+	return &accessControlFlag{p: p}
 }
 
-func (f *accessStateFlag) String() string {
+func (f *accessControlFlag) String() string {
 	if *f.p == nil {
 		return "unchanged"
 	}
 
-	// Format the access state in CLI format
-	accessState := **f.p
-	switch accessState {
-	case beegfs.AccessStateUnlocked:
+	// Format the access control flag in CLI format
+	accessCtlFlag := **f.p
+	switch accessCtlFlag {
+	case beegfs.AccessFlagUnlocked:
 		return "unlocked"
-	case beegfs.AccessStateReadLock:
+	case beegfs.AccessFlagReadLock:
 		return "read-lock"
-	case beegfs.AccessStateWriteLock:
+	case beegfs.AccessFlagWriteLock:
 		return "write-lock"
-	case beegfs.AccessStateReadLock | beegfs.AccessStateWriteLock:
+	case beegfs.AccessFlagReadLock | beegfs.AccessFlagWriteLock:
 		return "read-write-lock"
 	default:
-		return fmt.Sprintf("Unknown(%d)", accessState)
+		return fmt.Sprintf("Unknown(%d)", accessCtlFlag)
 	}
 }
 
-func (f *accessStateFlag) Type() string {
+func (f *accessControlFlag) Type() string {
 	return "<unlocked|read-lock|write-lock|read-write-lock|none>"
 }
 
-func (f *accessStateFlag) Set(value string) error {
-	// Create a new AccessState if it doesn't exist
+func (f *accessControlFlag) Set(value string) error {
+	// Create a new AccessFlags if it doesn't exist
 	if *f.p == nil {
-		*f.p = new(beegfs.AccessState)
+		*f.p = new(beegfs.AccessFlags)
 	}
 
-	// Parse the access state
+	// Parse the access flags
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "unlocked", "none":
-		**f.p = beegfs.AccessStateUnlocked
+		**f.p = beegfs.AccessFlagUnlocked
 	case "read-lock":
-		**f.p = beegfs.AccessStateReadLock
+		**f.p = beegfs.AccessFlagReadLock
 	case "write-lock":
-		**f.p = beegfs.AccessStateWriteLock
+		**f.p = beegfs.AccessFlagWriteLock
 	case "read-write-lock":
-		**f.p = beegfs.AccessStateReadLock | beegfs.AccessStateWriteLock
+		**f.p = beegfs.AccessFlagReadLock | beegfs.AccessFlagWriteLock
 	default:
-		return fmt.Errorf("invalid access state value: %s (valid values: unlocked, read-lock, write-lock, read-write-lock, none)", value)
+		return fmt.Errorf("invalid access flags value: %s (valid values: unlocked, read-lock, write-lock, read-write-lock, none)", value)
 	}
 
 	return nil
 }
 
-type hsmStateFlag struct {
-	p **beegfs.HsmState
+type dataStateFlag struct {
+	p **beegfs.DataState
 }
 
-func newHsmStateFlag(p **beegfs.HsmState) *hsmStateFlag {
-	return &hsmStateFlag{p: p}
+func newDataStateFlag(p **beegfs.DataState) *dataStateFlag {
+	return &dataStateFlag{p: p}
 }
 
-func (f *hsmStateFlag) String() string {
+func (f *dataStateFlag) String() string {
 	if *f.p == nil {
 		return "unchanged"
 	}
 
-	// Format the HSM state
+	// Format the data state
 	return fmt.Sprintf("%d", **f.p)
 }
 
-func (f *hsmStateFlag) Type() string {
+func (f *dataStateFlag) Type() string {
 	return "<0-7|none>"
 }
 
-func (f *hsmStateFlag) Set(value string) error {
-	// Create a new HsmState if it doesn't exist
+func (f *dataStateFlag) Set(value string) error {
+	// Create a new DataState if it doesn't exist
 	if *f.p == nil {
-		*f.p = new(beegfs.HsmState)
+		*f.p = new(beegfs.DataState)
 	}
 
 	// Handle special "none" value
@@ -283,18 +283,18 @@ func (f *hsmStateFlag) Set(value string) error {
 		return nil
 	}
 
-	// Parse the HSM state
+	// Parse the data state
 	val, err := strconv.ParseUint(value, 10, 8)
 	if err != nil {
-		return fmt.Errorf("invalid HSM state: %s (must be a numeric value between 0-7 or 'none')", value)
+		return fmt.Errorf("invalid data state: %s (must be a numeric value between 0-7 or 'none')", value)
 	}
 
 	if val > 7 {
-		return fmt.Errorf("invalid HSM state value: %d (must be 0-7)", val)
+		return fmt.Errorf("invalid data state value: %d (must be 0-7)", val)
 	}
 
-	// Set the new HSM state
-	**f.p = beegfs.HsmState(val)
+	// Set the new data state
+	**f.p = beegfs.DataState(val)
 	return nil
 }
 

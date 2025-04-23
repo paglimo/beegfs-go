@@ -53,13 +53,13 @@ This enables normal users to change the default number of targets and chunksize 
 			return nil
 		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			// Early return if neither access-state nor hsm-state are specified
-			if backendCfg.AccessState == nil && backendCfg.HsmState == nil {
+			// Early return if neither access flags nor data state are specified
+			if backendCfg.AccessFlags == nil && backendCfg.DataState == nil {
 				return nil
 			}
 
-			// Flags that are allowed to be used with access-state and hsm-state
-			allowedFlags := []string{"access-state", "hsm-state", "verbose", "yes", "recurse", "stdin-delimiter"}
+			// Flags that are allowed to be used with access flags and data state
+			allowedFlags := []string{"access-flags", "data-state", "verbose", "yes", "recurse", "stdin-delimiter"}
 
 			// Initialize a list to track any disallowed flags
 			disallowedFlags := []string{}
@@ -73,7 +73,7 @@ This enables normal users to change the default number of targets and chunksize 
 
 			// Return an error if any disallowed flags are used with file state flags
 			if len(disallowedFlags) > 0 {
-				return fmt.Errorf("file state update flags (--access-state, --hsm-state) can't be used with the following flag(s): %s",
+				return fmt.Errorf("file state update flags (--access-flags, --data-state) can't be used with the following flag(s): %s",
 					strings.Join(disallowedFlags, ", "))
 			}
 
@@ -112,10 +112,10 @@ This enables normal users to change the default number of targets and chunksize 
 	cmd.Flags().MarkHidden("remote-cooldown")
 	// Advanced options
 	cmd.Flags().BoolVar(&backendCfg.Force, "force", false, "Allow some configuration checks to be overridden.")
-	cmd.Flags().Var(newAccessStateFlag(&backendCfg.AccessState), "access-state", "Set the access state for regular files. Specify none to reset the access state.")
-	cmd.Flags().MarkHidden("access-state")
-	cmd.Flags().Var(newHsmStateFlag(&backendCfg.HsmState), "hsm-state", "Set the HSM state for regular files. Valid values: 0 to 7. Specify none to reset the HSM state.")
-	cmd.Flags().MarkHidden("hsm-state")
+	cmd.Flags().Var(newAccessControlFlag(&backendCfg.AccessFlags), "access-flags", "Set access control restrictions for files (values: unlocked, read-lock, write-lock, read-write-lock). Specify 'none' to reset the access restrictions.")
+	cmd.Flags().MarkHidden("access-flags")
+	cmd.Flags().Var(newDataStateFlag(&backendCfg.DataState), "data-state", "Set the data state for regular files (numeric values: 0-7). Specify 'none' to reset the state.")
+	cmd.Flags().MarkHidden("data-state")
 	cmd.Flags().BoolVar(&frontendCfg.confirmBulkUpdates, "yes", false, "Use to acknowledge when running this command may update a large number of entries.")
 	// IMPORTANT: When adding new flags or updating flag names update the help function below.
 	return cmd

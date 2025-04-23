@@ -31,8 +31,8 @@ type SetEntryCfg struct {
 	StripePattern      *beegfs.StripePatternType
 	RemoteTargets      []uint32
 	RemoteCooldownSecs *uint16
-	AccessState        *beegfs.AccessState
-	HsmState           *beegfs.HsmState
+	AccessFlags        *beegfs.AccessFlags
+	DataState          *beegfs.DataState
 }
 
 // Validates the effective UID has permissions to make the requested updates.
@@ -64,11 +64,11 @@ func (config *SetEntryCfg) setAndValidateEUID() error {
 		if config.RemoteCooldownSecs != nil {
 			return fmt.Errorf("only root can configure the remote cooldown")
 		}
-		if config.AccessState != nil {
-			return fmt.Errorf("only root can configure access state")
+		if config.AccessFlags != nil {
+			return fmt.Errorf("only root can configure access flags")
 		}
-		if config.HsmState != nil {
-			return fmt.Errorf("only root can configure HSM state")
+		if config.DataState != nil {
+			return fmt.Errorf("only root can configure data state")
 		}
 	}
 	return nil
@@ -122,7 +122,7 @@ func setEntry(ctx context.Context, mappings *util.Mappings, cfg SetEntryCfg, pat
 	}
 
 	// Handle file state updates separately from other updates.
-	if cfg.AccessState != nil || cfg.HsmState != nil {
+	if cfg.AccessFlags != nil || cfg.DataState != nil {
 		// Return error if the entry is NOT a regular file.
 		if entry.Entry.Type != beegfs.EntryRegularFile {
 			return SetEntryResult{
@@ -278,27 +278,20 @@ func handleFileStateUpdate(ctx context.Context, store *beemsg.NodeStore, entry *
 	// Get current file state from entry
 	currentFileState := entry.Entry.FileState
 
-	// Start with the current state
-	newFileState := currentFileState
+	// Start with current access flags and data state
+	newAccessFlags := currentFileState.GetAccessFlags()
+	newDataState := currentFileState.GetDataState()
 
-	// Apply access state update if specified by user
-	if cfg.AccessState != nil {
-		newFileState = beegfs.NewFileState(
-			*cfg.AccessState,               // New access state from user
-			currentFileState.GetHsmState(), // Keep existing HSM state
-		)
+	// Update access flags and data state if specified by the user
+	if cfg.AccessFlags != nil {
+		newAccessFlags = *cfg.AccessFlags
+	}
+	if cfg.DataState != nil {
+		newDataState = *cfg.DataState
 	}
 
-	// Apply HSM state update if specified by user
-	if cfg.HsmState != nil {
-		newFileState = beegfs.NewFileState(
-			newFileState.GetAccessState(), // Current or newly updated access state
-			*cfg.HsmState,                 // New HSM state from user
-		)
-	}
-
-	// return early if the file state is unchanged
-	if newFileState == currentFileState {
+	// Return early if no changes are required
+	if newAccessFlags == currentFileState.GetAccessFlags() && newDataState == currentFileState.GetDataState() {
 		return SetEntryResult{
 			Path:    searchPath,
 			Status:  beegfs.OpsErr_SUCCESS,
@@ -306,6 +299,8 @@ func handleFileStateUpdate(ctx context.Context, store *beemsg.NodeStore, entry *
 		}, nil
 	}
 
+	// Create new file state by combining the access flags and data state
+	newFileState := beegfs.NewFileState(newAccessFlags, newDataState)
 	request := &msg.SetFileStateRequest{
 		EntryInfo: *entry.Entry.origEntryInfoMsg,
 		FileState: newFileState,
@@ -326,8 +321,8 @@ func handleFileStateUpdate(ctx context.Context, store *beemsg.NodeStore, entry *
 		Path:   searchPath,
 		Status: resp.Result,
 		Updates: SetEntryCfg{
-			AccessState: cfg.AccessState,
-			HsmState:    cfg.HsmState,
+			AccessFlags: cfg.AccessFlags,
+			DataState:   cfg.DataState,
 		},
 	}, nil
 }
