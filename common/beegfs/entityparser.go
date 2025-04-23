@@ -65,11 +65,10 @@ func (g EntityIdParser) Parse(input string) (EntityId, error) {
 		rhs := strings.TrimSpace(strings.ToLower(subs[1]))
 
 		if lhs == "uid" {
-			// it's a uid
-
-			uid, err := strconv.ParseUint(rhs, 10, 64)
-			if err != nil || uid == 0 {
-				return InvalidEntityId{}, fmt.Errorf("invalid entity uid '%s' - accepted is a range from 1 to 2^64-1", rhs)
+			// The management defines UIDs as an signed 64-bit integer that is greater than zero.
+			uid, err := strconv.ParseInt(rhs, 10, 64)
+			if err != nil || uid <= 0 {
+				return InvalidEntityId{}, fmt.Errorf("invalid entity uid '%s' - accepted is a range from 1 to 2^63-1", rhs)
 			}
 
 			return Uid(uid), nil

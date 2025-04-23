@@ -286,7 +286,7 @@ func migrateEntry(ctx context.Context, mappings *util.Mappings, migration migrat
 				}
 				if setResult.Status != beegfs.OpsErr_SUCCESS {
 					result.Status = MigrateError
-					err = setResult.Status
+					result.Err = setResult.Status
 					return result, nil
 				}
 				result.Status = MigrateUpdatedDir
