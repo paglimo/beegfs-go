@@ -48,7 +48,7 @@ type MockClient struct {
 
 var _ Provider = &MockClient{}
 
-func (r *MockClient) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+func (r *MockClient) GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	return nil
 }
 
@@ -70,10 +70,6 @@ func (rst *MockClient) GenerateWorkRequests(ctx context.Context, lastJob *beerem
 	return args.Get(0).([]*flex.WorkRequest), true, nil
 }
 
-func (r *MockClient) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
-	return true, nil
-}
-
 func (rst *MockClient) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
 
 	if request.GetMock() != nil {
@@ -90,10 +86,6 @@ func (rst *MockClient) ExecuteWorkRequestPart(ctx context.Context, request *flex
 		part.Completed = true
 	}
 	return err
-}
-
-func (r *MockClient) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
-	return true, nil
 }
 
 // ExecuteJobBuilderRequest is not implemented and should never be called.
@@ -127,6 +119,6 @@ func (r *MockClient) SanitizeRemotePath(remotePath string) string {
 	return remotePath
 }
 
-func (r *MockClient) GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error) {
-	return 0, time.Time{}, nil
+func (r *MockClient) GetRemoteInfo(ctx context.Context, remotePath string, cfg *flex.JobRequestCfg, lockedInfo *flex.JobLockedInfo) (remoteSize int64, remoteMtime time.Time, externalId string, err error) {
+	return
 }

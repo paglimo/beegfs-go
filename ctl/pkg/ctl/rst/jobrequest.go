@@ -1,12 +1,18 @@
 package rst
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"sync"
 
 	"github.com/spf13/viper"
+	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
@@ -237,6 +243,14 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 
 		if validRstId(cfg.RemoteStorageTarget) {
 			rstIds = []uint32{cfg.RemoteStorageTarget}
+		} else if isEntryOffloaded(&entry.Entry) {
+
+			// TODO: This should use rst.GetOffloadedUrlPartsFromFile but certain circular dependencies need to be resolved first.
+			rstId, _, err := getOffloadedUrlPartsFromFile(beegfs, pathInfo.Path)
+			if err != nil {
+				sendError(err)
+			}
+			rstIds = []uint32{rstId}
 		} else if rstIds, err = getEntryRSTs(entry.Entry); err != nil {
 			sendError(err)
 		}
@@ -253,6 +267,35 @@ func sendJobRequest(ctx context.Context, beegfs filesystem.Provider, mappings *u
 		rst := mappings.RstIdToConfig[rstId]
 		switch rst.WhichType() {
 		case flex.RemoteStorageTarget_S3_case:
+
+			// // TODO: Populate cfg.LockedInfo
+			// // 	- ctl package libraries need to be moved to common because of circular dependencies
+			// //		- "github.com/thinkparq/beegfs-go/ctl/pkg/config"
+			// //		- "github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
+			// //		- "github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
+			// //		- "github.com/thinkparq/beegfs-go/ctl/pkg/util"
+			//
+			// store, err := config.NodeStore(ctx)
+			// if err != nil {
+			// 	return nil, true, err
+			// }
+			//
+			// lockedInfo, _, err := cRst.GetLockedInfo(ctx, beegfs, store, mappings, cfg, pathInfo.Path)
+			//
+			// // Create a new client for the config so that we're able to access the remote info to pass along with the job request
+			// s3Config := mappings.RstIdToConfig[rstId].GetS3()
+			// client, err := cRst.New(ctx, s3Config, beegfs)
+			// if err != nil {
+			// 	sendError(err)
+			// }
+			// remoteSize, remoteMtime, err := client.GetRemoteInfo(beegfs, store, mappings, cfg, pathInfo.Path)
+			// if err != nil {
+			// 	return err
+			// }
+			// lockedInfo.RemoteSize = remoteSize
+			// lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
+			// cfg.SetLockedInfo(cfg.LockedInfo)
+
 			jobRequest = getSyncJobRequest(pathInfo.Path, rstId, cfg)
 		default:
 			sendError(ErrFileTypeUnsupported)
@@ -379,6 +422,13 @@ func getMountPathInfo(beegfsProvider filesystem.Provider, path string) (mountPat
 
 	info, err := beegfsProvider.Lstat(pathInMount)
 	if err != nil {
+		// ANY ERROR WILL BE TREATED AS THE FILE DOES NOT EXIST
+		// TODO: this is error is not correct
+		//	- Error: lstat /mnt/beegfs/test/1: not a directory: unable to initialize file system client from the specified path
+		//  - `not a directory` is beegfs.OpsErr_NOTADIR but is not being recognized as the error
+		// if !errors.Is(err, os.ErrNotExist) {
+		// 	return result, err
+		// }
 		if _, err := filepath.Glob(path); err != nil {
 			result.IsGlob = true
 		}
@@ -416,6 +466,50 @@ func checkEntry(entry entry.Entry, ignoreReaders bool, ignoreWriters bool) error
 
 func validRstId(rstId uint32) bool {
 	return rstId != 0
+}
+
+func isEntryOffloaded(entry *entry.Entry) bool {
+	return entry.FileDataState == beegfs.FileDataStateOffloaded
+}
+
+// TODO: copied from common/rst package temporarily until the circular dependencies are resolved
+func getOffloadedUrlPartsFromFile(beegfs filesystem.Provider, path string) (uint32, string, error) {
+	// Amazon s3 allows object key names to be up to 1024 bytes in length. Note that this is a
+	// byte limit, so if your key contains multi-byte UTF-8 characters, the number of characters
+	// may be fewer than 1024. The extra 0 bytes on the right will be trimmed.
+	reader, _, err := beegfs.ReadFilePart(path, 0, 1024)
+	if err != nil {
+		return 0, "", errors.New("stub file was not readable")
+	}
+
+	rstUrl, err := io.ReadAll(reader)
+	if err != nil {
+		return 0, "", errors.New("stub file was not readable")
+	}
+	rstUrl = bytes.TrimRight(rstUrl, "\x00")
+	urlRstId, urlKey, err := parseRstUrl(rstUrl)
+	if err != nil {
+		return 0, "", errors.New("stub file is malformed")
+	}
+	return urlRstId, urlKey, nil
+}
+
+// TODO: copied from common/rst package temporarily until the circular dependencies are resolved
+func parseRstUrl(url []byte) (uint32, string, error) {
+	urlString := string(url)
+	re := regexp.MustCompile(`^rst://([0-9]+):(.+)$`)
+	matches := re.FindStringSubmatch(urlString)
+	if len(matches) != 3 {
+		return 0, "", fmt.Errorf("input does not match expected format: rst://<number>:<s3-key>")
+	}
+
+	num, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to parse number: %w", err)
+	}
+	s3Key := matches[2]
+
+	return uint32(num), s3Key, nil
 }
 
 func getEntryRSTs(entry entry.Entry) ([]uint32, error) {

@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/thinkparq/beegfs-go/common/filesystem"
+	"golang.org/x/sync/errgroup"
+
+	// TODO: Node store and mappings should be moved into common since they're used in ctl, remote, and sync
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
@@ -34,7 +38,7 @@ func NewJobBuilderClient(ctx context.Context, rstMap map[uint32]Provider, mountP
 }
 
 // GenerateJobRequest is not implemented and should never be called.
-func (c *JobBuilderClient) GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+func (c *JobBuilderClient) GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	return nil
 }
 
@@ -82,19 +86,9 @@ func (c *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workReq
 	return c.executeJobBuilderRequest(ctx, workRequest, walkChan, jobSubmissionChan)
 }
 
-// PrepareExecuteWorkRequests is not implemented and should never be called.
-func (c *JobBuilderClient) PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error) {
-	return true, ErrUnsupportedOpForRST
-}
-
 // ExecuteWorkRequestPart is not implemented and should never be called.
 func (c *JobBuilderClient) ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error {
 	return ErrUnsupportedOpForRST
-}
-
-// ConcludeExecuteWorkRequests is not implemented and should never be called.
-func (c *JobBuilderClient) ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error) {
-	return true, ErrUnsupportedOpForRST
 }
 
 func (c *JobBuilderClient) CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error {
@@ -117,8 +111,8 @@ func (c *JobBuilderClient) SanitizeRemotePath(remotePath string) string {
 }
 
 // GetRemoteInfo is not implemented and should never be called.
-func (r *JobBuilderClient) GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error) {
-	return 0, time.Time{}, ErrUnsupportedOpForRST
+func (r *JobBuilderClient) GetRemoteInfo(ctx context.Context, remotePath string, cfg *flex.JobRequestCfg, lockedInfo *flex.JobLockedInfo) (remoteSize int64, remoteMtime time.Time, externalId string, err error) {
+	return 0, time.Time{}, "", ErrUnsupportedOpForRST
 }
 
 func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request *flex.WorkRequest, walkChan <-chan *WalkResponse, jobSubmissionChan chan<- *beeremote.JobRequest) error {
@@ -127,11 +121,11 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 
 	store, err := config.NodeStore(ctx)
 	if err != nil {
-		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
+		return err
 	}
 	mappings, err := util.GetMappings(ctx)
 	if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-		return fmt.Errorf("upload successful but failed to create stub file: %w", err)
+		return err
 	}
 
 	var baseRemotePath string
@@ -139,63 +133,80 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 		baseRemotePath = normalizePath(getBaseRemoteDir(cfg.RemotePath))
 	}
 
-	errCount := 0
-	var inMountPath string
-	var remotePath string
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case walkResp, ok := <-walkChan:
-			if !ok {
-				if errCount > 0 {
-					return fmt.Errorf("failed to create %d job request(s)", errCount)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	g, ctx := errgroup.WithContext(ctx)
+
+	var errCount atomic.Uint32
+	workers := 2
+	for range workers {
+		g.Go(func() error {
+
+			var inMountPath string
+			var remotePath string
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case walkResp, ok := <-walkChan:
+					if !ok {
+
+						return nil
+					}
+					if walkResp.FatalErr {
+						cancel()
+						return walkResp.Err
+					}
+
+					if cfg.Download {
+						if cfg.RemotePath == "" {
+							return fmt.Errorf("remote path is require")
+						}
+
+						remotePath = walkResp.Path
+						relPath, _ := filepath.Rel(baseRemotePath, normalizePath(remotePath))
+						if cfg.Flatten {
+							relPath = strings.Replace(relPath, "/", "_", -1)
+						}
+
+						inMountPath = filepath.Join(cfg.Path, relPath)
+						if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
+							return err
+						}
+					} else {
+						inMountPath = walkResp.Path
+						remotePath = inMountPath
+					}
 				}
-				return nil
-			}
-			if walkResp.FatalErr {
-				return walkResp.Err
-			}
 
-			if cfg.Download {
-				if cfg.RemotePath == "" {
-					return fmt.Errorf("unable to determine in-mount path! This is probably a bug")
+				var client Provider
+				if isValidRstId(cfg.RemoteStorageTarget) {
+					client = r.rstMap[cfg.RemoteStorageTarget]
 				}
 
-				remotePath = walkResp.Path
-				relPath, _ := filepath.Rel(baseRemotePath, normalizePath(remotePath))
-				if cfg.Flatten {
-					relPath = strings.Replace(relPath, "/", "_", -1)
+				jobRequests, err, fatal := BuildJobRequests(ctx, client, r.rstMap, r.mountPoint, store, mappings, inMountPath, remotePath, cfg)
+				if err != nil {
+					if fatal {
+						cancel()
+						return fmt.Errorf("fatal error occurred while building job requests: %w", err)
+					}
+					errCount.Add(1)
+					continue
 				}
 
-				inMountPath = filepath.Join(cfg.Path, relPath)
-				if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
-					return err
+				for _, jobRequest := range jobRequests {
+					jobSubmissionChan <- jobRequest
 				}
-			} else {
-				inMountPath = walkResp.Path
-				remotePath = inMountPath
 			}
-		}
+		})
+	}
 
-		var client Provider
-		if isValidRstId(cfg.RemoteStorageTarget) {
-			client = r.rstMap[cfg.RemoteStorageTarget]
-		}
-
-		jobRequests, err, fatal := BuildJobRequest(ctx, client, r.rstMap, r.mountPoint, store, mappings, inMountPath, remotePath, cfg)
-		if err != nil {
-			if fatal {
-				return fmt.Errorf("fatal error occurred while building job requests: %w", err)
-			}
-			errCount++
-			continue
-		}
-
-		for _, jobRequest := range jobRequests {
-			jobSubmissionChan <- jobRequest
+	if err := g.Wait(); err != nil {
+		if errCount.Load() > 0 {
+			return fmt.Errorf("failed to create %d job request(s)", errCount.Load())
 		}
 	}
+	return nil
 }
 
 // normalizePath simply ensures that there is a single lead forward-slash. This is expected for all

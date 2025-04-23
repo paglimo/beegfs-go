@@ -29,7 +29,11 @@ import (
 	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
-	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
+
+	// TODO:
+	//  - Node store and mappings should be moved into common since they're used in ctl, remote, and sync
+	//  - ctl's entry package needs to move items into common since they're used in ctl, remote, and sync
+
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
@@ -54,33 +58,19 @@ var SupportedRSTTypes = map[string]func() (any, any){
 	// Mock could be included here if it ever made sense to allow configuration using a file.
 }
 
-// TODO: Re-evaluated these comments
-
 type Provider interface {
-	// GenerateJobRequest prepares a Provider specific job request.
-	GenerateJobRequest(inMountPath string, cfg *flex.JobRequestCfg) *beeremote.JobRequest
-	// GenerateWorkRequests performs any one-time operations that must happen at the start of a job.
-	// Any tasks that interact with BeeGFS or the RST is strongly discouraged since this task will
-	// executed on the remote node which is primarily responsible with scheduling work requests on
-	// the worker nodes.
+	// GenerateJobRequest builds a provider-specific job request.
+	GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest
+	// GenerateWorkRequest performs any necessary operations required before the work requests are
+	// executed which includes determining the current state and then doing any preliminary actions.
 	//
-	// For providers that support idempotent operations, GenerateWorkRequests should return ErrJobX error
-	// to indicate whether
-	//
-	// It determines if the job can be split into one or more work requests that each work on some
-	// segment of the file (which is in turn comprised of one or more parts). This determination
-	// should be made based on the file size, availableWorkers, and best practices for the Provider.
+	// ErrJobAlreadyComplete and ErrJobAlreadyOffloaded should be returned to indicate synced and
+	// offloaded states that require no further action. When relevant to the operation,
+	// job.StartMtime should be set.
 	GenerateWorkRequests(ctx context.Context, lastJob *beeremote.Job, job *beeremote.Job, availableWorkers int) (requests []*flex.WorkRequest, canRetry bool, err error)
-	// ExecuteJobBuilderRequest is specifically designed for providers that generate subsequent work
+	// ExecuteJobBuilderRequest is specifically designed for providers that generate subsequent job
 	// requests.
 	ExecuteJobBuilderRequest(ctx context.Context, workRequest *flex.WorkRequest, jobSubmissionChan chan<- *beeremote.JobRequest) error
-	// PrepareExecuteWorkRequests preforms any preliminary tasks required for each part of the work
-	// request to be processed.
-	//
-	// Any errors that occur will set the job status to beeremote.Job_FAILED or beeremote.ERROR if
-	// canRetry is to true. Setting canRetry is particularly useful in situations where a
-	// preliminary tasks is asynchronous as in Amazon Glacier's retrieval operation.
-	PrepareExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest) (canRetry bool, err error)
 	// ExecuteWorkRequestPart accepts a request and which part of the request it should carry out.
 	// It blocks until the request is complete, but the caller can cancel the provided context to
 	// return early. It determines and executes the requested operation (if supported) then directly
@@ -91,40 +81,29 @@ type Provider interface {
 	// Any errors that occur here will results in the job status will be beeremote.Job_FAILED or
 	// beeremote.ERROR if canRetry is to true.
 	ExecuteWorkRequestPart(ctx context.Context, request *flex.WorkRequest, part *flex.Work_Part) error
-	// ConcludeExecuteWorkRequests preforms any tasks that are required to complete or cleanup the
-	// work requests.
-	//
-	// It is responsible for verifying the operation completed successfully, for example checking
-	// data integrity by verifying checksums and modification timestamps to ensure a stable version
-	// of the file exists in BeeGFS and/or the remote Provider.
-	//
-	// Any errors that occur here will results in the job status will be beeremote.Job_FAILED or
-	// beeremote.ERROR if canRetry is to true.
-	ConcludeExecuteWorkRequests(ctx context.Context, request *flex.WorkRequest, workResults []*flex.Work, abort bool) (canRetry bool, err error)
 	// CompleteWorkRequests is used to perform any tasks needed to complete or abort the specified
-	// job on the RST.  To optimize performance it should perform all tasks required to interact
-	// with BeeGFS or the remote Provider at the end of a job.
+	// job on the RST.
 	//
 	// If the job is to be completed it requires the slice of work results that resulted from
-	// executing the previously generated WorkRequests. If applicable to the operation it should set
-	// the StopMtime directly on the job based on a stat of the local file in BeeGFS.
+	// executing the previously generated WorkRequests. When relevant to the operation,
+	// job.StopMtime should be set.
 	//
 	// CompleteWorkRequests should evaluate the workResults status and update the job status.
 	CompleteWorkRequests(ctx context.Context, job *beeremote.Job, workResults []*flex.Work, abort bool) error
-
-	// Returns a deep copy of the Remote Storage Target's config.
+	// GetConfig returns a deep copy of the remote storage target configuration.
 	GetConfig() *flex.RemoteStorageTarget
-
-	// Walk returns a *WalkResponse channel for each file in the path. Path must be able to
-	// represent the remote directory or prefix as well as a single file or object.
+	// Walk streams WalkResponse entries for each file or object in the path. The function must be
+	// able to represent the remote directory or prefix as well as a single file or object.
 	GetWalk(ctx context.Context, path string, chanSize int) (<-chan *WalkResponse, error)
-	// SanitizeRemotePath must ensure the remote path is structure properly for the remote resource.
+	// SanitizeRemotePath normalizes the remote path format for the provider.
 	SanitizeRemotePath(remotePath string) string
-	// GetRemoteInfo must return the remote file or object's size and the files last
-	// modification time. Note that the mtime must be the same as the local file's sync mtime not
-	// the mtime generated by the remote file system. KeyMustExist flag should be set, as with
-	// download operations, must exist.
-	GetRemoteInfo(ctx context.Context, remotePath string, keyMustExist bool) (remoteSize int64, remoteMtime time.Time, err error)
+	// GetRemoteInfo must return the remote file or object's size, last beegfs-mtime, and any
+	// relevant externalId.
+	//
+	// It is important for providers to maintain beegfs-mtime which is the file's last modification
+	// time of the prior upload operation. Beegfs-mtime is used in conjunction with the file's size
+	// to determine whether the file is sync.
+	GetRemoteInfo(ctx context.Context, remotePath string, cfg *flex.JobRequestCfg, lockedInfo *flex.JobLockedInfo) (remoteSize int64, remoteMtime time.Time, externalId string, err error)
 }
 
 // New initializes a provider client based on the provided config. It accepts a context that can be
@@ -329,12 +308,13 @@ func WalkGlob(ctx context.Context, beegfs filesystem.Provider, glob string, chan
 	return walkChan, nil
 }
 
-// BuildJobRequest returns a list of job requests. If client is not specified then the rstMap will
+// BuildJobRequests returns a list of job requests. If client is not specified then the rstMap will
 // be used to determine the client based on any inMountPath related rstId. Store and mappings can be
-// nil for convenience but should be avoided if BuildJobRequest is called multiple times.
+// nil for convenience but should be avoided if BuildJobRequests is called multiple times.
 //
 // If the inMountPath is to be offloaded and it does not exist then one will be created.
-func BuildJobRequest(ctx context.Context,
+func BuildJobRequests(
+	ctx context.Context,
 	client Provider,
 	rstMap map[uint32]Provider,
 	mountPoint filesystem.Provider,
@@ -349,12 +329,10 @@ func BuildJobRequest(ctx context.Context,
 		return nil, err, true
 	}
 
+	var request *beeremote.JobRequest
 	if client != nil {
-		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
-		if err != nil {
-			return nil, err, false
-		}
-		return []*beeremote.JobRequest{request}, nil, false
+		request, err, fatal = PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		return []*beeremote.JobRequest{request}, err, fatal
 	}
 
 	if len(rstIds) == 0 {
@@ -369,37 +347,53 @@ func BuildJobRequest(ctx context.Context,
 		if !ok {
 			return nil, ErrConfigRSTTypeIsUnknown, false
 		}
-
-		request, err := getJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		request, err, fatal = PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
 		if err != nil {
-			return nil, err, false
+			if fatal {
+				return nil, err, fatal
+			}
+			continue
 		}
 		jobRequests = append(jobRequests, request)
 	}
-	return jobRequests, nil, false
+	return jobRequests, err, false
 }
 
-// Returns whether the file exists.
+// IsFileExist returns whether the file exists. It is the responsibility of the caller to ensure
+// lockedInfo is already populated and locked.
 func IsFileExist(lockedInfo *flex.JobLockedInfo) bool {
 	return lockedInfo.Exists
 }
 
-// Returns whether the file is already synced with remote storage target
+// IsFileAlreadySynced returns whether the file is already synced with remote storage target
 func IsFileAlreadySynced(lockedInfo *flex.JobLockedInfo) bool {
 	return lockedInfo.Size == lockedInfo.RemoteSize && lockedInfo.Mtime.AsTime().Equal(lockedInfo.RemoteMtime.AsTime())
 }
 
-// Returns whether the file is offloaded.
+// IsFileSizeMatched returns whether the lockedInfo local and remote file sizes match. It is the
+// responsibility of the caller to ensure lockedInfo is already populated and locked.
+func IsFileSizeMatched(lockedInfo *flex.JobLockedInfo) bool {
+	return lockedInfo.Size == lockedInfo.RemoteSize
+}
+
+// IsFileOffloaded returns whether the file is offloaded. It is the responsibility of the caller to
+// ensure lockedInfo is already populated and locked.
 func IsFileOffloaded(lockedInfo *flex.JobLockedInfo) bool {
 	return lockedInfo.StubUrlRstId > 0
 }
 
-// Returns whether the offloaded file's rst url is matches the provided rst id and remote path.
+// IsFileOffloadedUrlCorrect returns whether the offloaded file's rst url is matches the provided
+// rst id and remote path. It is the responsibility of the caller to ensure lockedInfo is already
+// populated and locked.
 func IsFileOffloadedUrlCorrect(rstId uint32, remotePath string, lockedInfo *flex.JobLockedInfo) bool {
 	return rstId == lockedInfo.StubUrlRstId && remotePath == lockedInfo.StubUrlPath
 }
 
-func getJobRequest(ctx context.Context,
+// PrepareAndBuildJobRequest adds required information about the remote resource to lockedInfo,
+// performs preliminary operations, and then returns a job request for the client's file or object.
+// It is the responsibility of the caller to ensure lockedInfo is already populated and locked.
+func PrepareAndBuildJobRequest(
+	ctx context.Context,
 	client Provider,
 	mountPoint filesystem.Provider,
 	store *beemsg.NodeStore,
@@ -408,27 +402,85 @@ func getJobRequest(ctx context.Context,
 	remotePath string,
 	cfg *flex.JobRequestCfg,
 	lockedInfo *flex.JobLockedInfo,
-) (*beeremote.JobRequest, error) {
-	rstId := client.GetConfig().Id
+) (requests *beeremote.JobRequest, err error, fatal bool) {
 	sanitizedRemotePath := client.SanitizeRemotePath(remotePath)
-	remoteSize, remoteMtime, err := client.GetRemoteInfo(ctx, sanitizedRemotePath, cfg.Download)
+	remoteSize, remoteMtime, externalId, err := client.GetRemoteInfo(ctx, sanitizedRemotePath, cfg, lockedInfo)
 	if err != nil {
-		return nil, err
+		return nil, err, false
 	}
-	lockedInfo.RemoteSize = remoteSize
-	lockedInfo.RemoteMtime = timestamppb.New(remoteMtime)
+	lockedInfo.SetRemoteSize(remoteSize)
+	lockedInfo.SetRemoteMtime(timestamppb.New(remoteMtime))
+	lockedInfo.SetExternalId(externalId)
 
-	if !lockedInfo.Exists && cfg.Download && cfg.StubLocal {
-		err = CreateOffloadedDataFile(ctx, mountPoint, mappings, store, inMountPath, sanitizedRemotePath, rstId, false)
-		if err != nil {
-			return nil, ErrOffloadFileCreate
+	rstId := client.GetConfig().Id
+	if err := PrepareJob(ctx, mountPoint, store, mappings, inMountPath, rstId, sanitizedRemotePath, cfg, lockedInfo); err != nil {
+		return nil, err, false
+	}
+
+	request, err := GetJobRequest(ctx, client, inMountPath, sanitizedRemotePath, cfg, lockedInfo)
+	if err != nil {
+		return nil, err, false
+	}
+	return request, nil, false
+
+}
+
+// PrepareJob handles common job operations based on collected lockedInfo information. It is the
+// responsibility of the caller to ensure lockedInfo is already populated and locked.
+func PrepareJob(
+	ctx context.Context,
+	mountPoint filesystem.Provider,
+	store *beemsg.NodeStore,
+	mappings *util.Mappings,
+	inMountPath string,
+	rstId uint32,
+	remotePath string,
+	cfg *flex.JobRequestCfg,
+	lockedInfo *flex.JobLockedInfo,
+) error {
+	if cfg.StubLocal {
+		alreadySynced := IsFileAlreadySynced(lockedInfo)
+		if (cfg.Download && !lockedInfo.Exists) || alreadySynced {
+			err := CreateOffloadedDataFile(ctx, mountPoint, store, mappings, inMountPath, remotePath, rstId, alreadySynced)
+			if err != nil {
+				return ErrOffloadFileCreate
+			}
+			lockedInfo.StubUrlRstId = rstId
+			lockedInfo.StubUrlPath = remotePath
 		}
-		lockedInfo.StubUrlRstId = rstId
-		lockedInfo.StubUrlPath = sanitizedRemotePath
+	} else if IsFileExist(lockedInfo) {
+		if cfg.Download {
+			overwrite := cfg.Overwrite
+			if IsFileOffloaded(lockedInfo) {
+				if err := entry.ClearFileDataState(ctx, mappings, store, inMountPath); err != nil {
+					return fmt.Errorf("unable to clear stub file flag: %w", err)
+				}
+				lockedInfo.StubUrlRstId = 0
+				lockedInfo.StubUrlPath = ""
+				overwrite = true
+			}
+
+			if !IsFileSizeMatched(lockedInfo) {
+				err := mountPoint.CreatePreallocatedFile(inMountPath, lockedInfo.RemoteSize, overwrite)
+				if err != nil {
+					return err
+				}
+				lockedInfo.Size = lockedInfo.RemoteSize
+				lockedInfo.Mtime = timestamppb.Now()
+			}
+		} else {
+			// Nothing common for uploads now
+		}
 	}
 
-	return client.GenerateJobRequest(inMountPath, &flex.JobRequestCfg{
-		RemoteStorageTarget: rstId,
+	return nil
+}
+
+// GetJobRequest returns a new job request for the provided client.
+// It is the responsibility of the caller to ensure lockedInfo is already populated and locked.
+func GetJobRequest(ctx context.Context, client Provider, inMountPath string, remotePath string, cfg *flex.JobRequestCfg, lockedInfo *flex.JobLockedInfo) (*beeremote.JobRequest, error) {
+	return client.GenerateJobRequest(&flex.JobRequestCfg{
+		RemoteStorageTarget: client.GetConfig().Id,
 		Path:                inMountPath,
 		RemotePath:          remotePath,
 		Download:            cfg.Download,
@@ -440,6 +492,7 @@ func getJobRequest(ctx context.Context,
 	}), nil
 }
 
+// GetLockedInfo locks the in-mount file and returns the information collected under the file lock.
 func GetLockedInfo(ctx context.Context,
 	mountPoint filesystem.Provider,
 	store *beemsg.NodeStore,
@@ -447,21 +500,6 @@ func GetLockedInfo(ctx context.Context,
 	cfg *flex.JobRequestCfg,
 	inMountPath string,
 ) (*flex.JobLockedInfo, []uint32, error) {
-
-	var err error
-	if store == nil || len(store.GetNodes()) == 0 {
-		store, err = config.NodeStore(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	if mappings == nil || mappings.NodeToTargets.Len() == 0 {
-		mappings, err = util.GetMappings(ctx)
-		if err != nil && !errors.Is(err, util.ErrMappingRSTs) {
-			return nil, nil, err
-		}
-	}
-
 	entryInfo, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, inMountPath)
 	if err != nil {
 		if !errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
@@ -558,7 +596,7 @@ func StripGlobPattern(pattern string) string {
 	}
 }
 
-func CreateOffloadedDataFile(ctx context.Context, beegfs filesystem.Provider, mappings *util.Mappings, store *beemsg.NodeStore, path string, remotePath string, target uint32, overwrite bool) error {
+func CreateOffloadedDataFile(ctx context.Context, beegfs filesystem.Provider, store *beemsg.NodeStore, mappings *util.Mappings, path string, remotePath string, target uint32, overwrite bool) error {
 	rstUrl := []byte(fmt.Sprintf("rst://%d:%s", target, remotePath))
 	if err := beegfs.CreateWriteClose(path, rstUrl, overwrite); err != nil {
 		return err
@@ -573,6 +611,10 @@ func GetOffloadedUrlParts(ctx context.Context, beegfs filesystem.Provider, mappi
 		return 0, "", nil
 	}
 
+	return GetOffloadedUrlPartsFromFile(beegfs, path)
+}
+
+func GetOffloadedUrlPartsFromFile(beegfs filesystem.Provider, path string) (uint32, string, error) {
 	// Amazon s3 allows object key names to be up to 1024 bytes in length. Note that this is a
 	// byte limit, so if your key contains multi-byte UTF-8 characters, the number of characters
 	// may be fewer than 1024. The extra 0 bytes on the right will be trimmed.
