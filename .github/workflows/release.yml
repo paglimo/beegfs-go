@@ -40,10 +40,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Configure git
-        # Make sure the runner has access to the internal repos repo using an access token
-        # This must be after the step to setup Go which also installs git.
-        run: git config --global url."https://${{ secrets.CI_PROTOBUF_ACCESS }}@github.com/thinkparq".insteadOf https://github.com/thinkparq
         # The way GoReleaser gets the previous changelog tag does not work consistently if we are
         # pushing different tags to version the Go module API versus the built BeeGFS binaries. This
         # approach ensures the tag that triggered the workflow is used as the current version, and
