@@ -37,9 +37,19 @@ func NewJobBuilderClient(ctx context.Context, rstMap map[uint32]Provider, mountP
 	}
 }
 
-// GenerateJobRequest is not implemented and should never be called.
-func (c *JobBuilderClient) GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
-	return nil
+// GetJobRequest is not implemented and should never be called.
+func (c *JobBuilderClient) GetJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+	return &beeremote.JobRequest{
+		Path:                cfg.Path,
+		RemoteStorageTarget: 0,
+		StubLocal:           cfg.StubLocal,
+		Force:               cfg.Force,
+		Type: &beeremote.JobRequest_Builder{
+			Builder: &flex.BuilderJob{
+				Cfg: cfg,
+			},
+		},
+	}
 }
 
 // GenerateWorkRequests for JobBuilderClient should simply pass a single
@@ -60,7 +70,7 @@ func (c *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workReq
 	var ok bool
 	var err error
 	if cfg.Download {
-		if !isValidRstId(cfg.RemoteStorageTarget) {
+		if !IsValidRstId(cfg.RemoteStorageTarget) {
 			// Since there's no specified remote target then walk the local path. Jobs will be
 			// created for each file with a single rstId. Files with zero rstIds will be ignored and
 			// those with multiple rstIds will fail since the source is ambiguous.
@@ -68,7 +78,7 @@ func (c *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workReq
 			baseRemotePath := getBaseRemoteDir(normalizedRemotePath)
 			relPath, _ := filepath.Rel(baseRemotePath, normalizedRemotePath)
 			inMountPath := filepath.Join(workRequest.Path, relPath)
-			if walkChan, err = WalkLocalDirectory(ctx, c.mountPoint, inMountPath, walkChanSize); err != nil {
+			if walkChan, err = walkPath(ctx, c.mountPoint, inMountPath, walkChanSize); err != nil {
 				return err
 			}
 		} else {
@@ -79,7 +89,7 @@ func (c *JobBuilderClient) ExecuteJobBuilderRequest(ctx context.Context, workReq
 				return err
 			}
 		}
-	} else if walkChan, err = WalkLocalDirectory(ctx, c.mountPoint, workRequest.Path, walkChanSize); err != nil {
+	} else if walkChan, err = walkPath(ctx, c.mountPoint, workRequest.Path, walkChanSize); err != nil {
 		return err
 	}
 
@@ -150,7 +160,6 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 					return ctx.Err()
 				case walkResp, ok := <-walkChan:
 					if !ok {
-
 						return nil
 					}
 					if walkResp.FatalErr {
@@ -169,7 +178,12 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 							relPath = strings.Replace(relPath, "/", "_", -1)
 						}
 
-						inMountPath = filepath.Join(cfg.Path, relPath)
+						if relPath == "." {
+							inMountPath = filepath.Join(cfg.Path, remotePath)
+						} else {
+							inMountPath = filepath.Join(cfg.Path, relPath)
+						}
+
 						if err := r.mountPoint.CreateDir(filepath.Dir(inMountPath)); err != nil {
 							return err
 						}
@@ -180,7 +194,7 @@ func (r *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 				}
 
 				var client Provider
-				if isValidRstId(cfg.RemoteStorageTarget) {
+				if IsValidRstId(cfg.RemoteStorageTarget) {
 					client = r.rstMap[cfg.RemoteStorageTarget]
 				}
 
@@ -224,8 +238,4 @@ func getBaseRemoteDir(remotePath string) string {
 	}
 
 	return base
-}
-
-func isValidRstId(rstId uint32) bool {
-	return rstId != 0
 }

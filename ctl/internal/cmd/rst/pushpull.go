@@ -9,7 +9,8 @@ import (
 	"github.com/thinkparq/beegfs-go/ctl/internal/cmdfmt"
 	"github.com/thinkparq/beegfs-go/ctl/internal/util"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
-	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
+
+	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 )
@@ -44,7 +45,7 @@ WARNING: Files are always uploaded and existing files overwritten unless the rem
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			backendCfg.Path = args[0]
+			backendCfg.SetPath(args[0])
 			return runPushOrPullCmd(cmd, frontendCfg, &backendCfg)
 		},
 	}
@@ -72,7 +73,7 @@ func newPullCmd() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			backendCfg.Path = args[0]
+			backendCfg.SetPath(args[0])
 			return runPushOrPullCmd(cmd, frontendCfg, &backendCfg)
 		},
 	}
@@ -93,7 +94,7 @@ func newPullCmd() *cobra.Command {
 func runPushOrPullCmd(cmd *cobra.Command, frontendCfg pushPullCfg, backendCfg *flex.JobRequestCfg) error {
 
 	// This could be made user configurable if it ever makes sense.
-	responses, _, err := rst.SubmitJobRequest(cmd.Context(), backendCfg, 1024)
+	responses, err := rst.SubmitJobRequest(cmd.Context(), backendCfg, 1024)
 	if err != nil {
 		return err
 	}

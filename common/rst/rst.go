@@ -59,8 +59,8 @@ var SupportedRSTTypes = map[string]func() (any, any){
 }
 
 type Provider interface {
-	// GenerateJobRequest builds a provider-specific job request.
-	GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest
+	// GetJobRequest builds a provider-specific job request.
+	GetJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest
 	// GenerateWorkRequest performs any necessary operations required before the work requests are
 	// executed which includes determining the current state and then doing any preliminary actions.
 	//
@@ -119,11 +119,11 @@ func New(ctx context.Context, config *flex.RemoteStorageTarget, mountPoint files
 		// the documentation ion `MockClient` in mock.go for how to setup expectations.
 		return &MockClient{}, nil
 	case nil:
-		return nil, fmt.Errorf("%w: %s", ErrConfigRSTTypeNotSet, config)
+		return nil, fmt.Errorf("%s: %w", config, ErrConfigRSTTypeNotSet)
 	default:
 		// This means we got a valid RST type that was unmarshalled from a TOML file base on
 		// SupportedRSTTypes or directly provided in a test, but New() doesn't know about it yet.
-		return nil, fmt.Errorf("%w (most likely this is a bug): %T", ErrConfigRSTTypeIsUnknown, config.Type)
+		return nil, fmt.Errorf("(most likely this is a bug): %T: %w", config.Type, ErrConfigRSTTypeIsUnknown)
 	}
 }
 
@@ -228,84 +228,6 @@ func generateSegments(fileSize int64, segCount int64, partsPerSegment int32) []*
 		segments = append(segments, segment)
 	}
 	return segments
-}
-
-type WalkResponse struct {
-	Path     string
-	Err      error
-	FatalErr bool
-}
-
-func WalkLocalDirectory(ctx context.Context, beegfs filesystem.Provider, pattern string, chanSize int) (<-chan *WalkResponse, error) {
-	if _, err := beegfs.Lstat(pattern); err != nil {
-		if walkChan, globErr := WalkGlob(ctx, beegfs, pattern, chanSize); globErr == nil {
-			return walkChan, nil
-		}
-		return nil, fmt.Errorf("unable to walk local directory: %w", err)
-	}
-
-	walkChan := make(chan *WalkResponse, chanSize)
-	walkFunc := func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if d.IsDir() {
-				return nil
-			}
-
-			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
-			if err != nil {
-				// An error at this point is unlikely given previous steps also get relative paths.
-				// To be safe note this in the error that is returned and just return the absolute
-				// path instead. This shouldn't be a security issue since the user should have
-				// access to this path if they were able to start a job request for it.
-				inMountPath = path
-				walkChan <- &WalkResponse{
-					Path:     inMountPath,
-					Err:      fmt.Errorf("unable to determine relative path: %w", err),
-					FatalErr: true,
-				}
-				return nil
-			}
-			walkChan <- &WalkResponse{Path: inMountPath}
-		}
-		return nil
-	}
-
-	go func() {
-		defer close(walkChan)
-		beegfs.WalkDir(pattern, walkFunc)
-	}()
-	return walkChan, nil
-}
-
-func WalkGlob(ctx context.Context, beegfs filesystem.Provider, glob string, chanSize int) (<-chan *WalkResponse, error) {
-	if _, err := filepath.Glob(glob); err != nil {
-		return nil, err
-	}
-
-	absPath := filepath.Join(beegfs.GetMountPath(), glob)
-	paths, err := filepath.Glob(absPath)
-	if err != nil {
-		return nil, err
-	}
-
-	walkChan := make(chan *WalkResponse, chanSize)
-	go func() {
-		defer close(walkChan)
-		for _, path := range paths {
-			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
-			if err != nil {
-				walkChan <- &WalkResponse{Path: path, Err: err, FatalErr: true}
-			}
-			walkChan <- &WalkResponse{Path: inMountPath}
-		}
-	}()
-	return walkChan, nil
 }
 
 // BuildJobRequests returns a list of job requests. If client is not specified then the rstMap will
@@ -479,7 +401,7 @@ func PrepareJob(
 // GetJobRequest returns a new job request for the provided client.
 // It is the responsibility of the caller to ensure lockedInfo is already populated and locked.
 func GetJobRequest(ctx context.Context, client Provider, inMountPath string, remotePath string, cfg *flex.JobRequestCfg, lockedInfo *flex.JobLockedInfo) (*beeremote.JobRequest, error) {
-	return client.GenerateJobRequest(&flex.JobRequestCfg{
+	return client.GetJobRequest(&flex.JobRequestCfg{
 		RemoteStorageTarget: client.GetConfig().Id,
 		Path:                inMountPath,
 		RemotePath:          remotePath,
@@ -520,7 +442,7 @@ func GetLockedInfo(ctx context.Context,
 	}
 
 	var rstIds []uint32
-	if isValidRstId(cfg.RemoteStorageTarget) {
+	if IsValidRstId(cfg.RemoteStorageTarget) {
 		rstIds = []uint32{cfg.RemoteStorageTarget}
 	} else {
 		rstIds = entryInfo.Entry.Remote.RSTIDs
@@ -558,12 +480,90 @@ func GetLockedInfo(ctx context.Context,
 			return nil, nil, fmt.Errorf("unable to get rst url parts: %w", err)
 		}
 
-		if isValidRstId(lockedInfo.StubUrlRstId) {
+		if IsValidRstId(lockedInfo.StubUrlRstId) {
 			rstIds = []uint32{lockedInfo.StubUrlRstId}
 		}
 
 	}
 	return lockedInfo, rstIds, nil
+}
+
+type WalkResponse struct {
+	Path     string
+	Err      error
+	FatalErr bool
+}
+
+func walkPath(ctx context.Context, beegfs filesystem.Provider, pattern string, chanSize int) (<-chan *WalkResponse, error) {
+	if _, err := beegfs.Lstat(pattern); err != nil {
+		if walkChan, globErr := walkGlob(ctx, beegfs, pattern, chanSize); globErr == nil {
+			return walkChan, nil
+		}
+		return nil, fmt.Errorf("unable to walk local directory: %w", err)
+	}
+
+	walkChan := make(chan *WalkResponse, chanSize)
+	walkFunc := func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if d.IsDir() {
+				return nil
+			}
+
+			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
+			if err != nil {
+				// An error at this point is unlikely given previous steps also get relative paths.
+				// To be safe note this in the error that is returned and just return the absolute
+				// path instead. This shouldn't be a security issue since the user should have
+				// access to this path if they were able to start a job request for it.
+				inMountPath = path
+				walkChan <- &WalkResponse{
+					Path:     inMountPath,
+					Err:      fmt.Errorf("unable to determine relative path: %w", err),
+					FatalErr: true,
+				}
+				return nil
+			}
+			walkChan <- &WalkResponse{Path: inMountPath}
+		}
+		return nil
+	}
+
+	go func() {
+		defer close(walkChan)
+		beegfs.WalkDir(pattern, walkFunc)
+	}()
+	return walkChan, nil
+}
+
+func walkGlob(ctx context.Context, beegfs filesystem.Provider, glob string, chanSize int) (<-chan *WalkResponse, error) {
+	if _, err := filepath.Glob(glob); err != nil {
+		return nil, err
+	}
+
+	absPath := filepath.Join(beegfs.GetMountPath(), glob)
+	paths, err := filepath.Glob(absPath)
+	if err != nil {
+		return nil, err
+	}
+
+	walkChan := make(chan *WalkResponse, chanSize)
+	go func() {
+		defer close(walkChan)
+		for _, path := range paths {
+			inMountPath, err := beegfs.GetRelativePathWithinMount(path)
+			if err != nil {
+				walkChan <- &WalkResponse{Path: path, Err: err, FatalErr: true}
+			}
+			walkChan <- &WalkResponse{Path: inMountPath}
+		}
+	}()
+	return walkChan, nil
 }
 
 // StripGlobPattern extracts the longest leading substring from the given pattern that contains
@@ -667,4 +667,8 @@ func CheckEntry(entry entry.Entry, ignoreReaders bool, ignoreWriters bool) error
 		}
 	}
 	return err
+}
+
+func IsValidRstId(rstId uint32) bool {
+	return rstId != 0
 }

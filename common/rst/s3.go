@@ -75,7 +75,7 @@ func newS3(ctx context.Context, rstConfig *flex.RemoteStorageTarget, mountPoint 
 	return r, nil
 }
 
-func (r *S3Client) GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+func (r *S3Client) GetJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	operation := flex.SyncJob_UPLOAD
 	if cfg.Download {
 		operation = flex.SyncJob_DOWNLOAD

@@ -48,7 +48,7 @@ type MockClient struct {
 
 var _ Provider = &MockClient{}
 
-func (r *MockClient) GenerateJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
+func (r *MockClient) GetJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
 	return nil
 }
 
