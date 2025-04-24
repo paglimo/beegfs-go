@@ -25,14 +25,14 @@ jobs:
         with:
           fetch-depth: 0
       - name: Log into the GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@49ed152c8eca782a232dede0303416e8f356c37b # v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Import GPG key
         id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@82a020f1f7f605c65dd2449b392a52c3fcfef7ef # v6
         with:
           gpg_private_key: ${{ secrets.PUBLICREPO_GPGPACKAGEKEY }}
           passphrase: ${{ secrets.PUBLICREPO_GPGPACKAGEPASSPHRASE }}
@@ -40,10 +40,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Configure git
-        # Make sure the runner has access to the internal repos repo using an access token
-        # This must be after the step to setup Go which also installs git.
-        run: git config --global url."https://${{ secrets.CI_PROTOBUF_ACCESS }}@github.com/thinkparq".insteadOf https://github.com/thinkparq
         # The way GoReleaser gets the previous changelog tag does not work consistently if we are
         # pushing different tags to version the Go module API versus the built BeeGFS binaries. This
         # approach ensures the tag that triggered the workflow is used as the current version, and
@@ -63,7 +59,7 @@ jobs:
           previous_tag=$(git tag | tr - \~ | sort -Vr | tr \~ - | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?$' | grep -v "${{ github.ref_name }}" | head -n 1)
           echo "GORELEASER_PREVIOUS_TAG=${previous_tag}" >> $GITHUB_ENV
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@286f3b13b1b49da4ac219696163fb8c1c93e1200 # v6
         with:
           # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser

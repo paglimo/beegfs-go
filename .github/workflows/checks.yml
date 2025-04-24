@@ -1,10 +1,16 @@
 name: Check
 
-on: [pull_request, workflow_call]
+on:
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+  workflow_call:
 
 jobs:
   checks:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -12,9 +18,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Configure git
-        # Make sure the runner has access to the internal repos repo using an access token
-        run: git config --global url."https://${{ secrets.CI_PROTOBUF_ACCESS }}@github.com/thinkparq".insteadOf https://github.com/thinkparq
       - name: Install toolchains and tools
         run: make install-tools
       - name: Run checks and unit tests

@@ -180,8 +180,14 @@ func (fs BeeGFS) CreatePreallocatedFile(path string, size int64, overwrite bool)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	return file.Truncate(size)
+	if err := file.Truncate(size); err != nil {
+		closeErr := file.Close()
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	return file.Close()
 }
 
 func (fs BeeGFS) CreateWriteClose(path string, buf []byte) error {
@@ -307,22 +313,30 @@ func (fs BeeGFS) CopyContentsToFile(srcPath, dstPath string) error {
 	if err != nil {
 		return fmt.Errorf("error opening source path: %w", err)
 	}
+	// Handling a potential error when closing the dstFile is important because data might be lost
+	// if it is cached in memory and unable to be flushed out completely when the file is closed.
+	// This is not needed for srcFile since it is only opened for reading so it is closed via defer.
 	defer srcFile.Close()
 
 	dstFile, err := os.OpenFile(dstPath, os.O_WRONLY, 0)
 	if err != nil {
 		return fmt.Errorf("error opening destination path: %w", err)
 	}
-	defer dstFile.Close()
 
 	// 32 KB buffer - if needed this could be optimized based on a hint like chunksize.
 	buffer := make([]byte, 32*1024)
 	_, err = io.CopyBuffer(dstFile, srcFile, buffer)
 	if err != nil {
+		if closeErr := dstFile.Close(); closeErr != nil {
+			return errors.Join(
+				fmt.Errorf("error copying source to destination path: %w", err),
+				closeErr,
+			)
+		}
 		return fmt.Errorf("error copying source to destination path: %w", err)
 	}
 
-	return nil
+	return dstFile.Close()
 }
 
 func (fs BeeGFS) CopyOwnerAndMode(fromStat fs.FileInfo, dstPath string) error {

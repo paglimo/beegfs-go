@@ -319,18 +319,17 @@ func (db *MockDB) Run(wg *sync.WaitGroup) {
 	file, err := os.OpenFile(*mockDBFilename, os.O_RDWR|os.O_CREATE, 0755)
 
 	if err != nil {
-		db.log.Fatal("unable to open file", zap.Error(err))
+		db.log.Fatal("unable to open db file", zap.Error(err))
 	}
-
-	defer file.Close()
 
 	data, err := io.ReadAll(file)
-
 	if err != nil {
-		db.log.Fatal("unable to read file", zap.Error(err))
+		db.log.Fatal("unable to read db file", zap.Error(err))
 	}
 
-	file.Close()
+	if err := file.Close(); err != nil {
+		db.log.Fatal("unable to close db file", zap.Error(err))
+	}
 
 	dataCleaned := strings.TrimSpace(string(data))
 
@@ -381,8 +380,6 @@ readEvents:
 		db.log.Error("unable to open file to write out sequence ID", zap.Error(err))
 	}
 
-	defer file.Close()
-
 	_, err = file.WriteString(fmt.Sprintf("%d,%d", db.lastSeqID, db.lastDroppedSeq))
 	if err != nil {
 		db.log.Error("error writing out updated sequence IDs", zap.Error(err))
@@ -394,6 +391,9 @@ readEvents:
 	}
 
 	db.log.Info("synchronized database to disk")
+	if err := file.Close(); err != nil {
+		db.log.Error("error closing db file: %s", zap.Error(err))
+	}
 }
 
 // getLogger parses command line logging options and returns an appropriately configured zap.Logger.
