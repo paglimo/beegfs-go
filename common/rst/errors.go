@@ -18,7 +18,7 @@ var (
 	ErrJobNotAllowed                = errors.New("submitting a new job is not allowed in this state")
 	ErrJobAlreadyExists             = errors.New("no changes to entry detected since the last job") // TODO: Remove since last job is not sufficient to guarantee the previous job state
 	ErrFileHasNoRSTs                = errors.New("entry does not have any remote storage target IDs configured")
-	ErrFileAmbiguousRST             = errors.New("ambiguous remote source! There must only be one rst for downloads")
+	ErrFileHasAmbiguousRSTs         = errors.New("ambiguous remote source! There must only be one rst for downloads")
 	ErrFileOpenForWriting           = errors.New("entry is opened for writing on one or more clients")
 	ErrFileOpenForReading           = errors.New("entry is opened for reading on one or more clients")
 	ErrFileOpenForReadingAndWriting = errors.New("entry is opened for reading and writing on one or more clients")

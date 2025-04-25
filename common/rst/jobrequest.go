@@ -82,16 +82,11 @@ func SubmitJobRequest(ctx context.Context, cfg *flex.JobRequestCfg, chanSize int
 // directory the a job-builder request will be returned. Otherwise, the supplied cfg.rstId, stub
 // file url, or the file's rstIds will be used to generate rst specific job requests.
 func buildJobRequests(ctx context.Context, cfg *flex.JobRequestCfg) ([]*beeremote.JobRequest, error) {
-	mappings, err := util.GetMappings(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
-	}
-	beegfs, err := config.BeeGFSClient(cfg.Path)
+	mountPoint, err := config.BeeGFSClient(cfg.Path)
 	if err != nil {
 		return nil, err
 	}
-
-	pathInfo, err := getMountPathInfo(beegfs, cfg.Path)
+	pathInfo, err := getMountPathInfo(mountPoint, cfg.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +98,10 @@ func buildJobRequests(ctx context.Context, cfg *flex.JobRequestCfg) ([]*beeremot
 
 	jobBuilder := false
 	if !pathInfo.Exists {
-		jobBuilder = true
 		if !IsValidRstId(cfg.RemoteStorageTarget) {
 			return nil, fmt.Errorf("unable to send job requests! Invalid RST identifier")
 		}
+		jobBuilder = true
 	} else if pathInfo.IsDir || pathInfo.IsGlob {
 		jobBuilder = true
 	}
@@ -119,33 +114,35 @@ func buildJobRequests(ctx context.Context, cfg *flex.JobRequestCfg) ([]*beeremot
 
 	store, err := config.NodeStore(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to retrieve node store: %w", err)
+	}
+	mappings, err := util.GetMappings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve RST mappings: %w", err)
 	}
 
 	var errs []error
 	var requests []*beeremote.JobRequest
-	baseLockedInfo, rstIds, err := GetLockedInfo(ctx, beegfs, store, mappings, cfg, pathInfo.Path)
+	lockedInfo, rstIds, err := GetLockedInfo(ctx, mountPoint, store, mappings, cfg, pathInfo.Path)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, rstId := range rstIds {
 		config := mappings.RstIdToConfig[rstId]
-		client, err := New(ctx, config, beegfs)
+		client, err := New(ctx, config, mountPoint)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 
-		lockedInfo := proto.Clone(baseLockedInfo).(*flex.JobLockedInfo)
-		request, err, fatal := PrepareAndBuildJobRequest(ctx, client, beegfs, store, mappings, cfg.Path, cfg.RemotePath, cfg, lockedInfo)
-		if err != nil {
-			if fatal {
-				return nil, fmt.Errorf("fatal error occurred while building job requests: %w", err)
-			}
+		lockedInfoCopy := proto.Clone(lockedInfo).(*flex.JobLockedInfo)
+		jobRequest := PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, cfg.Path, cfg.RemotePath, cfg, lockedInfoCopy)
+		if jobRequest.Err != nil {
 			errs = append(errs, err)
+			continue
 		}
-		requests = append(requests, request)
+		requests = append(requests, jobRequest.Request)
 	}
 
 	return requests, errors.Join(errs...)

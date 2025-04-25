@@ -230,6 +230,11 @@ func generateSegments(fileSize int64, segCount int64, partsPerSegment int32) []*
 	return segments
 }
 
+type BuildJobRequestResponse struct {
+	Request *beeremote.JobRequest
+	Err     error
+}
+
 // BuildJobRequests returns a list of job requests. If client is not specified then the rstMap will
 // be used to determine the client based on any inMountPath related rstId. Store and mappings can be
 // nil for convenience but should be avoided if BuildJobRequests is called multiple times.
@@ -245,40 +250,33 @@ func BuildJobRequests(
 	inMountPath string,
 	remotePath string,
 	cfg *flex.JobRequestCfg,
-) (requests []*beeremote.JobRequest, err error, fatal bool) {
+) (requests []*BuildJobRequestResponse, err error) {
 	lockedInfo, rstIds, err := GetLockedInfo(ctx, mountPoint, store, mappings, cfg, inMountPath)
 	if err != nil {
-		return nil, err, true
+		return nil, err
 	}
 
-	var request *beeremote.JobRequest
 	if client != nil {
-		request, err, fatal = PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
-		return []*beeremote.JobRequest{request}, err, fatal
+		request := PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		return []*BuildJobRequestResponse{request}, nil
 	}
 
 	if len(rstIds) == 0 {
-		return nil, ErrFileHasNoRSTs, false
+		return nil, ErrFileHasNoRSTs
 	} else if cfg.Download && len(rstIds) > 1 {
-		return nil, ErrFileAmbiguousRST, false
+		return nil, ErrFileHasAmbiguousRSTs
 	}
 
-	var jobRequests []*beeremote.JobRequest
 	for _, rstId := range rstIds {
 		client, ok := rstMap[rstId]
 		if !ok {
-			return nil, ErrConfigRSTTypeIsUnknown, false
+			return nil, ErrConfigRSTTypeIsUnknown
 		}
-		request, err, fatal = PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
-		if err != nil {
-			if fatal {
-				return nil, err, fatal
-			}
-			continue
-		}
-		jobRequests = append(jobRequests, request)
+		request := PrepareAndBuildJobRequest(ctx, client, mountPoint, store, mappings, inMountPath, remotePath, cfg, lockedInfo)
+		requests = append(requests, request)
 	}
-	return jobRequests, err, false
+
+	return requests, nil
 }
 
 // IsFileExist returns whether the file exists. It is the responsibility of the caller to ensure
@@ -324,11 +322,19 @@ func PrepareAndBuildJobRequest(
 	remotePath string,
 	cfg *flex.JobRequestCfg,
 	lockedInfo *flex.JobLockedInfo,
-) (requests *beeremote.JobRequest, err error, fatal bool) {
+) *BuildJobRequestResponse {
 	sanitizedRemotePath := client.SanitizeRemotePath(remotePath)
+	if IsFileOffloaded(lockedInfo) {
+		if sanitizedRemotePath == "" {
+			sanitizedRemotePath = lockedInfo.StubUrlPath
+		} else if sanitizedRemotePath != lockedInfo.StubUrlPath {
+			return &BuildJobRequestResponse{Err: fmt.Errorf("remote path does not match stub file path")}
+		}
+	}
+
 	remoteSize, remoteMtime, externalId, err := client.GetRemoteInfo(ctx, sanitizedRemotePath, cfg, lockedInfo)
 	if err != nil {
-		return nil, err, false
+		return &BuildJobRequestResponse{Err: err}
 	}
 	lockedInfo.SetRemoteSize(remoteSize)
 	lockedInfo.SetRemoteMtime(timestamppb.New(remoteMtime))
@@ -336,14 +342,14 @@ func PrepareAndBuildJobRequest(
 
 	rstId := client.GetConfig().Id
 	if err := PrepareJob(ctx, mountPoint, store, mappings, inMountPath, rstId, sanitizedRemotePath, cfg, lockedInfo); err != nil {
-		return nil, err, false
+		return &BuildJobRequestResponse{Err: err}
 	}
 
 	request, err := GetJobRequest(ctx, client, inMountPath, sanitizedRemotePath, cfg, lockedInfo)
 	if err != nil {
-		return nil, err, false
+		return &BuildJobRequestResponse{Err: err}
 	}
-	return request, nil, false
+	return &BuildJobRequestResponse{Request: request}
 
 }
 
@@ -422,6 +428,11 @@ func GetLockedInfo(ctx context.Context,
 	cfg *flex.JobRequestCfg,
 	inMountPath string,
 ) (*flex.JobLockedInfo, []uint32, error) {
+	var rstIds []uint32
+	if IsValidRstId(cfg.RemoteStorageTarget) {
+		rstIds = []uint32{cfg.RemoteStorageTarget}
+	}
+
 	entryInfo, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, inMountPath)
 	if err != nil {
 		if !errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
@@ -439,13 +450,9 @@ func GetLockedInfo(ctx context.Context,
 		if err != nil {
 			return nil, nil, err
 		}
-	}
-
-	var rstIds []uint32
-	if IsValidRstId(cfg.RemoteStorageTarget) {
-		rstIds = []uint32{cfg.RemoteStorageTarget}
-	} else {
-		rstIds = entryInfo.Entry.Remote.RSTIDs
+		if rstIds == nil {
+			rstIds = entryInfo.Entry.Remote.RSTIDs
+		}
 	}
 
 	if cfg.Download {
@@ -483,7 +490,10 @@ func GetLockedInfo(ctx context.Context,
 		if IsValidRstId(lockedInfo.StubUrlRstId) {
 			rstIds = []uint32{lockedInfo.StubUrlRstId}
 		}
+	}
 
+	if rstIds == nil {
+		return nil, nil, ErrFileHasNoRSTs
 	}
 	return lockedInfo, rstIds, nil
 }
