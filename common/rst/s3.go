@@ -20,10 +20,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
-
-	// TODO:
-	//  - Node store and mappings should be moved into common since they're used in ctl, remote, and sync
-	//  - ctl's entry package needs to move items into common since they're used in ctl, remote, and sync
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
@@ -268,8 +264,6 @@ func (r *S3Client) generateSyncJobWorkRequest_Upload(ctx context.Context, job *b
 
 	if IsFileAlreadySynced(lockedInfo) {
 		if request.StubLocal {
-
-			// TODO: Get rid of theses
 			store, err := config.NodeStore(ctx)
 			if err != nil {
 				return nil, true, err
@@ -629,14 +623,6 @@ func (r *S3Client) upload(ctx context.Context, path string, remotePath string, u
 		if part.PartNumber != 1 {
 			return fmt.Errorf("only multi-part uploads can have a part number other than 1 (did you intend to create a multi-part upload first?)")
 		}
-
-		// // TODO:  MTime should be from locked info
-
-		// stat, err := r.mountPoint.Lstat(path)
-		// if err != nil {
-		// 	return err
-		// }
-		// mtime := stat.ModTime()
 
 		resp, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket:         aws.String(r.config.GetS3().Bucket),

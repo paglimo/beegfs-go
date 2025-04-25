@@ -135,7 +135,7 @@ func NewFromPath(path string) (Provider, error) {
 		}
 		parentStat, err := os.Lstat(parentPath)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", err, ErrInitFSClient)
+			return nil, fmt.Errorf("%w: %w", ErrInitFSClient, err)
 		}
 		if currentStat.Sys().(*syscall.Stat_t).Dev != parentStat.Sys().(*syscall.Stat_t).Dev {
 			mountPath = absPath

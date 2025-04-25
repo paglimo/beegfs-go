@@ -10,13 +10,11 @@ import (
 	"time"
 
 	"github.com/thinkparq/beegfs-go/common/filesystem"
-	"golang.org/x/sync/errgroup"
-
-	// TODO: Node store and mappings should be moved into common since they're used in ctl, remote, and sync
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
+	"golang.org/x/sync/errgroup"
 )
 
 // JobBuilderClient is a special RST client that builders new job requests based on the information

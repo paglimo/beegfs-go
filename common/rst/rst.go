@@ -29,11 +29,6 @@ import (
 	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/common/beemsg"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
-
-	// TODO:
-	//  - Node store and mappings should be moved into common since they're used in ctl, remote, and sync
-	//  - ctl's entry package needs to move items into common since they're used in ctl, remote, and sync
-
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
