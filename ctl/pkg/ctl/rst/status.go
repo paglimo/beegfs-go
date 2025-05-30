@@ -72,7 +72,7 @@ func (s PathStatus) String() string {
 	case Synchronized:
 		return "✅"
 	case Offloaded:
-		return "☁️"
+		return "☁️\u200C"
 	case Unsynchronized:
 		// The warning sign (⚠) emoji can cause alignment issues in go-pretty tables
 		// because it is normally followed by a variation selector (`\ufe0f`), making
@@ -328,6 +328,7 @@ func getPathStatus(ctx context.Context, cfg GetStatusCfg, mappings *util.Mapping
 			syncReason.WriteString(fmt.Sprintf("Target %d: Path has no jobs for this target.\n", tgt))
 		} else if job.GetJob().GetStatus().GetState() == beeremote.Job_OFFLOADED {
 			result.SyncStatus = Offloaded
+			syncReason.WriteString(fmt.Sprintf("Target %d: File contents are offloaded to this target.\n", tgt))
 		} else if job.GetJob().GetStatus().GetState() != beeremote.Job_COMPLETED {
 			result.SyncStatus = Unsynchronized
 			if cfg.Debug {
