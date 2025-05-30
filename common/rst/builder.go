@@ -2,6 +2,7 @@ package rst
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
@@ -229,7 +230,7 @@ func (c *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 		if !IsValidRstId(cfg.RemoteStorageTarget) {
 			errMessage += "; --remote-target was not provided so relying on configured rstIds and stub urls"
 		}
-		return fmt.Errorf(errMessage)
+		return errors.New(errMessage)
 	}
 	return nil
 }
