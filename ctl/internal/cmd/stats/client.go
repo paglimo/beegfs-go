@@ -9,8 +9,10 @@ import (
 
 	"github.com/dsnet/golib/unitconv"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs"
 	"github.com/thinkparq/beegfs-go/ctl/internal/cmdfmt"
+	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/stats"
 )
 
@@ -258,7 +260,7 @@ func clientIPToString(ip uint64, name bool) string {
 }
 
 // Prints one client Ip/username, number of operations and operation name
-func printOpsRow(tbl *cmdfmt.Printomatic, name string, ops []uint64, nt beegfs.NodeType, raw bool) {
+func printOpsRow(tbl *cmdfmt.Printomatic, name string, ops []uint64, nt beegfs.NodeType, all bool) {
 	var opNames []string
 	if nt == beegfs.Meta {
 		opNames = stats.MetaOpNamesLower
@@ -268,8 +270,8 @@ func printOpsRow(tbl *cmdfmt.Printomatic, name string, ops []uint64, nt beegfs.N
 
 	rowColumns := append(make([]any, 0, len(opNames)), name)
 	for i, v := range ops {
-		if v != 0 || raw {
-			if opNames[i] == "rd" || opNames[i] == "wr" {
+		if v != 0 || all {
+			if !viper.GetBool(config.RawKey) && (opNames[i] == "rd" || opNames[i] == "wr") {
 				rowColumns = append(rowColumns, unitconv.FormatPrefix(float64(v), unitconv.IEC, 0))
 			} else {
 				rowColumns = append(rowColumns, fmt.Sprintf("%d", v))
@@ -286,7 +288,7 @@ func printOpsRow(tbl *cmdfmt.Printomatic, name string, ops []uint64, nt beegfs.N
 
 // Prints one client Ip/username, number of operations and operation name in the old-style CTL
 // "retro" format.
-func printOpsRetro(name string, ops []uint64, nt beegfs.NodeType, raw bool) {
+func printOpsRetro(name string, ops []uint64, nt beegfs.NodeType, all bool) {
 	var opNames []string
 	if nt == beegfs.Meta {
 		opNames = stats.MetaOpNames
@@ -297,8 +299,8 @@ func printOpsRetro(name string, ops []uint64, nt beegfs.NodeType, raw bool) {
 	fmt.Printf("%s: ", name)
 
 	for i, v := range ops {
-		if v != 0 || raw {
-			if opNames[i] == "rd" || opNames[i] == "wr" {
+		if v != 0 || all {
+			if !viper.GetBool(config.RawKey) && (opNames[i] == "rd" || opNames[i] == "wr") {
 				fmt.Printf("%s [%s] ", unitconv.FormatPrefix(float64(v), unitconv.IEC, 0), opNames[i])
 			} else {
 				fmt.Printf("%d [%s] ", v, opNames[i])

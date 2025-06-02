@@ -91,8 +91,8 @@ Note benchmark files will not be deleted automatically. Use the "cleanup" mode t
 		},
 	}
 	cmd.Flags().AddFlagSet(parentFlags)
-	util.I64BytesVar(cmd.Flags(), &backendCfg.FileSize, "size", "s", "1GiB", "The total amount of data to read/write per thread to each benchmark file, specified with an IEC or SI suffix (e.g, 1GiB). Omit the suffix for bytes.")
-	util.I64BytesVar(cmd.Flags(), &backendCfg.BlockSize, "block-size", "b", "128k", "I/O request size used by the benchmark with an IEC or SI suffix (e.g, 1MiB). Omit the suffix for bytes.")
+	util.I64BytesVar(cmd.Flags(), &backendCfg.FileSize, "size", "s", "1GiB", "The total amount of data to read/write per thread to each benchmark file, specified with an IEC or SI unit (e.g, 1GiB). Omit the unit for bytes.")
+	util.I64BytesVar(cmd.Flags(), &backendCfg.BlockSize, "block-size", "b", "128k", "I/O request size used by the benchmark with an IEC or SI unit (e.g, 1MiB). Omit the unit for bytes.")
 	cmd.Flags().Int32VarP(&backendCfg.Threads, "num-tasks", "n", 1, "The number of client streams to simulate per target for the benchmark. Each task will read or write from a separate benchmark file.")
 	cmd.Flags().BoolVarP(&backendCfg.ODirect, "odirect", "D", false, "Use direct I/O (O_DIRECT) on the storage nodes.")
 	cmd.Flags().BoolVarP(&readBench, "read", "r", false, "By default a write benchmark is performed. Set to perform a read benchmark instead. \n\tNote: Requires first running a write benchmark with at least as many tasks and the same/larger file size as the read benchmark.")
