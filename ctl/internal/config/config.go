@@ -21,7 +21,7 @@ import (
 func InitGlobalFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().Bool(config.DebugKey, false, "Print additional details that are normally hidden.")
 
-	cmd.PersistentFlags().Bool(config.RawKey, false, "Print raw values without SI or IEC prefixes (except durations).")
+	cmd.PersistentFlags().Bool(config.RawKey, false, "Print raw values without SI or IEC prefixed units (except durations).")
 
 	cmd.PersistentFlags().String(config.ManagementAddrKey, config.BeeGFSMgmtdAddrAuto, `The network address and gRPC port of the management node.
 	By default determined automatically when BeeGFS is mounted and all mount points are for the same file system.`)
