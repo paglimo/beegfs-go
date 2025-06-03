@@ -2,7 +2,6 @@ package job
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"strconv"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/kvstore"
+	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/worker"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/workermgr"
 	"github.com/thinkparq/protobuf/go/beeremote"
@@ -94,9 +94,9 @@ func TestManage(t *testing.T) {
 	}
 
 	mountPoint := filesystem.NewMockFS()
-	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 0))
+	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 0), 0644, false)
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build(), flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build(), flex.RemoteStorageTarget_builder{Id: 2, Mock: proto.String("test")}.Build()}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -105,7 +105,7 @@ func TestManage(t *testing.T) {
 		PathDBPath: tmpPathDBPath,
 	}
 
-	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	jobManager := NewManager(logger, jobMgrConfig, workerManager, withIgnoreReleaseUnusedFileLockFunc())
 	require.NoError(t, jobManager.Start())
 
 	// When we initially submit a job the state should be scheduled:
@@ -114,7 +114,7 @@ func TestManage(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
-		RemoteStorageTarget: 0,
+		RemoteStorageTarget: 1,
 	}.Build()
 
 	_, err = jobManager.SubmitJobRequest(testJobRequest)
@@ -161,7 +161,7 @@ func TestManage(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
-		RemoteStorageTarget: 1,
+		RemoteStorageTarget: 2,
 	}.Build()
 	jr, err = jobManager.SubmitJobRequest(testJobRequest2)
 	assert.NoError(t, err)
@@ -253,10 +253,10 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		},
 	}
 	mountPoint := filesystem.NewMockFS()
-	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 10))
-	mountPoint.CreateWriteClose("/test/myfile2", make([]byte, 20))
+	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 10), 0644, false)
+	mountPoint.CreateWriteClose("/test/myfile2", make([]byte, 20), 0644, false)
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build(), flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build(), flex.RemoteStorageTarget_builder{Id: 2, Mock: proto.String("test")}.Build()}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -265,7 +265,7 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		PathDBPath: tmpPathDBPath,
 	}
 
-	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	jobManager := NewManager(logger, jobMgrConfig, workerManager, withIgnoreReleaseUnusedFileLockFunc())
 	require.NoError(t, jobManager.Start())
 
 	// Submit two jobs for testing:
@@ -274,14 +274,14 @@ func TestUpdateJobRequestDelete(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
-		RemoteStorageTarget: 0,
+		RemoteStorageTarget: 1,
 	}.Build()
 	testJobRequest2 := beeremote.JobRequest_builder{
 		Path:                "/test/myfile2",
 		Name:                "test job 2",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 2}.Build(),
-		RemoteStorageTarget: 1,
+		RemoteStorageTarget: 2,
 	}.Build()
 
 	_, err = jobManager.SubmitJobRequest(testJobRequest1)
@@ -557,9 +557,9 @@ func TestManageErrorHandling(t *testing.T) {
 	}
 
 	mountPoint := filesystem.NewMockFS()
-	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 30))
+	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 30), 0644, false)
 
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build()}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
 	require.NoError(t, workerManager.Start())
@@ -568,7 +568,7 @@ func TestManageErrorHandling(t *testing.T) {
 		PathDBPath: tmpPathDBPath,
 	}
 
-	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	jobManager := NewManager(logger, jobMgrConfig, workerManager, withIgnoreReleaseUnusedFileLockFunc())
 	require.NoError(t, jobManager.Start())
 
 	// When we initially submit a job the state should be cancelled if any work
@@ -578,7 +578,7 @@ func TestManageErrorHandling(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 4}.Build(),
-		RemoteStorageTarget: 0,
+		RemoteStorageTarget: 1,
 	}.Build()
 	jobManager.JobRequests <- testJobRequest
 	time.Sleep(2 * time.Second)
@@ -662,48 +662,6 @@ func TestManageErrorHandling(t *testing.T) {
 	assert.Equal(t, beeremote.Job_CANCELLED, updateJobResponse.GetResults()[0].GetJob().GetStatus().GetState())
 }
 
-// This test verifies if we try to do an S3 upload for a file that doesn't exist with get the
-// appropriate path error from the RST package.
-func TestGenerateSubmissionFailure(t *testing.T) {
-	// Set setup:
-	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
-	require.NoError(t, err, "error setting up for test")
-	defer cleanupPathDBPath(t)
-
-	logger := zaptest.NewLogger(t)
-
-	mountPoint := filesystem.NewMockFS()
-	// Intentionally don't create any files in the MockFS.
-
-	// We don't need a full worker manager for this test.
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, S3: &flex.RemoteStorageTarget_S3{}}.Build()}
-	workerManager, err := workermgr.NewManager(context.Background(), logger, workermgr.Config{}, []worker.Config{}, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
-	require.NoError(t, err)
-
-	jobMgrConfig := Config{
-		PathDBPath: tmpPathDBPath,
-	}
-
-	jobManager := NewManager(logger, jobMgrConfig, workerManager)
-	require.NoError(t, jobManager.Start())
-
-	require.NoError(t, err)
-	jobRequest := beeremote.JobRequest_builder{
-		Path:                "/foo/bar",
-		RemoteStorageTarget: 1,
-		Sync: flex.SyncJob_builder{
-			Operation: flex.SyncJob_UPLOAD,
-		}.Build(),
-	}.Build()
-
-	// Submit a job request for a file that doesn't exist:
-	response, err := jobManager.SubmitJobRequest(jobRequest)
-	assert.Error(t, err)
-	var pathError *fs.PathError
-	assert.ErrorAs(t, err, &pathError)
-	assert.Nil(t, response)
-}
-
 func TestUpdateJobResults(t *testing.T) {
 	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
 	require.NoError(t, err, "error setting up for test")
@@ -711,7 +669,7 @@ func TestUpdateJobResults(t *testing.T) {
 
 	logger := zaptest.NewLogger(t)
 	workerMgrConfig := workermgr.Config{}
-	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build()}
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
 	workerConfigs := []worker.Config{
 		{
 			ID:                  "0",
@@ -745,7 +703,7 @@ func TestUpdateJobResults(t *testing.T) {
 	}
 
 	mountPoint := filesystem.NewMockFS()
-	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 15))
+	mountPoint.CreateWriteClose("/test/myfile", make([]byte, 15), 0644, false)
 
 	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
 	require.NoError(t, err)
@@ -755,7 +713,7 @@ func TestUpdateJobResults(t *testing.T) {
 		PathDBPath: tmpPathDBPath,
 	}
 
-	jobManager := NewManager(logger, jobMgrConfig, workerManager)
+	jobManager := NewManager(logger, jobMgrConfig, workerManager, withIgnoreReleaseUnusedFileLockFunc())
 	require.NoError(t, jobManager.Start())
 
 	testJobRequest := beeremote.JobRequest_builder{
@@ -763,7 +721,7 @@ func TestUpdateJobResults(t *testing.T) {
 		Name:                "test job 1",
 		Priority:            3,
 		Mock:                flex.MockJob_builder{NumTestSegments: 2}.Build(),
-		RemoteStorageTarget: 0,
+		RemoteStorageTarget: 1,
 	}.Build()
 
 	// Verify once all WRs are in the same terminal state the job state
@@ -889,4 +847,120 @@ func TestUpdateJobResults(t *testing.T) {
 	resp := <-responses
 	require.Equal(t, beeremote.Job_UNKNOWN, resp.GetResults()[0].GetJob().GetStatus().GetState())
 
+}
+
+func TestSubmitJobRequestSentinelErrorHandling(t *testing.T) {
+	tmpPathDBPath, cleanupPathDBPath, err := tempPathForTesting(testDBBasePath)
+	require.NoError(t, err, "error setting up for test")
+	defer cleanupPathDBPath(t)
+
+	logger := zaptest.NewLogger(t)
+	workerMgrConfig := workermgr.Config{}
+	workerConfigs := []worker.Config{
+		{
+			ID:                  "0",
+			Name:                "test-node-0",
+			Type:                worker.Mock,
+			MaxReconnectBackOff: 5,
+			MockConfig: worker.MockConfig{
+				Expectations: []worker.MockExpectation{
+					{
+						MethodName: "connect",
+						ReturnArgs: []interface{}{false, nil},
+					},
+					{
+						MethodName: "SubmitWork",
+						Args:       []interface{}{mock.Anything},
+						ReturnArgs: []interface{}{
+							flex.Work_Status_builder{
+								State:   flex.Work_SCHEDULED,
+								Message: "test expects a scheduled request",
+							}.Build(),
+							nil,
+						},
+					},
+					{
+						MethodName: "disconnect",
+						ReturnArgs: []interface{}{nil},
+					},
+				},
+			},
+		},
+	}
+
+	mountPoint := filesystem.NewMockFS()
+	remoteStorageTargets := []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
+	workerManager, err := workermgr.NewManager(context.Background(), logger, workerMgrConfig, workerConfigs, remoteStorageTargets, &flex.BeeRemoteNode{}, mountPoint)
+	require.NoError(t, err)
+	require.NoError(t, workerManager.Start())
+
+	jobMgrConfig := Config{
+		PathDBPath: tmpPathDBPath,
+	}
+
+	jobManager := NewManager(logger, jobMgrConfig, workerManager, withIgnoreReleaseUnusedFileLockFunc())
+	require.NoError(t, jobManager.Start())
+
+	baseTestJobRequest := &beeremote.JobRequest{
+		Path:     "/test/myfile",
+		Name:     "test job 1",
+		Priority: 3,
+		Type: &beeremote.JobRequest_Mock{
+			Mock: &flex.MockJob{NumTestSegments: 4},
+		},
+		RemoteStorageTarget: 1,
+	}
+
+	// Test already completed job request and verify database is updated
+	testAlreadyCompleteJobRequest := proto.Clone(baseTestJobRequest).(*beeremote.JobRequest)
+	testAlreadyCompleteJobRequest.SetGenerationStatus(&beeremote.JobRequest_GenerationStatus{
+		State:   beeremote.JobRequest_GenerationStatus_ALREADY_COMPLETE,
+		Message: time.Now().String(),
+	})
+	result, err := jobManager.SubmitJobRequest(testAlreadyCompleteJobRequest)
+	require.ErrorIs(t, err, rst.ErrJobAlreadyComplete)
+	assert.NotEmpty(t, result.Job.Status.GetMessage()) // verifies database update
+	require.NotNil(t, result)
+
+	// Test already offloaded job request and verify database is updated
+	testAlreadyOffloadedJobRequest := proto.Clone(baseTestJobRequest).(*beeremote.JobRequest)
+	testAlreadyOffloadedJobRequest.SetGenerationStatus(&beeremote.JobRequest_GenerationStatus{
+		State: beeremote.JobRequest_GenerationStatus_ALREADY_OFFLOADED,
+	})
+	result, err = jobManager.SubmitJobRequest(testAlreadyOffloadedJobRequest)
+	assert.NotEmpty(t, result.Job.Status.GetMessage()) // verifies database update
+	require.ErrorIs(t, err, rst.ErrJobAlreadyOffloaded)
+	require.NotNil(t, result)
+
+	// Test job request already exists.
+	// Repeat same job request twice without updating any of the work requests and verify job already exists
+	testAlreadyExistJobRequest := proto.Clone(baseTestJobRequest).(*beeremote.JobRequest)
+	testAlreadyExistJobRequest.SetPath("/test/myfile2")
+	result, err = jobManager.SubmitJobRequest(testAlreadyExistJobRequest)
+	require.Nil(t, err)
+	require.NotNil(t, result)
+	result, err = jobManager.SubmitJobRequest(testAlreadyExistJobRequest)
+	require.ErrorIs(t, err, rst.ErrJobAlreadyExists)
+	require.NotNil(t, result)
+
+	// Test job request with failed-precondition. This should be distinguished from job request
+	// submissions that fails with failed-precondition where GenerateWorkRequests() returns an
+	// ErrJobFailedPrecondition error.
+	testFailedPreconditionJobRequest := proto.Clone(baseTestJobRequest).(*beeremote.JobRequest)
+	testFailedPreconditionJobRequest.SetGenerationStatus(&beeremote.JobRequest_GenerationStatus{
+		State: beeremote.JobRequest_GenerationStatus_FAILED_PRECONDITION,
+	})
+	result, err = jobManager.SubmitJobRequest(testFailedPreconditionJobRequest)
+	require.Equal(t, result.Job.Status.State, beeremote.Job_CANCELLED)
+	require.ErrorIs(t, err, rst.ErrJobFailedPrecondition)
+	require.NotNil(t, result)
+
+	// Test an error is creating job request that is not a failed-precondition.
+	testFailedJobRequest := proto.Clone(baseTestJobRequest).(*beeremote.JobRequest)
+	testFailedJobRequest.Type = &beeremote.JobRequest_Mock{
+		Mock: &flex.MockJob{ShouldFail: true},
+	}
+	result, err = jobManager.SubmitJobRequest(testFailedJobRequest)
+	require.NotNil(t, err)
+	require.Equal(t, result.Job.Status.State, beeremote.Job_FAILED)
 }

@@ -16,7 +16,7 @@ func TestUpdateConfig(t *testing.T) {
 
 	rstConfigs := []*flex.RemoteStorageTarget{
 		{
-			Id: 0,
+			Id: 1,
 			Type: &flex.RemoteStorageTarget_S3_{
 				S3: &flex.RemoteStorageTarget_S3{
 					Bucket:      "bucket",
@@ -32,7 +32,7 @@ func TestUpdateConfig(t *testing.T) {
 	// Updating an existing RST is not allowed:
 	notEqualRSTConfig := []*flex.RemoteStorageTarget{
 		{
-			Id: 0,
+			Id: 1,
 			Type: &flex.RemoteStorageTarget_S3_{
 				S3: &flex.RemoteStorageTarget_S3{
 					Bucket:      "bucket-UPDATE",

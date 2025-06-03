@@ -139,7 +139,7 @@ func getTestManager(tb testing.TB, opts ...getTestMgrOpt) (*Manager, []func(test
 	logger := zaptest.NewLogger(tb, zaptest.Level(config.logLevel))
 
 	if config.rstConfigs == nil {
-		config.rstConfigs = []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 0, Mock: proto.String("test")}.Build()}
+		config.rstConfigs = []*flex.RemoteStorageTarget{flex.RemoteStorageTarget_builder{Id: 1, Mock: proto.String("test")}.Build()}
 	}
 
 	beeRemoteClient, err := beeremote.New(beeremote.Config{})
@@ -166,7 +166,7 @@ func TestUpdateConfig(t *testing.T) {
 
 	rstConfigs := []*flex.RemoteStorageTarget{
 		flex.RemoteStorageTarget_builder{
-			Id: 0,
+			Id: 1,
 			S3: flex.RemoteStorageTarget_S3_builder{
 				Bucket:      "bucket",
 				EndpointUrl: "https://url",

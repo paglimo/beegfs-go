@@ -191,3 +191,18 @@ func AccessFlagsToString(flags AccessFlags) string {
 		return fmt.Sprintf("Unknown(%d)", flags)
 	}
 }
+
+// WithDataState returns a copy of the FileState with the updated data state.
+func (fs FileState) WithDataState(state DataState) FileState {
+	return (fs & AccessFlagMask) | ((FileState(state) << DataStateShift) & DataStateMask)
+}
+
+// WithAccessFlags returns a copy of the FileState with the specified access flags set.
+func (fs FileState) WithAccessState(flags AccessFlags) FileState {
+	return (fs & DataStateMask) | (FileState(flags) & AccessFlagMask)
+}
+
+// WithoutAccessState returns a copy of the FileState with the specified access flags cleared.
+func (fs FileState) WithoutAccessState(flags AccessFlags) FileState {
+	return (fs & DataStateMask) | (FileState(flags) &^ AccessFlagMask)
+}

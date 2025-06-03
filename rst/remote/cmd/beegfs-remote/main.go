@@ -8,6 +8,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/spf13/pflag"
@@ -15,6 +16,7 @@ import (
 	"github.com/thinkparq/beegfs-go/common/configmgr"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	ctl "github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/config"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/job"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/server"
@@ -127,6 +129,21 @@ Using environment variables:
 		}()
 	}
 
+	ctl.InitViperFromExternal(
+		ctl.GlobalConfig{
+			MgmtdAddress:                initialCfg.Management.Address,
+			MgmtdTLSCertFile:            initialCfg.Management.TLSCertFile,
+			MgmtdTLSDisableVerification: initialCfg.Management.TLSDisableVerification,
+			MgmtdTLSDisable:             initialCfg.Management.TLSDisable,
+			AuthFile:                    initialCfg.Management.AuthFile,
+			AuthDisable:                 initialCfg.Management.AuthDisable,
+			RemoteAddress:               initialCfg.Server.Address,
+			LogLevel:                    initialCfg.Log.Level,
+			NumWorkers:                  runtime.GOMAXPROCS(0),
+			ConnTimeoutMs:               500,
+		},
+	)
+
 	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
 		log.Fatalf("unable to initialize logger: %s", err)
@@ -202,10 +219,18 @@ Using environment variables:
 		}
 	}
 
-	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, flex.BeeRemoteNode_builder{
-		Id:      nodeID,
-		Address: initialCfg.Server.Address,
-	}.Build(), mountPoint)
+	beeRemoteNode := flex.BeeRemoteNode_builder{
+		Id:                          nodeID,
+		Address:                     initialCfg.Server.Address,
+		MgmtdAddress:                initialCfg.Management.Address,
+		MgmtdTlsCert:                cert,
+		MgmtdTlsDisableVerification: initialCfg.Management.TLSDisableVerification,
+		MgmtdTlsDisable:             initialCfg.Management.TLSDisable,
+		AuthSecret:                  authSecret,
+		AuthDisable:                 initialCfg.Management.AuthDisable,
+	}.Build()
+
+	workerManager, err := workermgr.NewManager(ctx, logger.Logger, initialCfg.WorkerMgr, initialCfg.Workers, initialCfg.RemoteStorageTargets, beeRemoteNode, mountPoint)
 	if err != nil {
 		logger.Fatal("unable to initialize worker manager", zap.Error(err))
 	}

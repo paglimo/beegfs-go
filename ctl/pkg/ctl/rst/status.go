@@ -39,6 +39,7 @@ type PathStatus int
 const (
 	Unknown PathStatus = iota
 	Synchronized
+	Offloaded
 	Unsynchronized
 	NotSupported
 	NoTargets
@@ -51,6 +52,8 @@ func (s PathStatus) String() string {
 		switch s {
 		case Synchronized:
 			return "Synchronized (" + strconv.Itoa(int(s)) + ")"
+		case Offloaded:
+			return "Offloaded (" + strconv.Itoa(int(s)) + ")"
 		case Unsynchronized:
 			return "Unsynchronized (" + strconv.Itoa(int(s)) + ")"
 		case NotSupported:
@@ -68,6 +71,8 @@ func (s PathStatus) String() string {
 	switch s {
 	case Synchronized:
 		return "✅"
+	case Offloaded:
+		return "☁️\u200C"
 	case Unsynchronized:
 		// The warning sign (⚠) emoji can cause alignment issues in go-pretty tables
 		// because it is normally followed by a variation selector (`\ufe0f`), making
@@ -182,7 +187,7 @@ func matchPathAndGetStatus(
 		// When recursing start streaming back jobs from Remote to a reusable dbChan.
 		log.Debug("attempting to stream multiple paths from the Remote database", zap.String("fsPath", fsPath), zap.Any("inputType", inputType))
 		*dbChan = make(chan *GetJobsResponse, 1024)
-		if err := GetJobs(ctx, GetJobsConfig{Path: fsPath}, *dbChan); err != nil {
+		if err := GetJobs(ctx, GetJobsConfig{Path: fsPath, Recurse: true}, *dbChan); err != nil {
 			return nil, err
 		}
 		*dbPath, *dbOk = <-(*dbChan)
@@ -321,6 +326,9 @@ func getPathStatus(ctx context.Context, cfg GetStatusCfg, mappings *util.Mapping
 		if job.GetJob() == nil {
 			result.SyncStatus = Unsynchronized
 			syncReason.WriteString(fmt.Sprintf("Target %d: Path has no jobs for this target.\n", tgt))
+		} else if job.GetJob().GetStatus().GetState() == beeremote.Job_OFFLOADED {
+			result.SyncStatus = Offloaded
+			syncReason.WriteString(fmt.Sprintf("Target %d: File contents are offloaded to this target.\n", tgt))
 		} else if job.GetJob().GetStatus().GetState() != beeremote.Job_COMPLETED {
 			result.SyncStatus = Unsynchronized
 			if cfg.Debug {

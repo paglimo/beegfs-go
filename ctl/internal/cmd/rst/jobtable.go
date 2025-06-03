@@ -92,33 +92,62 @@ func (t *jobsTable) PrintRemaining() {
 
 // Row adds a row for the provided job. It is opinionated about what fields are included, and how
 // each field is displayed.
-func (t *jobsTable) Row(job *beeremote.JobResult) {
+func (t *jobsTable) Row(result *beeremote.JobResult) {
+	job := result.Job
+	request := job.GetRequest()
+	status := job.GetStatus()
+
 	var operation string
 	// Must be updated when new job types are supported:
-	if job.Job.GetRequest().GetSync() != nil {
-		operation = job.Job.GetRequest().GetSync().Operation.String()
+	if request.HasSync() {
+		syncJob := request.GetSync()
+		operation = syncJob.Operation.String()
+		if syncJob.Operation == flex.SyncJob_UPLOAD && job.Request.StubLocal {
+			operation = "OFFLOAD"
+		}
+	} else if request.HasBuilder() {
+		operation = "JOB BUILDER"
 	} else {
 		// Fallback and print the raw representation for unknown types:
-		operation = fmt.Sprintf("%v", job.Job.GetRequest().GetType())
+		operation = fmt.Sprintf("%v", request.GetType())
 	}
 
+	if request.HasBuilder() {
+		t.tbl.AddItem(
+			convertJobStateToEmoji(status.GetState()),
+			request.GetPath(),
+			"-",
+			job.GetCreated().AsTime().Format(time.RFC3339),
+			status.GetUpdated().AsTime().Format(time.RFC3339),
+			"-",
+			"-",
+			job.GetId(),
+			operation,
+			status.GetState(),
+			wrapTextAtWidth(status.GetMessage(), t.wrappingWidth),
+			"-",
+			t.getWorkResultsForCell(result.GetWorkResults()),
+			"",
+		)
+	} else {
 	t.tbl.AddItem(
-		convertJobStateToEmoji(job.Job.GetStatus().GetState()),
-		job.Job.GetRequest().GetPath(),
-		job.Job.GetRequest().GetRemoteStorageTarget(),
-		job.Job.GetCreated().AsTime().Format(time.RFC3339),
-		job.Job.GetStatus().GetUpdated().AsTime().Format(time.RFC3339),
-		job.Job.GetStartMtime().AsTime().Format(time.RFC3339),
-		job.Job.GetStopMtime().AsTime().Format(time.RFC3339),
-		job.Job.GetId(),
+		convertJobStateToEmoji(status.GetState()),
+		request.GetPath(),
+		request.GetRemoteStorageTarget(),
+		job.GetCreated().AsTime().Format(time.RFC3339),
+		status.GetUpdated().AsTime().Format(time.RFC3339),
+		job.GetStartMtime().AsTime().Format(time.RFC3339),
+		job.GetStopMtime().AsTime().Format(time.RFC3339),
+		job.GetId(),
 		operation,
-		job.Job.GetStatus().GetState(),
-		wrapTextAtWidth(job.Job.GetStatus().GetMessage(), t.wrappingWidth),
-		t.getWorkRequestsForCell(job.GetWorkRequests()),
-		t.getWorkResultsForCell(job.GetWorkResults()),
+		status.GetState(),
+		wrapTextAtWidth(status.GetMessage(), t.wrappingWidth),
+		t.getWorkRequestsForCell(result.GetWorkRequests()),
+		t.getWorkResultsForCell(result.GetWorkResults()),
 		"",
 		// When making updates, also update MinimalRow().
 	)
+}
 }
 
 // MinimalRow() adds a row for a job that could not be created for some reason. This is helpful when
@@ -148,14 +177,16 @@ func (t *jobsTable) MinimalRow(path string, explanation string) {
 func (t *jobsTable) getWorkRequestsForCell(workRequests []*flex.WorkRequest) string {
 	strBuilder := strings.Builder{}
 	for _, wr := range workRequests {
-		strBuilder.WriteString(fmt.Sprintf("===== request id: %s =====\n* external id: \n%s\n* offset start: %d\n* offset stop: %d\n* part start: %d\n* part stop: %d\n",
-			wr.RequestId,
-			wrapTextAtWidth(wr.ExternalId, t.wrappingWidth),
-			wr.Segment.OffsetStart,
-			wr.Segment.OffsetStop,
-			wr.Segment.PartsStart,
-			wr.Segment.PartsStop,
-		))
+		if wr.Segment != nil {
+			strBuilder.WriteString(fmt.Sprintf("===== request id: %s =====\n* external id: \n%s\n* offset start: %d\n* offset stop: %d\n* part start: %d\n* part stop: %d\n",
+				wr.RequestId,
+				wrapTextAtWidth(wr.ExternalId, t.wrappingWidth),
+				wr.Segment.OffsetStart,
+				wr.Segment.OffsetStop,
+				wr.Segment.PartsStart,
+				wr.Segment.PartsStop,
+			))
+		}
 	}
 	return strBuilder.String()
 }
@@ -163,33 +194,56 @@ func (t *jobsTable) getWorkRequestsForCell(workRequests []*flex.WorkRequest) str
 // getWorkResultsForCell() takes a slice of work results and condenses the output to fit nicely into
 // a table cell. It is primarily intended to be used by Row().
 func (t *jobsTable) getWorkResultsForCell(workResults []*beeremote.JobResult_WorkResult) string {
-	strBuilder := strings.Builder{}
+	var sb strings.Builder
 	for _, wr := range workResults {
-		strBuilder.WriteString(fmt.Sprintf("===== request id: %s =====\n* status: %s\n* message: \n%s\n* part list:%s\n",
-			wr.GetWork().GetRequestId(),
-			wr.GetWork().GetStatus().GetState(),
-			wrapTextAtWidth(wr.GetWork().GetStatus().Message, t.wrappingWidth),
-			t.getPartsForCell(wr.GetWork().Parts),
+		work := wr.GetWork()
+		sb.WriteString(fmt.Sprintf(
+			"===== request id: %s =====\n"+
+				"* status: %s\n"+
+				"* message: \n%s\n",
+			work.GetRequestId(),
+			work.GetStatus().GetState(),
+			wrapTextAtWidth(work.GetStatus().GetMessage(), t.wrappingWidth),
 		))
+		if parts := t.getPartsForCell(work.Parts); parts != "" {
+			sb.WriteString(fmt.Sprintf("* part list:%s\n", parts))
 	}
-	return strBuilder.String()
+	}
+
+	return sb.String()
 }
 
 // getPartsForCell() takes a slice of parts and condenses the output to fit nicely into a table cell.
 // It is primarily intended to be used by Row().
 func (t *jobsTable) getPartsForCell(parts []*flex.Work_Part) string {
-	strBuilder := strings.Builder{}
+	var sb strings.Builder
+
 	for _, part := range parts {
-		strBuilder.WriteString(fmt.Sprintf("\n * part: %d\n  * offset start: %d\n  * offset stop: %d\n  * entity tag: \n%s\n  * sha256sum: \n%s",
+		if part.GetOffsetStart() == 0 &&
+			part.GetOffsetStop() == 0 &&
+			part.GetEntityTag() == "" &&
+			part.GetChecksumSha256() == "" {
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf(
+			"\n * part: %d\n"+
+				"  * offset start: %d\n"+
+				"  * offset stop: %d\n"+
+				"  * entity tag: \n%s\n"+
+				"  * sha256sum: \n%s",
 			part.GetPartNumber(),
 			part.GetOffsetStart(),
 			part.GetOffsetStop(),
 			wrapTextAtWidth(part.GetEntityTag(), t.wrappingWidth),
 			wrapTextAtWidth(part.GetChecksumSha256(), t.wrappingWidth),
 		))
-
 	}
-	return strBuilder.String()
+
+	if sb.Len() == 0 {
+		return ""
+	}
+	return sb.String()
 }
 
 // wrapTextAtWidth is used to wrap long text such as checksums or entity IDs across multiple rows
@@ -264,6 +318,7 @@ var jobStateMap = map[beeremote.Job_State]jobStateEmoji{
 	beeremote.Job_FAILED:    {"❌", beeremote.Job_FAILED.String()},
 	beeremote.Job_CANCELLED: {"🚫", beeremote.Job_CANCELLED.String()},
 	beeremote.Job_COMPLETED: {"✅", beeremote.Job_COMPLETED.String()},
+	beeremote.Job_OFFLOADED: {"☁️", beeremote.Job_OFFLOADED.String()},
 }
 
 func convertWorkStateToEmoji(state flex.Work_State) string {

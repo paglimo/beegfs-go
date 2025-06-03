@@ -64,7 +64,7 @@ This enables normal users to change the default number of targets and chunksize 
 			// Initialize a list to track any disallowed flags
 			disallowedFlags := []string{}
 
-			cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+			cmd.LocalFlags().VisitAll(func(flag *pflag.Flag) {
 				// Only add flags that have been explicitly changed and are not allowed with file state flags
 				if flag.Changed && !slices.Contains(allowedFlags, flag.Name) {
 					disallowedFlags = append(disallowedFlags, flag.Name)
