@@ -121,6 +121,19 @@ func TestGenerateSegments(t *testing.T) {
 			expectations: map[string]expectation{
 				"0": {
 					offsetStart: 0,
+					offsetStop:  -1,
+					partsStart:  1,
+					partsStop:   1,
+				},
+			},
+		}, {
+			name:            "test when the file is 1 byte",
+			fileSize:        1,
+			segmentCount:    1,
+			partsPerSegment: 1,
+			expectations: map[string]expectation{
+				"0": {
+					offsetStart: 0,
 					offsetStop:  0,
 					partsStart:  1,
 					partsStop:   1,

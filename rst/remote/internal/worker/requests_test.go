@@ -63,11 +63,12 @@ func TestEncodeDecodeWorkResults(t *testing.T) {
 
 	// First check WorkResult message:
 	expectedWorkFields := map[string]protoreflect.Kind{
-		"path":       protoreflect.StringKind,
-		"job_id":     protoreflect.StringKind,
-		"request_id": protoreflect.StringKind,
-		"status":     protoreflect.MessageKind,
-		"parts":      protoreflect.MessageKind,
+		"path":        protoreflect.StringKind,
+		"job_id":      protoreflect.StringKind,
+		"request_id":  protoreflect.StringKind,
+		"status":      protoreflect.MessageKind,
+		"parts":       protoreflect.MessageKind,
+		"job_builder": protoreflect.BoolKind,
 	}
 	checkMessageFields(flex.Work_builder{}.Build().ProtoReflect().Descriptor().Fields(), expectedWorkFields)
 

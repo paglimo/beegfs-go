@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	cRst "github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/beegfs-go/ctl/internal/cmdfmt"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
 	"github.com/thinkparq/protobuf/go/flex"
@@ -17,6 +18,7 @@ func newListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List Remote Storage Targets and their configuration",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runListCmd(cmd, cfg)
 		},
@@ -41,12 +43,15 @@ func runListCmd(cmd *cobra.Command, cfg rst.GetRSTCfg) error {
 	})
 
 	for _, rst := range response.Rsts {
+		if rst.GetId() == cRst.JobBuilderRstId {
+			continue
+		}
 
 		var rstType string
 		var rstConfiguration string
 
-		switch rst.Type.(type) {
-		case *flex.RemoteStorageTarget_S3_:
+		switch rst.WhichType() {
+		case flex.RemoteStorageTarget_S3_case:
 			stringBuilder := strings.Builder{}
 			rstType = "s3"
 			rst.GetS3().ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {

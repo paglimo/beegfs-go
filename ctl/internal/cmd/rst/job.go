@@ -197,11 +197,10 @@ func newListJobsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list <path-prefix>",
 		Short: "List active and historical jobs by file or directory path prefix",
-		Long: fmt.Sprintf(`List active and historical jobs by file or directory path prefix.
+		Long: `List active and historical jobs by file or directory path prefix.
 Whether or not a job is consider "ok" is based on the job state and does not reflect if the path is currently in sync (use the status command).
 All jobs in the database for paths that match the specified prefix will be returned regardless if those paths still exist in BeeGFS.
-If the path prefix does not exist in BeeGFS (for example if the file was deleted) specify --%s=%s and the path relative to the BeeGFS root.
-Jobs for each path are grouped together and sorted by remote target then by when they were created.`, config.BeeGFSMountPointKey, config.BeeGFSMountPointNone),
+Jobs for each path are grouped together and sorted by remote target then by when they were created.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return fmt.Errorf("missing <path> argument. Usage: %s", cmd.Use)
@@ -218,6 +217,7 @@ Jobs for each path are grouped together and sorted by remote target then by when
 	cmd.Flags().IntVar(&frontendCfg.history, "history", 1, "Limit the number of jobs returned for each path+RST combination (defaults to only the most recently created job).")
 	cmd.Flags().BoolVar(&frontendCfg.retro, "retro", false, "Don't print output in a table and return all possible fields grouping jobs for each path by RST and sorting by when they were created.")
 	cmd.Flags().BoolVar(&frontendCfg.verbose, "verbose", false, "Print additional details about each job (use --debug) to also print work requests and results.")
+	cmd.Flags().BoolVar(&backendCfg.Recurse, "recurse", false, "Treat the provided path as a prefix and return jobs for all matching paths.")
 	cmd.Flags().IntVar(&frontendCfg.width, "column-width", 30, "Set the maximum width of some columns before they overflow.")
 	return cmd
 }
@@ -228,7 +228,7 @@ func runListJobsCmd(cmd *cobra.Command, frontendCfg listJobsConfig, backendCfg r
 	err := rst.GetJobs(cmd.Context(), backendCfg, responses)
 	if err != nil {
 		if errors.Is(err, filesystem.ErrInitFSClient) {
-			return fmt.Errorf("%w (hint: use the --%s=%s flag to interact with files that no longer exist or if BeeGFS is not mounted)", err, config.BeeGFSMountPointKey, config.BeeGFSMountPointNone)
+			return fmt.Errorf("%w (hint: use the --%s=%s flag if BeeGFS is not mounted)", err, config.BeeGFSMountPointKey, config.BeeGFSMountPointNone)
 		}
 		return err
 	}
@@ -258,7 +258,7 @@ writeResponses:
 			}
 
 			if resp.Err != nil {
-				return err
+				return resp.Err
 			}
 
 			// Sort jobs by when they were created so the most recently created job always determines
@@ -372,6 +372,9 @@ writeResponses:
 
 	autoPrintRemaining = false
 	tbl.PrintRemaining()
-	cmdfmt.Printf("Success: total paths found: %d\n", totalPaths)
+	if totalPaths == 0 {
+		return errors.New("no matching entries were found")
+	}
+	cmdfmt.Printf("Success: total entries found: %d\n", totalPaths)
 	return nil
 }
