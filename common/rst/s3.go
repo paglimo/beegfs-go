@@ -451,12 +451,14 @@ func (r *S3Client) prepareJobRequest(ctx context.Context, mappings *util.Mapping
 
 	if mappings == nil {
 		if mappings, err = util.GetMappings(ctx); err != nil {
+			err = fmt.Errorf("%w: %s", ErrJobFailedPrecondition, err.Error())
 			return
 		}
 	}
 
 	if !IsFileLocked(lockedInfo) {
 		if lockedInfo, writeLockSet, _, err = GetLockedInfo(ctx, r.mountPoint, mappings, cfg, cfg.Path); err != nil {
+			err = fmt.Errorf("%w: %s", ErrJobFailedPrecondition, fmt.Sprintf("failed to acquire lock: %s", err.Error()))
 			return
 		}
 		cfg.SetLockedInfo(lockedInfo)
