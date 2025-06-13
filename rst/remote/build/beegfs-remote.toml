@@ -92,7 +92,6 @@ path-db = "/var/lib/beegfs/remote/path.badger"
 # s3.bucket = "<BUCKET>"
 # s3.access-key = "<ACCESS_KEY>"
 # s3.secret-key = "<SECRET_KEY>"
-# s3.partition-id = "<PARTITION>"
 
 
 #

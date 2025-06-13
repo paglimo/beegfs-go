@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	s3Config "github.com/aws/aws-sdk-go-v2/config"
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -41,33 +42,43 @@ type S3Client struct {
 var _ Provider = &S3Client{}
 
 func newS3(ctx context.Context, rstConfig *flex.RemoteStorageTarget, mountPoint filesystem.Provider) (Provider, error) {
-
-	resolver := aws.EndpointResolverWithOptionsFunc(func(string, string, ...any) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			PartitionID:       rstConfig.GetS3().GetPartitionId(),
-			URL:               rstConfig.GetS3().GetEndpointUrl(),
-			SigningRegion:     rstConfig.GetS3().GetRegion(),
-			HostnameImmutable: true,
-		}, nil
-	})
-
-	cfg, err := s3Config.LoadDefaultConfig(
+	s3Provider := rstConfig.GetS3()
+	awsCfg, err := awsConfig.LoadDefaultConfig(
 		ctx,
-		s3Config.WithRegion(rstConfig.GetS3().GetRegion()),
-		s3Config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(rstConfig.GetS3().GetAccessKey(), rstConfig.GetS3().GetSecretKey(), "")),
-		s3Config.WithEndpointResolverWithOptions(resolver),
+		awsConfig.WithBaseEndpoint(s3Provider.GetEndpointUrl()),
+		awsConfig.WithRegion(s3Provider.GetRegion()),
+		awsConfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(
+				s3Provider.GetAccessKey(),
+				s3Provider.GetSecretKey(),
+				"", // session token
+			),
+		),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to load config for RST client: %w", err)
 	}
 
-	r := &S3Client{
-		config:     rstConfig,
-		client:     s3.NewFromConfig(cfg),
-		mountPoint: mountPoint,
+	// AWS recommends virtual-hosted style (bucketName.s3.amazonaws.com); path-style (/bucketName/)
+	// was deprecated for new regions in 2020. So, check whether the provided endpoint url starts
+	// with the bucket as part of the hostname. Otherwise, use the path-style.
+	// https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
+	endpointUrl, err := url.Parse(s3Provider.GetEndpointUrl())
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse s3 end-point: %w", err)
 	}
+	bucket := s3Provider.GetBucket()
+	host := endpointUrl.Hostname()
+	usePathStyle := !strings.HasPrefix(host, bucket+".")
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.UsePathStyle = usePathStyle
+	})
 
-	return r, nil
+	return &S3Client{
+		config:     rstConfig,
+		client:     client,
+		mountPoint: mountPoint,
+	}, nil
 }
 
 func (r *S3Client) GetJobRequest(cfg *flex.JobRequestCfg) *beeremote.JobRequest {
