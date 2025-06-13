@@ -144,7 +144,11 @@ func prepareJobRequests(ctx context.Context, cfg *flex.JobRequestCfg) ([]*beerem
 	}
 
 	if IsValidRstId(cfg.RemoteStorageTarget) {
-		request := rstMap[cfg.RemoteStorageTarget].GetJobRequest(cfg)
+		client, ok := rstMap[cfg.RemoteStorageTarget]
+		if !ok {
+			return nil, fmt.Errorf("remote storage target does not exist! Check --remote-target or BeeGFS Remote configuration before retrying")
+		}
+		request := client.GetJobRequest(cfg)
 		return []*beeremote.JobRequest{request}, nil
 	}
 
