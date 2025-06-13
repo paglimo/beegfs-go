@@ -117,6 +117,10 @@ type Provider interface {
 // resolving/contacting some external service that may block or hang. It requires a local mount
 // point to use as the source/destination for data transferred from the RST.
 func New(ctx context.Context, config *flex.RemoteStorageTarget, mountPoint filesystem.Provider) (Provider, error) {
+	if config.Policies == nil {
+		config.SetPolicies(&flex.RemoteStorageTarget_Policies{})
+	}
+
 	switch config.Type.(type) {
 	case *flex.RemoteStorageTarget_S3_:
 		return newS3(ctx, config, mountPoint)
