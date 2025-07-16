@@ -36,24 +36,23 @@ func TestGetCachedMappings_FirstCall(t *testing.T) {
 	}
 
 	// Verify cache is immediately updated and returned
-	mappings, err := GetCachedMappings(context.Background())
+	mappings, err := GetCachedMappings(context.Background(), false)
 	require.Nil(t, err)
 	require.Same(t, mappings, mockedMappings)
-	require.False(t, MappingsForceUpdate)
+	require.False(t, mappingsForceUpdate)
 }
 
 func TestGetCachedMappings_ErrorCase_RefreshOnError(t *testing.T) {
 	cachedMappings = &Mappings{}
 	cachedMappingsErr = errors.New("error retrieving mappings")
 	cachedMappingsLastModified = time.Time{}
-	MappingsForceUpdate = false
 	mockedMappings := &Mappings{}
 	getMappingsFunc = func(context.Context) (*Mappings, error) {
 		return mockedMappings, nil
 	}
 
 	// Verify GetCachedMappings blocks until cache is updated
-	mappings, err := GetCachedMappings(context.Background())
+	mappings, err := GetCachedMappings(context.Background(), false)
 	require.Nil(t, err)
 	require.Same(t, mappings, mockedMappings)
 
@@ -63,17 +62,16 @@ func TestGetCachedMappings_ForceUpdate(t *testing.T) {
 	cachedMappings = &Mappings{}
 	cachedMappingsErr = nil
 	cachedMappingsLastModified = time.Time{}
-	MappingsForceUpdate = true
 	mockedMappings := &Mappings{}
 	getMappingsFunc = func(context.Context) (*Mappings, error) {
 		return mockedMappings, nil
 	}
 
 	// Verify cache is immediately updated and returned
-	mappings, err := GetCachedMappings(context.Background())
+	mappings, err := GetCachedMappings(context.Background(), true)
 	require.Nil(t, err)
 	require.Same(t, mappings, mockedMappings)
-	require.False(t, MappingsForceUpdate)
+	require.False(t, mappingsForceUpdate)
 }
 
 func TestGetCachedMappings_CacheHit_NoBackgroundUpdate(t *testing.T) {
@@ -87,10 +85,10 @@ func TestGetCachedMappings_CacheHit_NoBackgroundUpdate(t *testing.T) {
 	}
 
 	// Verify cache is immediately returned
-	mappings, err := GetCachedMappings(context.Background())
+	mappings, err := GetCachedMappings(context.Background(), false)
 	require.Nil(t, err)
 	require.Same(t, mappings, originalCachedMappings)
-	require.False(t, MappingsForceUpdate)
+	require.False(t, mappingsForceUpdate)
 }
 
 func TestGetCachedMappings_CacheHit_BackgroundUpdate(t *testing.T) {
@@ -107,20 +105,20 @@ func TestGetCachedMappings_CacheHit_BackgroundUpdate(t *testing.T) {
 	}
 
 	// Verify original cached value is returned
-	mappings, err := GetCachedMappings(context.Background())
+	mappings, err := GetCachedMappings(context.Background(), false)
 	require.True(t, activeCachedMappingsUpdate)
 	require.Nil(t, err)
 	require.NotSame(t, mappings, mockedMappings)
 
 	// Wait for background update and verify cache is updated
 	time.Sleep(100 * time.Microsecond)
-	mappings, err = GetCachedMappings(context.Background())
+	mappings, err = GetCachedMappings(context.Background(), false)
 	require.False(t, activeCachedMappingsUpdate)
 	require.Nil(t, err)
 	require.Same(t, mappings, mockedMappings)
 
 	// Subsequent call should not change the cache
-	mappings, err = GetCachedMappings(context.Background())
+	mappings, err = GetCachedMappings(context.Background(), false)
 	require.False(t, activeCachedMappingsUpdate)
 	require.Nil(t, err)
 	require.Same(t, mappings, mockedMappings)
@@ -131,12 +129,11 @@ func TestUpdateCachedMappingsInBackground_NoUpdateWhenAlreadyActive(t *testing.T
 	cachedMappingsLastModified = time.Now().Add(-cachedMappingsUpdateDelay * time.Second)
 	cachedMappings = &Mappings{}
 	cachedMappingsErr = nil
-	MappingsForceUpdate = false
 	getMappingsFunc = func(context.Context) (*Mappings, error) {
 		t.Fatal("getMappingsFunc should not be called when cache is actively being updated")
 		return nil, nil
 	}
 
 	// Verify GetMappings is never called though cachedMappingsUpdateDelaySec has been exceeded
-	GetCachedMappings(context.Background())
+	GetCachedMappings(context.Background(), false)
 }
