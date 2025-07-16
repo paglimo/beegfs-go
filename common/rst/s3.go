@@ -436,7 +436,6 @@ func (r *S3Client) completeSyncWorkRequests_Download(ctx context.Context, job *b
 }
 
 // prepareJobRequest ensures that sync.LockedInfo is full populated.
-// func (r *S3Client) prepareJobRequest(ctx context.Context, mappings *util.Mappings, cfg *flex.JobRequestCfg, sync *flex.SyncJob) (writeLockSet bool, err error) {
 func (r *S3Client) prepareJobRequest(ctx context.Context, cfg *flex.JobRequestCfg, sync *flex.SyncJob) (writeLockSet bool, err error) {
 	lockedInfo := sync.LockedInfo
 	if IsFileLocked(lockedInfo) && HasRemotePathInfo(lockedInfo) {

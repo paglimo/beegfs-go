@@ -32,7 +32,6 @@ import (
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/rst"
-	"github.com/thinkparq/beegfs-go/ctl/pkg/util"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"google.golang.org/grpc/codes"
@@ -562,37 +561,18 @@ func PrepareFileStateForWorkRequests(ctx context.Context, client Provider, mount
 // reference for the inMountPath, so cfg.Path will be ignored; this is necessary to avoid making
 // unnecessary cfg clones since the lockedInfo can be used for multiple job requests. The
 // writeLockSet will be true when the write lock was set.
-// func GetLockedInfo(ctx context.Context, mountPoint filesystem.Provider, mappings *util.Mappings, cfg *flex.JobRequestCfg, inMountPath string) (lockedInfo *flex.JobLockedInfo, writeLockSet bool, rstIds []uint32, err error) {
 func GetLockedInfo(ctx context.Context, mountPoint filesystem.Provider, cfg *flex.JobRequestCfg, inMountPath string) (lockedInfo *flex.JobLockedInfo, writeLockSet bool, rstIds []uint32, err error) {
 	lockedInfo = &flex.JobLockedInfo{}
 	if IsValidRstId(cfg.RemoteStorageTarget) {
 		rstIds = []uint32{cfg.RemoteStorageTarget}
 	}
 
-	mappings, err := util.GetCachedMappings(ctx)
-	if err != nil {
-		return
-	}
-
-	entryInfo, err := entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, inMountPath)
+	entryInfo, err := entry.GetEntry(ctx, nil, entry.GetEntriesCfg{}, inMountPath)
 	if err != nil {
 		if errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
 			return lockedInfo, writeLockSet, rstIds, nil
 		}
-
-		// Retry with latest mappings
-		util.MappingsForceUpdate = true
-		mappings, err = util.GetCachedMappings(ctx)
-		if err != nil {
-			return
-		}
-
-		if entryInfo, err = entry.GetEntry(ctx, mappings, entry.GetEntriesCfg{}, inMountPath); err != nil {
-			if errors.Is(err, beegfs.OpsErr_PATHNOTEXISTS) {
-				return lockedInfo, writeLockSet, rstIds, nil
-			}
-			return
-		}
+		return
 	}
 	lockedInfo.Exists = true
 
