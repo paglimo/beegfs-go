@@ -120,12 +120,10 @@ func newEntry(ctx context.Context, mappings *util.Mappings, entry msg.EntryInfo,
 		e.MetaBuddyGroup = int(entry.OwnerID)
 	}
 
-	var err error
+	fetchedMappings := false
 	if mappings == nil {
-		mappings, err = util.GetCachedMappings(ctx, false)
-		if err != nil {
-			return e
-		}
+		mappings, _ = util.GetCachedMappings(ctx, false)
+		fetchedMappings = true
 	}
 
 	mappingsUpdated := false
@@ -133,12 +131,12 @@ func newEntry(ctx context.Context, mappings *util.Mappings, entry msg.EntryInfo,
 		if mappingsUpdated {
 			return
 		}
-		mappings, err = util.GetCachedMappings(ctx, true)
+		mappings, _ = util.GetCachedMappings(ctx, true)
 		mappingsUpdated = true
 	}
 
 	pool, err := mappings.StoragePoolToConfig.Get(beegfs.LegacyId{NumId: beegfs.NumId(entryInfo.Pattern.StoragePoolID), NodeType: beegfs.Storage})
-	if errors.Is(err, util.ErrMapperNotFound) {
+	if fetchedMappings && errors.Is(err, util.ErrMapperNotFound) {
 		updateMappings()
 		pool, err = mappings.StoragePoolToConfig.Get(beegfs.LegacyId{NumId: beegfs.NumId(entryInfo.Pattern.StoragePoolID), NodeType: beegfs.Storage})
 	}
@@ -149,7 +147,7 @@ func newEntry(ctx context.Context, mappings *util.Mappings, entry msg.EntryInfo,
 	if entryInfo.Pattern.Type == beegfs.StripePatternRaid0 {
 		for _, tgt := range entryInfo.Pattern.TargetIDs {
 			node, err := mappings.TargetToNode.Get(beegfs.LegacyId{NumId: beegfs.NumId(tgt), NodeType: beegfs.Storage})
-			if errors.Is(err, util.ErrMapperNotFound) {
+			if fetchedMappings && errors.Is(err, util.ErrMapperNotFound) {
 				updateMappings()
 				node, err = mappings.TargetToNode.Get(beegfs.LegacyId{NumId: beegfs.NumId(tgt), NodeType: beegfs.Storage})
 			}
@@ -164,7 +162,7 @@ func newEntry(ctx context.Context, mappings *util.Mappings, entry msg.EntryInfo,
 	if len(entryInfo.RST.RSTIDs) != 0 {
 		for _, id := range entryInfo.RST.RSTIDs {
 			rst, ok := mappings.RstIdToConfig[id]
-			if errors.Is(err, util.ErrMapperNotFound) {
+			if fetchedMappings && errors.Is(err, util.ErrMapperNotFound) {
 				updateMappings()
 				rst, ok = mappings.RstIdToConfig[id]
 			}
@@ -410,16 +408,18 @@ func getEntryAndOwnerFromPathViaRPC(ctx context.Context, mappings *util.Mappings
 }
 
 func getPrimaryMetaNode(ctx context.Context, mappings *util.Mappings, ownerID uint32) (beegfs.NumId, error) {
+	fetchedMappings := false
 	if mappings == nil {
 		var err error
 		mappings, err = util.GetCachedMappings(ctx, false)
 		if err != nil {
 			return 0, err
 		}
+		fetchedMappings = true
 	}
 
 	primaryMetaNode, err := mappings.MetaBuddyGroupToPrimaryNode.Get(beegfs.LegacyId{NumId: beegfs.NumId(ownerID), NodeType: beegfs.Meta})
-	if errors.Is(err, util.ErrMapperNotFound) {
+	if fetchedMappings && errors.Is(err, util.ErrMapperNotFound) {
 		mappings, err = util.GetCachedMappings(ctx, true)
 		if err != nil {
 			return 0, err

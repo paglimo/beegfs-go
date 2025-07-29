@@ -42,7 +42,12 @@ type Mappings struct {
 }
 
 var (
-	mappingsForceUpdate bool          // flag will trigger a cache update when set
+	// mappingsForceUpdate lets the first goroutine that requests a force-update to mark the cache
+	// as dirty before any lock is taken, so every other goroutine—whether it asked for a
+	// force‑update or not—waits for the same refresh instead of returning stale data.
+	// mappingsForceUpdate also prevents the waiting goroutines from calling getMappingsFunc again
+	// once the leader finishes so the cache is only rebuilt once.
+	mappingsForceUpdate bool
 	cachedMappings      *Mappings     // global cachedMappings
 	cachedMappingsErr   error         // any error that occurred when retrieving that last global cachedMappings
 	cachedMappingsMu    sync.RWMutex  // for synchronizing cache updates
