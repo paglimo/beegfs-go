@@ -23,8 +23,11 @@ import (
 type GetEntriesCfg struct {
 	Verbose        bool
 	IncludeOrigMsg bool
-	NoIoctl        bool
-	FilterExpr     string
+	// Parallel allows results to be returned in any order (instead of lexicographical order). This
+	// allows multiple goroutines to be used to fetch entry info, typically improving performance.
+	Parallel   bool
+	NoIoctl    bool
+	FilterExpr string
 }
 
 // GetEntryCombinedInfo returns all information needed to print details about an entry in BeeGFS.
@@ -243,7 +246,7 @@ func GetEntries(ctx context.Context, pm util.PathInputMethod, cfg GetEntriesCfg)
 		return GetEntry(ctx, mappings, cfg, path)
 	}
 
-	return util.ProcessPaths(ctx, pm, true, processEntry, util.FilterExpr(cfg.FilterExpr))
+	return util.ProcessPaths(ctx, pm, !cfg.Parallel, processEntry, util.FilterExpr(cfg.FilterExpr))
 }
 
 // GetEntry retrieves GetEntryCombinedInfo based on the provided information. If mappings is nil
