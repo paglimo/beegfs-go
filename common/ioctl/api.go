@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -128,17 +129,20 @@ func CreateFileWithStripeHints(path string, permissions uint32, numTargets uint3
 		return err
 	}
 	defer parentDir.Close()
-
+	fileName := []byte(filepath.Base(path) + "\x00")
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_IOCTL,
 		uintptr(parentDir.Fd()),
 		uintptr(iocMkFileStripeHints),
 		uintptr(unsafe.Pointer(&makeFileStripeHintsArg{
-			Filename:   uintptr(unsafe.Pointer(&[]byte(filepath.Base(path) + "\x00")[0])),
+			Filename:   uintptr(unsafe.Pointer(&fileName[0])),
 			Mode:       permissions,
 			NumTargets: numTargets,
 			ChunkSize:  chunkSize,
 		})))
+
+	// Ensure the slice is not reclaimed by the GC before the syscall completes.
+	runtime.KeepAlive(fileName)
 
 	if errno != 0 {
 		err := syscall.Errno(errno)
