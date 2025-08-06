@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -153,46 +154,39 @@ func CreateFile(path string, opts ...createFileOption) error {
 	}
 	defer parentDirectory.Close()
 
-	parentEntryInfo, err := GetEntryInfo(filepath.Dir(path))
+	parentEntryInfo, err := GetEntryInfo(parentDirectory.Fd())
 	if err != nil {
 		return err
 	}
 
+	parentName := []byte("\x00")
+	entryName := []byte(filepath.Base(path) + "\x00")
 	// The documentation for unsafe.Pointer states: "If a pointer argument must be converted to
 	// uintptr for use as an argument, that conversion must appear in the call expression itself".
 	// This complicates how we handle symbolic links because we either need an unsafe pointer to the
-	// first byte of a byte slice, or nil. So instead of ever storing the uintptr anywhere
-	// (which seems risky), we use a helper function to determine the address of a byte or nil while
-	// building out the sycall and return an unsafe pointer.
-	getSymlinkPtr := func() unsafe.Pointer {
-		if cfg.symlinkTo != "" {
-			bs := []byte(cfg.symlinkTo + "\000")
-			return unsafe.Pointer(&bs[0])
-		}
-		return unsafe.Pointer(nil)
-	}
-
-	getSymlinkLen := func() int32 {
-		if cfg.symlinkTo != "" {
-			return int32(len(cfg.symlinkTo) + 1)
-		}
-		return 0
+	// first byte of a byte slice, or nil. So instead of ever storing the uintptr anywhere (which
+	// seems risky), before building out the syscall determine the address of a byte or nil.
+	var symlink []byte
+	var symlinkPtr unsafe.Pointer
+	if cfg.symlinkTo != "" {
+		symlink = append([]byte(cfg.symlinkTo), 0)
+		symlinkPtr = unsafe.Pointer(&symlink[0])
 	}
 
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(parentDirectory.Fd()), uintptr(iocCreateFileV3), uintptr(unsafe.Pointer(&mkFileV3Arg{
 		OwnerNodeID:            uint32(parentEntryInfo.OwnerID),
-		ParentParentEntryID:    uintptr(unsafe.Pointer(&[]byte(parentEntryInfo.ParentEntryID + "\x00")[0])),
-		ParentParentEntryIDLen: int32(len(parentEntryInfo.ParentEntryID + "\x00")),
-		ParentEntryID:          uintptr(unsafe.Pointer(&[]byte(parentEntryInfo.EntryID + "\x00")[0])),
-		ParentEntryIDLen:       int32(len(parentEntryInfo.EntryID + "\x00")),
-		ParentIsBuddyMirrored:  parentEntryInfo.FeatureFlags.BuddyMirrored,
-		ParentName:             uintptr(unsafe.Pointer(&[]byte("\x00")[0])),
-		ParentNameLen:          int32(len("\x00")),
-		EntryName:              uintptr(unsafe.Pointer(&[]byte(filepath.Base(path) + "\x00")[0])),
-		EntryNameLen:           int32(len(filepath.Base(path) + "\x00")),
+		ParentParentEntryID:    uintptr(unsafe.Pointer(&parentEntryInfo.ParentEntryID[0])),
+		ParentParentEntryIDLen: int32(len(parentEntryInfo.ParentEntryID)),
+		ParentEntryID:          uintptr(unsafe.Pointer(&parentEntryInfo.EntryID[0])),
+		ParentEntryIDLen:       int32(len(parentEntryInfo.EntryID)),
+		ParentIsBuddyMirrored:  parentEntryInfo.FeatureFlags.IsBuddyMirroredI32(),
+		ParentName:             uintptr(unsafe.Pointer(&parentName[0])),
+		ParentNameLen:          int32(len(parentName)),
+		EntryName:              uintptr(unsafe.Pointer(&entryName[0])),
+		EntryNameLen:           int32(len(entryName)),
 		FileType:               int32(cfg.fileType >> 12 & 15),
-		SymlinkTo:              uintptr(getSymlinkPtr()),
-		SymlinkToLen:           getSymlinkLen(),
+		SymlinkTo:              uintptr(symlinkPtr),
+		SymlinkToLen:           int32(len(symlink)),
 		Mode:                   cfg.permissions | int32(cfg.fileType),
 		Uid:                    cfg.uid,
 		Gid:                    cfg.gid,
@@ -201,6 +195,13 @@ func CreateFile(path string, opts ...createFileOption) error {
 		PrefTargetsLen:         int32(len(cfg.preferredTargets) * 8),
 		StoragePoolID:          cfg.storagePoolID,
 	})))
+
+	// Ensure slices are not reclaimed by the GC before the syscall completes.
+	runtime.KeepAlive(parentEntryInfo.ParentEntryID)
+	runtime.KeepAlive(parentEntryInfo.EntryID)
+	runtime.KeepAlive(parentName)
+	runtime.KeepAlive(entryName)
+	runtime.KeepAlive(symlink)
 
 	if errno != 0 {
 		err := syscall.Errno(errno)
