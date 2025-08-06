@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/beegfs-go/common/beegfs"
-	"github.com/thinkparq/beegfs-go/common/types"
 	"github.com/thinkparq/beegfs-go/ctl/internal/cmdfmt"
 	iUtil "github.com/thinkparq/beegfs-go/ctl/internal/util"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
@@ -106,6 +105,7 @@ This enables normal users to change the default number of targets and chunksize 
 	If the stripe pattern is "mirrored" this is the number of mirror groups.`)
 	cmd.Flags().VarP(iUtil.NewRemoteTargetsFlag(&backendCfg.RemoteTargets), "remote-targets", "r", `Comma-separated list of Remote Storage Target IDs.
 	All desired IDs must be specified. Specify 'none' to unset all RSTs.`)
+	cmd.Flags().StringVar(&backendCfg.FilterExpr, "filter-files", "", util.FilterFilesHelp)
 	cmd.Flags().Var(newRstCooldownFlag(&backendCfg.RemoteCooldownSecs), "remote-cooldown", "Time to wait after a file is closed before replication begins. Accepts a duration such as 1s, 1m, or 1h. The max duration is 65,535 seconds.")
 	// TODO: https://github.com/ThinkParQ/bee-remote/issues/18
 	// Unmark this as hidden once automatic uploads are supported.
@@ -134,7 +134,7 @@ func runEntrySetCmd(ctx context.Context, args []string, frontendCfg entrySetCfg,
 		return err
 	}
 
-	entriesChan, errChan, err := entry.SetEntries(ctx, method, backendCfg)
+	entriesChan, errWait, err := entry.SetEntries(ctx, method, backendCfg)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,6 @@ func runEntrySetCmd(ctx context.Context, args []string, frontendCfg entrySetCfg,
 	// used to print other output adjust how/where tbl.PrintRemaining() is called as needed.
 	allColumns := []string{"path", "status", "configuration_updates"}
 	tbl := cmdfmt.NewPrintomatic(allColumns, allColumns)
-	var multiErr types.MultiError
 	count := 0
 
 run:
@@ -152,6 +151,8 @@ run:
 		// Count is always one more than the number of entries actually processed.
 		count++
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case result, ok := <-entriesChan:
 			if !ok {
 				break run
@@ -163,13 +164,6 @@ run:
 				}
 				tbl.AddItem(result.Path, result.Status, configUpdates)
 			}
-		case err, ok := <-errChan:
-			if ok {
-				// Once an error happens the entriesChan will be closed, however this is a buffered
-				// channel so there may still be valid entries we should finish printing before
-				// returning the error.
-				multiErr.Errors = append(multiErr.Errors, err)
-			}
 		}
 	}
 
@@ -177,9 +171,9 @@ run:
 		tbl.PrintRemaining()
 	}
 	cmdfmt.Printf("Summary: processed %d entries | configuration updates: %s\n", count-1, sprintfNewEntryConfig(backendCfg))
-	// We may have still processed some entries so wait to print an error until the end.
-	if len(multiErr.Errors) != 0 {
-		return &multiErr
+
+	if err = errWait(); err != nil {
+		return err
 	}
 	return nil
 }

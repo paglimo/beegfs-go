@@ -23,10 +23,8 @@ func GetStdinDelimiterFromString(s string) (byte, error) {
 	}
 }
 
-// ReadFromStdin reads strings from stdin separated by the provided delimiter into toChan until it
-// reaches EOF then the toChan is closed. If an error is encountered it is immediately returned on
-// the provided errChan then the toChan is closed without reading anything else from stdin.
-func ReadFromStdin(ctx context.Context, delimiter byte, toChan chan<- string, errChan chan<- error) {
+// GetWalkStdinScanner returns a scanner that splits the stdin on the supplied deliminator.
+func GetWalkStdinScanner(delimiter byte) *bufio.Scanner {
 	scanner := bufio.NewScanner(os.Stdin)
 	splitFunc := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		for i := 0; i < len(data); i++ {
@@ -42,21 +40,26 @@ func ReadFromStdin(ctx context.Context, delimiter byte, toChan chan<- string, er
 		return 0, nil, nil
 	}
 	scanner.Split(splitFunc)
+	return scanner
+}
 
-	func() {
-		defer close(toChan)
-		for scanner.Scan() {
-			input := scanner.Text()
-			select {
-			case toChan <- input:
-			case <-ctx.Done():
-				errChan <- ctx.Err()
-				return
-			}
-			if err := scanner.Err(); err != nil {
-				errChan <- err
-				return
-			}
+// ReadFromStdin reads strings from stdin separated by the provided delimiter into toChan until it
+// reaches EOF then the toChan is closed. If an error is encountered it is immediately returned on
+// the provided errChan then the toChan is closed without reading anything else from stdin.
+func ReadFromStdin(ctx context.Context, delimiter byte, toChan chan<- string, errChan chan<- error) {
+	defer close(toChan)
+	scanner := GetWalkStdinScanner(delimiter)
+	for scanner.Scan() {
+		input := scanner.Text()
+		select {
+		case toChan <- input:
+		case <-ctx.Done():
+			errChan <- ctx.Err()
+			return
 		}
-	}()
+		if err := scanner.Err(); err != nil {
+			errChan <- err
+			return
+		}
+	}
 }
