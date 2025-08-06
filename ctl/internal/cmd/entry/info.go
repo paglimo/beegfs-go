@@ -274,7 +274,11 @@ func assembleTableRow(info *entry.GetEntryCombinedInfo, rowLen int) []any {
 		row = append(row, "(unmirrored)")
 	}
 
-	row = append(row, fmt.Sprintf("%s (%d)", info.Entry.Pattern.StoragePoolName, info.Entry.Pattern.StoragePoolID))
+	if info.Entry.Type == beegfs.EntryDirectory {
+		row = append(row, fmt.Sprintf("%s (%d)", info.Entry.Pattern.StoragePoolName, info.Entry.Pattern.StoragePoolID))
+	} else {
+		row = append(row, fmt.Sprintf("(%s)", info.Entry.Type))
+	}
 
 	if viper.GetBool(config.RawKey) {
 		row = append(row, fmt.Sprintf("%s (%dx%d)", info.Entry.Pattern.Type, info.Entry.Pattern.DefaultNumTargets, info.Entry.Pattern.Chunksize))
@@ -284,6 +288,9 @@ func assembleTableRow(info *entry.GetEntryCombinedInfo, rowLen int) []any {
 
 	fmtTgtIDsFunc := func(targetIDs []uint16) string {
 		var targetsBuilder strings.Builder
+		if len(targetIDs) == 0 {
+			targetsBuilder.WriteString("(unavailable)")
+		}
 		for i, tgt := range targetIDs {
 			id := beegfs.LegacyId{
 				NumId:    beegfs.NumId(tgt),

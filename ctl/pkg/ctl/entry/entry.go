@@ -76,7 +76,7 @@ type Entry struct {
 	// Only populated if getEntries() is called with includeOrigMsg. This is mostly useful for other
 	// modes like set pattern that need to include the EntryInfo message so they don't need to recreate
 	// the message from scratch.
-	OrigEntryInfoMsg *msg.EntryInfo
+	origEntryInfoMsg *msg.EntryInfo
 }
 
 // patternConfig embeds the BeeMsg defined stripe pattern alongside fields that map various
@@ -286,7 +286,7 @@ func GetEntry(ctx context.Context, mappings *util.Mappings, cfg GetEntriesCfg, p
 	}
 	entryWithParent.Entry = newEntry(ctx, mappings, entry, ownerNode, *resp)
 	if cfg.IncludeOrigMsg {
-		entryWithParent.Entry.OrigEntryInfoMsg = &entry
+		entryWithParent.Entry.origEntryInfoMsg = &entry
 	}
 
 	if cfg.Verbose {
@@ -306,7 +306,7 @@ func GetEntry(ctx context.Context, mappings *util.Mappings, cfg GetEntriesCfg, p
 				entryWithParent.Parent = newEntry(ctx, mappings, parentEntry, parentOwner, msg.GetEntryInfoResponse{})
 				entryWithParent.Entry.Verbose = newVerbose(resp.Path, entryWithParent.Entry, entryWithParent.Parent)
 				if cfg.IncludeOrigMsg {
-					entryWithParent.Parent.OrigEntryInfoMsg = &parentEntry
+					entryWithParent.Parent.origEntryInfoMsg = &parentEntry
 				}
 			}
 		} else {
@@ -411,8 +411,10 @@ func getEntryAndOwnerFromPathViaIoctl(ctx context.Context, mappings *util.Mappin
 		}
 
 		// If this is a regular file and the open failed due to EWOULDBLOCK/EAGAIN, probably the
-		// BeeGFS file access flags blocked the open. Try to fetch entry info using the RPC instead.
-		if stat.Mode().IsRegular() && errors.Is(err, syscall.EWOULDBLOCK) {
+		// BeeGFS file access flags blocked the open. If this is a regular file and the open failed
+		// for EBUSY, the file may be in the inode lock store (e.g., if it is being rebalanced).
+		// Attempt to fetch entry info using the RPC instead.
+		if stat.Mode().IsRegular() && (errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EBUSY)) {
 			log.Debug("entry is temporarily unavailable, possibly the contents are locked, trying to fetch entry info via rpc", zap.String("searchPath", searchPath))
 			return getEntryAndOwnerFromPathViaRPC(ctx, mappings, searchPath)
 		}
