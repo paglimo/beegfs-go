@@ -380,9 +380,14 @@ func compileFilter(query string) (FileInfoFilter, error) {
 	return func(fi FileInfo) (bool, error) {
 		out, err := expr.Run(prog, fi)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("filter eval %q on %s: %w", query, fi.Path, err)
 		}
-		return out.(bool), nil
+		result, ok := out.(bool)
+		if !ok {
+			return false, fmt.Errorf("filter expression resulted in a non-boolean value of type %T. Make sure your filter is a valid comparison (e.g., 'size>100MB')", out)
+		}
+
+		return result, nil
 	}, nil
 }
 
