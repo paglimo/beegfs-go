@@ -854,3 +854,18 @@ func GetLastCompletedJobFromRst(ctx context.Context, inMountPath string, rstId u
 
 	return lastCompletedJob, nil
 }
+
+func GetRstMap(ctx context.Context, mountPoint filesystem.Provider, rstConfigMap map[uint32]*flex.RemoteStorageTarget) (map[uint32]Provider, error) {
+	rstMap := make(map[uint32]Provider)
+	for rstId, rstConfig := range rstConfigMap {
+		if !IsValidRstId(rstId) {
+			continue
+		}
+		rst, err := New(ctx, rstConfig, mountPoint)
+		if err != nil {
+			return nil, fmt.Errorf("encountered an error setting up remote storage target: %w", err)
+		}
+		rstMap[rstId] = rst
+	}
+	return rstMap, nil
+}
