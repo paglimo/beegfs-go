@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/beegfs"
-	"github.com/thinkparq/beegfs-go/common/types"
 	"github.com/thinkparq/beegfs-go/ctl/internal/cmdfmt"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/ctl/entry"
@@ -59,6 +58,7 @@ Alternatively multiple entries can be provided using stdin by specifying '-' as 
 	// The same default used for stdin-delimiter to allow the help output to print correctly can't
 	// be used directly. If the default changes update where this is set in getDelimiterFromString.
 	cmd.Flags().StringVar(&frontendCfg.stdinDelimiter, "stdin-delimiter", "\n", "Change the string delimiter used to determine individual paths when read from stdin (e.g., --stdin-delimiter=\"\\x00\" for NULL).")
+	cmd.Flags().StringVar(&backendCfg.FilterExpr, "filter-files", "", util.FilterFilesHelp)
 	cmd.Flags().BoolVar(&frontendCfg.retroPaths, "retro-print-paths", false, "Print paths at the top of each entry in the retro output.")
 	cmd.Flags().MarkHidden("retro-print-paths")
 	return cmd
@@ -74,7 +74,8 @@ func runEntryInfoCmd(cmd *cobra.Command, args []string, frontendCfg entryInfoCfg
 		return err
 	}
 
-	entriesChan, errChan, err := entry.GetEntries(cmd.Context(), method, backendCfg)
+	ctx := cmd.Context()
+	entriesChan, errWait, err := entry.GetEntries(ctx, method, backendCfg)
 	if err != nil {
 		return err
 	}
@@ -94,11 +95,11 @@ func runEntryInfoCmd(cmd *cobra.Command, args []string, frontendCfg entryInfoCfg
 	}
 	defer tbl.PrintRemaining()
 
-	var multiErr types.MultiError
-
 run:
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case info, ok := <-entriesChan:
 			if !ok {
 				break run
@@ -117,18 +118,11 @@ run:
 				}
 				tbl.AddItem(row...)
 			}
-		case err, ok := <-errChan:
-			if ok {
-				// Once an error happens the entriesChan will be closed, however this is a buffered
-				// channel so there may still be valid entries we should finish printing before
-				// returning the error.
-				multiErr.Errors = append(multiErr.Errors, err)
-			}
 		}
 	}
 
-	if len(multiErr.Errors) != 0 {
-		return &multiErr
+	if err = errWait(); err != nil {
+		return err
 	}
 	return nil
 }

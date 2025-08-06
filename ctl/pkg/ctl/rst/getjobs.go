@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/thinkparq/beegfs-go/common/filesystem"
+	"github.com/thinkparq/beegfs-go/common/rst"
 	"github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/protobuf/go/beeremote"
 	"google.golang.org/grpc/codes"
@@ -36,6 +37,8 @@ type GetJobsResponse struct {
 	Results []*beeremote.JobResult
 	Err     error
 }
+
+var ErrGetJobsStreamUnavailable = errors.New("database job stream has been interrupted: BeeGFS Remote is unavailable")
 
 // GetJobs asynchronously retrieves jobs based on the provided cfg and sends them to respChan.
 // It will immediately return an error if anything goes wrong during setup. Subsequent errors
@@ -90,19 +93,22 @@ func GetJobs(ctx context.Context, cfg GetJobsConfig, respChan chan<- *GetJobsRes
 		defer close(respChan)
 		for {
 			resp, err := stream.Recv()
-			if err == io.EOF {
-				return
-			} else if err != nil {
-				if rpcStatus, ok := status.FromError(err); ok {
-					if rpcStatus.Code() == codes.NotFound {
-						err = ErrEntryNotFound
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				if st, ok := status.FromError(err); ok {
+					switch st.Code() {
+					case codes.Unavailable:
+						err = ErrGetJobsStreamUnavailable
+					case codes.NotFound:
+						err = rst.ErrEntryNotFound
 					}
 				}
-				respChan <- &GetJobsResponse{
-					Err: err,
-				}
+				respChan <- &GetJobsResponse{Err: err}
 				return
 			}
+
 			respChan <- &GetJobsResponse{
 				Path:    resp.Path,
 				Results: resp.Results,
