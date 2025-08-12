@@ -256,8 +256,22 @@ func BuildJobRequests(ctx context.Context, rstMap map[uint32]Provider, mountPoin
 		}
 	}()
 
-	if errors.Is(err, ErrFileHasNoRSTs) {
-		return nil, err
+	if err != nil {
+		// If the user didn't specify any RSTs and the entry doesn't have any RSTs configured, just
+		// silently ignore it. Otherwise pushing a subset of files based on their configured RST IDs
+		// would always fail, whenever there is a file with no RSTs set on its entry info.
+		if errors.Is(err, ErrFileHasNoRSTs) {
+			return nil, nil
+		}
+		// If this function returns an error but it will also abort the entire builder job, which we
+		// generally want to avoid outside fatal errors. Outside fatal errors, if there are any RST
+		// IDs available for this inMountPath (either specified by the user, or determined
+		// automatically), then report any errors as part of the generated requests for each file.
+		// For non-fatal errors on paths that have no RSTs we must just return the error anyway to
+		// avoid it being silently dropped.
+		if errors.Is(err, ErrGetLockedInfoFatal) || len(rstIds) == 0 {
+			return nil, err
+		}
 	} else if len(rstIds) > 1 && (cfg.Download || cfg.StubLocal) {
 		err = errors.Join(err, ErrFileHasAmbiguousRSTs)
 	}
@@ -560,7 +574,8 @@ func PrepareFileStateForWorkRequests(ctx context.Context, client Provider, mount
 // will be true when the write lock was set. When skipAccessLock is true the access lock state will
 // not be changed. skipAccessLock is useful when a point in time read-only copy is needed.
 // ErrOffloadFileNotReadable will be returned when the file is offloaded when client is unable to
-// read the file.
+// read the file. It returns ErrGetLockedInfoFatal if it is likely subsequent calls for other paths
+// would likely fail due to some external error or misconfiguration.
 func GetLockedInfo(
 	ctx context.Context,
 	mountPoint filesystem.Provider,
@@ -579,7 +594,7 @@ func GetLockedInfo(
 		if errors.Is(err, os.ErrNotExist) {
 			return lockedInfo, writeLockSet, rstIds, nil
 		}
-		return
+		return lockedInfo, writeLockSet, rstIds, fmt.Errorf("%w: %w", ErrGetLockedInfoFatal, err)
 	}
 	lockedInfo.Exists = true
 
@@ -642,6 +657,8 @@ func WalkPath(ctx context.Context, mountPoint filesystem.Provider, pattern strin
 	if !IsFileGlob(pattern) {
 		if stat, err := mountPoint.Lstat(pattern); err == nil && stat.IsDir() {
 			pattern = filepath.Join(pattern, "**")
+		} else if err != nil {
+			return nil, fmt.Errorf("unable walk path: %w", err)
 		}
 	}
 
