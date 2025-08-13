@@ -147,6 +147,9 @@ type GlobalConfig struct {
 	ConnTimeoutMs               int
 }
 
+var alreadyInitViperFromExt bool
+var ErrViperAlreadyInit = errors.New("reinitializing ctl config is not currently supported")
+
 // InitViperFromExternal is used when the CTL backend is consumed as a library by applications other
 // than the CTL CLI frontend. It is used to initialize the backend Viper config singleton from
 // externally defined configuration. This approach gives callers flexibility in how they define
@@ -155,7 +158,10 @@ type GlobalConfig struct {
 //
 // If the mount flag is empty then it will not be configured and is only needed when absolute paths
 // are not used since BeeGFSClient will derive the mount path.
-func InitViperFromExternal(cfg GlobalConfig) {
+func InitViperFromExternal(cfg GlobalConfig) error {
+	if alreadyInitViperFromExt {
+		return ErrViperAlreadyInit
+	}
 	if cfg.NumWorkers < 1 {
 		cfg.NumWorkers = runtime.GOMAXPROCS(0)
 	}
@@ -186,6 +192,8 @@ func InitViperFromExternal(cfg GlobalConfig) {
 		viper.BindEnv(flag.Name)
 		viper.BindPFlag(flag.Name, flag)
 	})
+	alreadyInitViperFromExt = true
+	return nil
 }
 
 // The global config singleton

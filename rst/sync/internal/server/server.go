@@ -96,7 +96,7 @@ func (s *WorkerNodeServer) UpdateConfig(ctx context.Context, request *flex.Updat
 		s.log.Error("error applying new configuration", zap.Error(err))
 		return flex.UpdateConfigResponse_builder{
 			Result:  flex.UpdateConfigResponse_FAILURE,
-			Message: "error applying updated configuration: " + err.Error(),
+			Message: err.Error(),
 		}.Build(), nil
 	}
 	s.log.Info("successfully applied new configuration")

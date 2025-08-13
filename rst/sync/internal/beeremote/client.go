@@ -92,7 +92,7 @@ func (c *Client) UpdateConfig(newCfg *flex.BeeRemoteNode) error {
 	} else if c.config.dynamic.GetAddress() != "" {
 		newProvider := &grpcProvider{}
 		if err := newProvider.init(c.config); err != nil {
-			return fmt.Errorf("unable to initialize Remote client: %w", err)
+			return err
 		}
 		// Note when adding new Providers, this should only be set to a fully initialized provider.
 		// Even if this function returns an error, the connection handling logic will still call

@@ -67,7 +67,7 @@ func (n *BeeSyncNode) connect(config *flex.UpdateConfigRequest, bulkUpdate *flex
 	// If we could send the message but the node didn't update the configuration
 	// correctly probably we can't recover with a simple retry so consider fatal.
 	if configureResp.GetResult() != flex.UpdateConfigResponse_SUCCESS {
-		return false, fmt.Errorf("%s configure update on node with message %s", configureResp.GetResult(), configureResp.GetMessage())
+		return false, fmt.Errorf("%s: node rejected config update: %s", configureResp.GetResult(), configureResp.GetMessage())
 	}
 
 	updateWRResp, err := n.client.BulkUpdateWork(n.rpcCtx, bulkUpdate)

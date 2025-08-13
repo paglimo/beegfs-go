@@ -2,6 +2,7 @@ package beeremote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -62,7 +63,7 @@ func (c *grpcProvider) init(cfg Config) error {
 		}
 	}
 
-	config.InitViperFromExternal(
+	err = config.InitViperFromExternal(
 		config.GlobalConfig{
 			MgmtdAddress:                cfg.dynamic.MgmtdAddress,
 			MgmtdTLSCertFile:            syncMgmtdTLSCertFile,
@@ -77,6 +78,9 @@ func (c *grpcProvider) init(cfg Config) error {
 			ConnTimeoutMs:               500,
 		},
 	)
+	if errors.Is(err, config.ErrViperAlreadyInit) {
+		return fmt.Errorf("updating BeeGFS network configuration after it was initially set is not currently supported (hint: all nodes must be restarted)")
+	}
 	return nil
 }
 

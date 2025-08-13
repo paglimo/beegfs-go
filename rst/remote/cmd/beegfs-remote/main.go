@@ -130,7 +130,7 @@ Using environment variables:
 		}()
 	}
 
-	ctl.InitViperFromExternal(
+	err = ctl.InitViperFromExternal(
 		ctl.GlobalConfig{
 			MgmtdAddress:                initialCfg.Management.Address,
 			MgmtdTLSCertFile:            initialCfg.Management.TLSCertFile,
@@ -145,6 +145,9 @@ Using environment variables:
 			ConnTimeoutMs:               500,
 		},
 	)
+	if err != nil {
+		log.Fatalf("unable to initialize ctl library: %s", err)
+	}
 
 	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
