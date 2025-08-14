@@ -130,6 +130,17 @@ Using environment variables:
 		}()
 	}
 
+	logger, err := logger.New(initialCfg.Log)
+	if err != nil {
+		log.Fatalf("unable to initialize logger: %s", err)
+	}
+	defer logger.Sync()
+
+	err = ctl.InitLoggerFromExternal(logger.With(zap.String("component", "ctl")))
+	if err != nil {
+		logger.Fatal("unable to initialize ctl logging", zap.Error(err))
+	}
+
 	err = ctl.InitViperFromExternal(
 		ctl.GlobalConfig{
 			MgmtdAddress:                initialCfg.Management.Address,
@@ -140,20 +151,14 @@ Using environment variables:
 			AuthFile:                    initialCfg.Management.AuthFile,
 			AuthDisable:                 initialCfg.Management.AuthDisable,
 			RemoteAddress:               initialCfg.Server.Address,
-			LogLevel:                    initialCfg.Log.Level,
 			NumWorkers:                  runtime.GOMAXPROCS(0),
 			ConnTimeoutMs:               500,
 		},
 	)
 	if err != nil {
-		log.Fatalf("unable to initialize ctl library: %s", err)
+		logger.Fatal("unable to initialize ctl library", zap.Error(err))
 	}
 
-	logger, err := logger.New(initialCfg.Log)
-	if err != nil {
-		log.Fatalf("unable to initialize logger: %s", err)
-	}
-	defer logger.Sync()
 	logger.Info("<=== BeeRemote Initialized ===>")
 	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version), zap.String("commit", commit), zap.String("built", buildTime))
 	// Initialize and fetch the global CTL mount point. This ensures ctl.BeeGFSClient() can be used

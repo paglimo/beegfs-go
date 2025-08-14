@@ -73,7 +73,6 @@ func (c *grpcProvider) init(cfg Config) error {
 			AuthFile:                    syncAuthFile,
 			AuthDisable:                 cfg.dynamic.AuthDisable,
 			RemoteAddress:               cfg.dynamic.Address,
-			LogLevel:                    3,
 			NumWorkers:                  runtime.GOMAXPROCS(0),
 			ConnTimeoutMs:               500,
 		},

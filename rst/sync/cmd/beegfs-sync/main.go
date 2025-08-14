@@ -114,6 +114,12 @@ Using environment variables:
 		log.Fatalf("unable to initialize logger: %s", err)
 	}
 	defer logger.Sync()
+
+	err = ctl.InitLoggerFromExternal(logger.With(zap.String("component", "ctl")))
+	if err != nil {
+		logger.Fatal("unable to initialize ctl logging", zap.Error(err))
+	}
+
 	logger.Info("<=== BeeSync Initialized ===>")
 	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version), zap.String("commit", commit), zap.String("built", buildTime))
 	// Initialize and fetch the global CTL mount point. This ensures ctl.BeeGFSClient() can be used
