@@ -14,6 +14,7 @@ import (
 	pbr "github.com/thinkparq/protobuf/go/beeremote"
 	"github.com/thinkparq/protobuf/go/flex"
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -354,7 +355,12 @@ func (w *worker) processWork(work workAssignment) {
 			// outcome of: https://github.com/ThinkParQ/bee-remote/issues/27.
 			log.Debug("error transferring part", zap.Error(err))
 			status.SetState(flex.Work_FAILED)
-			status.SetMessage("error transferring part: " + err.Error())
+			if errors.Is(err, unix.EAGAIN) {
+				status.SetMessage("error transferring part: " + err.Error() +
+					" (hint: check sysBypassFileAccessCheckOnMeta=true in the BeeGFS client config for this mount)")
+			} else {
+				status.SetMessage("error transferring part: " + err.Error())
+			}
 			if w.sendWorkResult(work, result.Work) {
 				cleanupEntries = true
 			}
