@@ -170,7 +170,9 @@ func recvDatagrams(sock *net.UDPConn, addrMap map[string]*GetNodes_Nic) <-chan e
 				return
 			}
 
-			addrMap[from.String()].Reachable = true
+			if nic, ok := addrMap[from.String()]; ok {
+				nic.Reachable = true
+			}
 		}
 
 		closeCh <- nil
