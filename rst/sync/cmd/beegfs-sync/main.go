@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
-	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
+	ctl "github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/beeremote"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/config"
 	"github.com/thinkparq/beegfs-go/rst/sync/internal/server"
@@ -114,12 +114,20 @@ Using environment variables:
 		log.Fatalf("unable to initialize logger: %s", err)
 	}
 	defer logger.Sync()
-	logger.Info("<=== BeeSync Initialized ===>")
-	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version))
-	logger.Debug("build details", zap.String("commit", commit), zap.String("built", buildTime))
 
-	// Determine if we should use a real or mock mount point:
-	mountPoint, err := filesystem.NewFromMountPoint(initialCfg.MountPoint)
+	err = ctl.InitLoggerFromExternal(logger.With(zap.String("component", "ctl")))
+	if err != nil {
+		logger.Fatal("unable to initialize ctl logging", zap.Error(err))
+	}
+
+	logger.Info("<=== BeeSync Initialized ===>")
+	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version), zap.String("commit", commit), zap.String("built", buildTime))
+	// Initialize and fetch the global CTL mount point. This ensures ctl.BeeGFSClient() can be used
+	// with absolute or relative paths from anywhere in the application. We pass the mountPoint
+	// directly to some components for legacy reasons (this can be refactored later if needed).
+	logger.Info("checking BeeGFS mount point")
+	// If we hang here, probably BeeGFS itself is not reachable.
+	mountPoint, err := ctl.BeeGFSClient(initialCfg.MountPoint)
 	if err != nil {
 		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
 	}

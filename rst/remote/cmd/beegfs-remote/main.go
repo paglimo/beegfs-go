@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/thinkparq/beegfs-go/common/beegfs/beegrpc"
 	"github.com/thinkparq/beegfs-go/common/configmgr"
-	"github.com/thinkparq/beegfs-go/common/filesystem"
 	"github.com/thinkparq/beegfs-go/common/logger"
 	ctl "github.com/thinkparq/beegfs-go/ctl/pkg/config"
 	"github.com/thinkparq/beegfs-go/rst/remote/internal/config"
@@ -131,7 +130,18 @@ Using environment variables:
 		}()
 	}
 
-	ctl.InitViperFromExternal(
+	logger, err := logger.New(initialCfg.Log)
+	if err != nil {
+		log.Fatalf("unable to initialize logger: %s", err)
+	}
+	defer logger.Sync()
+
+	err = ctl.InitLoggerFromExternal(logger.With(zap.String("component", "ctl")))
+	if err != nil {
+		logger.Fatal("unable to initialize ctl logging", zap.Error(err))
+	}
+
+	err = ctl.InitViperFromExternal(
 		ctl.GlobalConfig{
 			MgmtdAddress:                initialCfg.Management.Address,
 			MgmtdTLSCertFile:            initialCfg.Management.TLSCertFile,
@@ -141,23 +151,22 @@ Using environment variables:
 			AuthFile:                    initialCfg.Management.AuthFile,
 			AuthDisable:                 initialCfg.Management.AuthDisable,
 			RemoteAddress:               initialCfg.Server.Address,
-			LogLevel:                    initialCfg.Log.Level,
 			NumWorkers:                  runtime.GOMAXPROCS(0),
 			ConnTimeoutMs:               500,
 		},
 	)
-
-	logger, err := logger.New(initialCfg.Log)
 	if err != nil {
-		log.Fatalf("unable to initialize logger: %s", err)
+		logger.Fatal("unable to initialize ctl library", zap.Error(err))
 	}
-	defer logger.Sync()
+
 	logger.Info("<=== BeeRemote Initialized ===>")
 	logger.Info("start-of-day", zap.String("application", binaryName), zap.String("version", version), zap.String("commit", commit), zap.String("built", buildTime))
-	// Determine if we should use a real or mock mount point:
+	// Initialize and fetch the global CTL mount point. This ensures ctl.BeeGFSClient() can be used
+	// with absolute or relative paths from anywhere in the application. We pass the mountPoint
+	// directly to some components for legacy reasons (this can be refactored later if needed).
 	logger.Info("checking BeeGFS mount point")
 	// If we hang here, probably BeeGFS itself is not reachable.
-	mountPoint, err := filesystem.NewFromMountPoint(initialCfg.MountPoint)
+	mountPoint, err := ctl.BeeGFSClient(initialCfg.MountPoint)
 	if err != nil {
 		logger.Fatal("unable to access BeeGFS mount point", zap.Error(err))
 	}

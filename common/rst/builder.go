@@ -186,9 +186,10 @@ func (c *JobBuilderClient) executeJobBuilderRequest(ctx context.Context, request
 
 				jobRequests, err := BuildJobRequests(ctx, c.rstMap, c.mountPoint, inMountPath, remotePath, cfg)
 				if err != nil {
-					// Errors that occur in BuildJobRequests must not be fatal; otherwise, pushing a
-					// subset based on the set file rstId will fail whenever there's a file.
-					continue
+					// BuildJobRequest should only return fatal errors, or if there are no RSTs
+					// specified/configured on an entry and there is no other way to return the
+					// error other then aborting the builder job entirely.
+					return err
 				}
 
 				for _, jobRequest := range jobRequests {

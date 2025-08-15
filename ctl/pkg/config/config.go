@@ -129,6 +129,26 @@ func (t OutputType) String() string {
 	}
 }
 
+// InitLoggerFromExternal allows CTL to use an externally configured/managed zap.Logger. By default
+// CTL uses an opinionated logger that is initialized on first call that logs to stderr only. This
+// allows CTL logging to respect the logging configuration of the application that is using it
+// including dynamic reconfiguration (like log level updates). This does not add any context to the
+// logger and relies on the caller to do that if desired. For example:
+//
+//	ctl.InitLoggerFromExternal(logger.With(zap.String("component", "ctl")))
+func InitLoggerFromExternal(logUsing *zap.Logger) error {
+	if globalLogger != nil {
+		return fmt.Errorf("ctl logging was already initialized (this is probably a bug)")
+	}
+	// Same approach used for the BadgerLoggerBridge. A new type could have been created (like
+	// CtlLoggerBridge) but when this function was added the logger was already widely used in CTL
+	// and would have caused a lot of unnecessary refactoring. Just don't do anything with level.
+	globalLogger = &logger.Logger{
+		Logger: logUsing,
+	}
+	return nil
+}
+
 // GlobalConfig is used with InitViperFromExternal when the CTL backend is consumed as a library.
 // While not all global configuration is applicable in this mode, it and InitViperFromExternal()
 // should be kept in sync with any global configuration needed to use CTL as a library.
@@ -142,10 +162,12 @@ type GlobalConfig struct {
 	AuthFile                    string
 	AuthDisable                 bool
 	RemoteAddress               string
-	LogLevel                    int8
 	NumWorkers                  int
 	ConnTimeoutMs               int
 }
+
+var alreadyInitViperFromExt bool
+var ErrViperAlreadyInit = errors.New("reinitializing ctl config is not currently supported")
 
 // InitViperFromExternal is used when the CTL backend is consumed as a library by applications other
 // than the CTL CLI frontend. It is used to initialize the backend Viper config singleton from
@@ -155,7 +177,15 @@ type GlobalConfig struct {
 //
 // If the mount flag is empty then it will not be configured and is only needed when absolute paths
 // are not used since BeeGFSClient will derive the mount path.
-func InitViperFromExternal(cfg GlobalConfig) {
+//
+// This does not affect CTL logging. If you wish CTL to respect specific logging configuration call
+// InitLoggerFromExternal() before calling any CTL library functions. These two functions are
+// decoupled in case logging should be initialized before ctl is fully configured, for example if
+// logging is configured at app startup and the rest of CTL config is set dynamically later on.
+func InitViperFromExternal(cfg GlobalConfig) error {
+	if alreadyInitViperFromExt {
+		return ErrViperAlreadyInit
+	}
 	if cfg.NumWorkers < 1 {
 		cfg.NumWorkers = runtime.GOMAXPROCS(0)
 	}
@@ -177,7 +207,6 @@ func InitViperFromExternal(cfg GlobalConfig) {
 	globalFlagSet.String(BeeRemoteAddrKey, cfg.RemoteAddress, "")
 	globalFlagSet.Int(NumWorkersKey, cfg.NumWorkers, "")
 	globalFlagSet.Duration(ConnTimeoutKey, time.Duration(cfg.ConnTimeoutMs)*time.Millisecond, "")
-	globalFlagSet.Int8(LogLevelKey, cfg.LogLevel, "")
 
 	viper.SetEnvPrefix("beegfs")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -186,6 +215,8 @@ func InitViperFromExternal(cfg GlobalConfig) {
 		viper.BindEnv(flag.Name)
 		viper.BindPFlag(flag.Name, flag)
 	})
+	alreadyInitViperFromExt = true
+	return nil
 }
 
 // The global config singleton
@@ -528,6 +559,8 @@ func GetLogger() (*logger.Logger, error) {
 	var err error
 	var invalidLogLevel = false
 	if globalLogger == nil {
+		// When CTL is used as a library the globalLogger can also be initialized by
+		// InitLoggerFromExternal(). Otherwise it is always initialized here on first use.
 		logLevel := viper.GetInt(LogLevelKey)
 		if logLevel < 0 || logLevel > 5 {
 			// If the user gave an invalid log level ignore it and set logging to the highest
