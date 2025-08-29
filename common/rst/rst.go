@@ -667,9 +667,7 @@ func GetLockedInfo(
 			return lockedInfo, writeLockSet, rstIds, entryInfoMsg, ownerNode, fmt.Errorf("unable to retrieve stub file info: %w", err)
 		}
 
-		if !IsValidRstId(cfg.RemoteStorageTarget) {
-			return lockedInfo, writeLockSet, nil, entryInfoMsg, ownerNode, fmt.Errorf("unable to verify stub file's target without a valid remote target")
-		} else if cfg.RemoteStorageTarget != lockedInfo.StubUrlRstId {
+		if IsValidRstId(cfg.RemoteStorageTarget) && cfg.RemoteStorageTarget != lockedInfo.StubUrlRstId {
 			return lockedInfo, writeLockSet, nil, entryInfoMsg, ownerNode, fmt.Errorf("supplied --remote-target does not match stub file")
 		}
 		rstIds = []uint32{lockedInfo.StubUrlRstId}
